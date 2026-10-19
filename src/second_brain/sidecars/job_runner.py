@@ -79,7 +79,7 @@ class JobRunner:
         store: JobStore,
         kinds: Mapping[str, JobKind],
         webhook_base_url: str,
-        hmac_secret_file: Path | str,
+        hmac_secret_file: Path | str | Mapping[str, Path | str],
         *,
         vault_root: Path | str,
         max_concurrent: int = 1,
@@ -106,7 +106,13 @@ class JobRunner:
         self._store = store
         self._kinds = dict(kinds)
         self._base = base
-        self._secret_file = Path(hmac_secret_file)
+        # Hermes checks each route against its own secret, so a mapping names one file per route.
+        if isinstance(hmac_secret_file, Mapping):
+            self._secret_files = {route: Path(path) for route, path in hmac_secret_file.items()}
+            self._secret_file: Path | None = None
+        else:
+            self._secret_files = {}
+            self._secret_file = Path(hmac_secret_file)
         self._vault_root = root
         self._max_concurrent = max_concurrent
         self._post = post or http_post
@@ -131,22 +137,27 @@ class JobRunner:
             raise JobRunnerError(f"no job kind {kind!r} configured") from None
         return f"{self._base}/{route}"
 
-    def _secret(self) -> bytes:
+    def _secret(self, kind: str) -> bytes:
+        route = self._kinds[kind].route if kind in self._kinds else ""
+        path = self._secret_files.get(route, self._secret_file)
+        if path is None:
+            raise JobRunnerError(f"no HMAC secret configured for route {route!r}")
         try:
-            return read_secret(self._secret_file)
+            return read_secret(path)
         except WebhookError as exc:
             raise JobRunnerError(str(exc)) from exc
 
-    def _headers(self, body: bytes, timestamp: str) -> dict[str, str]:
-        return signed_headers(self._secret(), body, timestamp, user_agent="second-brain-job-runner")
+    def _headers(self, kind: str, body: bytes, timestamp: str) -> dict[str, str]:
+        return signed_headers(self._secret(kind), body, timestamp, user_agent="second-brain-job-runner")
 
     def run_job(self, job: Job) -> bool:
         """Send one claimed job and report the outcome. True when Hermes accepted the run."""
         body = job_body(job)
         timestamp = str(int(self._clock()))
         try:
-            headers = self._headers(body, timestamp)
-            status, response = self._post(self.url(job.kind), body, headers, self._timeout)
+            url = self.url(job.kind)
+            headers = self._headers(job.kind, body, timestamp)
+            status, response = self._post(url, body, headers, self._timeout)
         except (JobRunnerError, WebhookError, OSError, ValueError) as exc:
             self._store.fail(job.id, str(exc))
             log.warning("job %s (%s) not sent: %s", job.id, job.kind, exc)

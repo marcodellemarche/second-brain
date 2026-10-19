@@ -252,6 +252,36 @@ def test_the_secret_is_read_at_send_time(
     assert headers[SIGNATURE_HEADER] == _v2_signature(rotated, body, headers[TIMESTAMP_HEADER])
 
 
+def test_each_route_is_signed_with_its_own_secret(
+    store: JobStore, vault_root: Path, tmp_path: Path, post: FakePost
+) -> None:
+    files = {}
+    for route in ("background-research", "background-idea"):
+        files[route] = tmp_path / f"secret-{route}"
+        files[route].write_text(f"fake-secret-for-{route}", encoding="utf-8")
+    runner = JobRunner(store, KINDS, BASE_URL, files, vault_root=vault_root, post=post)
+    for kind, route in (("research", "background-research"), ("develop_idea", "background-idea")):
+        _enqueue(store, kind=kind)
+        runner.run_once()
+        url, body, headers, _ = post.last
+        assert url == f"{BASE_URL}/{route}"
+        expected = _v2_signature(f"fake-secret-for-{route}", body, headers[TIMESTAMP_HEADER])
+        assert headers[SIGNATURE_HEADER] == expected
+
+
+def test_a_route_without_a_secret_fails_the_job(
+    store: JobStore, vault_root: Path, tmp_path: Path, post: FakePost
+) -> None:
+    only_research = tmp_path / "secret-research"
+    only_research.write_text("fake-secret", encoding="utf-8")
+    files = {"background-research": only_research}
+    runner = JobRunner(store, KINDS, BASE_URL, files, vault_root=vault_root, post=post)
+    job_id = _enqueue(store, kind="develop_idea")
+    runner.run_once()
+    assert post.calls == []
+    assert "no HMAC secret" in (store.get(job_id).error or "")
+
+
 def test_url_refuses_an_unknown_kind(runner: JobRunner) -> None:
     with pytest.raises(JobRunnerError):
         runner.url("delete_the_vault")
