@@ -43,11 +43,11 @@ Every tool, core or instance, declares:
 ToolSpec(
     name="weather",
     description="Forecast for a place.",
-    params=WeatherParams,          # pydantic model, typed, no free-form passthrough to services
-    effect="read",                 # read | internal | visible | external
-    autonomy="auto",               # default level; instance policy may only tighten it
+    params=WeatherParams,  # pydantic model, typed, no free-form passthrough to services
+    effect="read",  # read | internal | visible | external
+    autonomy="auto",  # default level; instance policy may only tighten it
     hosts=["api.open-meteo.com"],  # egress needed by brain_tools for this tool
-    credentials=[],                # names of secrets the tool needs, resolved at runtime
+    credentials=[],  # names of secrets the tool needs, resolved at runtime
 )
 ```
 
