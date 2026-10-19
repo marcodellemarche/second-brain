@@ -24,6 +24,7 @@ packages = ["src/second_brain"]
 
 [tool.ruff]
 line-length = 110
+extend-exclude = [".work"]
 target-version = "py312"
 
 [tool.ruff.lint]
