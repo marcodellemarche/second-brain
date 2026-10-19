@@ -256,6 +256,27 @@ class Scheduler:
             raise
 
 
+def main() -> None:  # pragma: no cover - process entry point
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    from second_brain.sidecars.config import SidecarsConfig
+
+    config = SidecarsConfig.load()
+    section = config.require("scheduler")
+    routes = {entry.route for entry in section.schedule.entries}
+    scheduler = Scheduler(
+        section.schedule,
+        {route: config.sender(route) for route in routes},
+        state_file=section.state_file,
+        poll_seconds=section.poll_seconds,
+    )
+    log.info("scheduler on %s, %d entr(ies)", section.schedule.timezone, len(section.schedule.entries))
+    scheduler.run_forever()
+
+
+if __name__ == "__main__":
+    main()
+
+
 __all__ = [
     "DEFAULT_CATCH_UP_MINUTES",
     "DEFAULT_POLL_SECONDS",

@@ -292,6 +292,28 @@ class VaultWatcher:
         return True
 
 
+def main() -> None:  # pragma: no cover - process entry point
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    from second_brain.sidecars.config import SidecarsConfig
+
+    config = SidecarsConfig.load()
+    section = config.require("vault_watcher")
+    watcher = VaultWatcher(
+        config.vault_dir,
+        ignore=section.ignore,
+        quiet_seconds=section.quiet_seconds,
+        send=config.sender(section.route),
+        brain_email=section.brain_email,
+        poll_seconds=section.poll_seconds,
+    )
+    log.info("vault watcher on %s, route %s", watcher.root, section.route)
+    watcher.run_forever()
+
+
+if __name__ == "__main__":
+    main()
+
+
 __all__ = [
     "CONFLICT_PATTERNS",
     "DEFAULT_BRAIN_EMAIL",

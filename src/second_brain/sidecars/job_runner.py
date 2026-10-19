@@ -256,6 +256,31 @@ class JobRunner:
         return self._clock() - self._last_sweep >= self._sweep_seconds
 
 
+def main() -> None:  # pragma: no cover - process entry point
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    from second_brain.sidecars.config import SidecarsConfig
+
+    config = SidecarsConfig.load()
+    section = config.require("job_runner")
+    routes = section.routes()
+    runner = JobRunner(
+        section.jobs.store(),
+        section.jobs.kinds,
+        config.webhook_base_url,
+        {route: config.route_secrets[route] for route in routes},
+        vault_root=config.vault_dir,
+        max_concurrent=section.max_concurrent,
+        dispatch_timeout=section.dispatch_timeout,
+        importer=None,
+    )
+    log.info("job runner on %s, %d kind(s)", section.jobs.store_path, len(routes))
+    runner.run_forever()
+
+
+if __name__ == "__main__":
+    main()
+
+
 __all__ = [
     "DEFAULT_DISPATCH_TIMEOUT",
     "DEFAULT_POLL_SECONDS",

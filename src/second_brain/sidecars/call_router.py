@@ -285,6 +285,26 @@ def read_frontmatter(path: Path) -> dict[str, Any]:
     return dict(parsed) if isinstance(parsed, dict) else {}
 
 
+def main() -> None:  # pragma: no cover - process entry point
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    from second_brain.sidecars.config import SidecarsConfig
+
+    config = SidecarsConfig.load()
+    section = config.require("call_router")
+    router = CallRouter(
+        section.resolved_watch_dir(config.vault_dir),
+        section.rules,
+        send=config.sender(section.route),
+        poll_seconds=section.poll_seconds,
+    )
+    log.info("call router on %s, route %s", router.watch_dir, section.route)
+    router.run_forever()
+
+
+if __name__ == "__main__":
+    main()
+
+
 __all__ = [
     "DEFAULT_POLL_SECONDS",
     "DEFAULT_TEAM_MIN_PARTICIPANTS",
