@@ -6,6 +6,10 @@ human approved. Paths are vault-relative and resolved inside the root, so a syml
 the root is refused. A write whose content looks like a credential is refused before it touches
 the disk.
 
+The user also edits the vault in an editor, and file sync drops those changes in on its own. They
+are committed separately, authored by `human`, before the brain touches anything, so a brain
+commit only ever contains the paths the brain changed.
+
 Error codes: `outside_vault`, `zone_denied`, `quiet_window`, `hash_mismatch`, `secret_detected`,
 `not_found`, `exists`, and `git_failed` when git itself refuses the operation.
 """
@@ -19,13 +23,14 @@ import subprocess
 import tempfile
 import threading
 import time
+import weakref
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from second_brain.tools.secrets import scan
 
@@ -65,6 +70,29 @@ class VaultConfig(BaseModel):
     trash_dir: str = ".trash"
     author_name: str = "brain"
     author_email: str = "brain@localhost"
+    human_name: str = "human"
+    human_email: str = "human@localhost"
+
+    @model_validator(mode="after")
+    def _distinct_authors(self) -> VaultConfig:
+        """Undo refuses any commit not authored by the brain, so the two emails cannot be one."""
+        if self.human_email.strip().lower() == self.author_email.strip().lower():
+            raise ValueError("human_email must differ from author_email, or undo would revert human commits")
+        return self
+
+
+_locks_guard = threading.Lock()
+_locks: weakref.WeakValueDictionary[Path, threading.Lock] = weakref.WeakValueDictionary()
+
+
+def _lock_for(root: Path) -> threading.Lock:
+    """One lock per vault root, so the background timer and a tool call cannot interleave git."""
+    with _locks_guard:
+        lock = _locks.get(root)
+        if lock is None:
+            lock = threading.Lock()
+            _locks[root] = lock
+        return lock
 
 
 def _single_line(value: str) -> str:
@@ -82,7 +110,7 @@ class Vault:
     def __init__(self, config: VaultConfig) -> None:
         self._config = config
         self._root = config.root.resolve()
-        self._lock = threading.Lock()
+        self._lock = _lock_for(self._root)
         if not self._root.is_dir():
             raise VaultError("outside_vault", f"vault root is not a directory: {self._root}")
         self._trash = self._resolve(self._config.trash_dir)[0]
@@ -111,6 +139,7 @@ class Vault:
         expected_sha256: str | None = None,
     ) -> str:
         with self._lock:
+            self._commit_human_changes_locked()
             rel, target = self._resolve(path)
             self._check_zone(rel, provenance)
             if target.exists() and not target.is_file():
@@ -122,6 +151,7 @@ class Vault:
 
     def move(self, src: str, dst: str, provenance: Provenance) -> str:
         with self._lock:
+            self._commit_human_changes_locked()
             src_rel, src_path = self._resolve(src)
             dst_rel, dst_path = self._resolve(dst)
             self._check_zone(src_rel, provenance)
@@ -136,6 +166,7 @@ class Vault:
 
     def delete(self, path: str, provenance: Provenance) -> str:
         with self._lock:
+            self._commit_human_changes_locked()
             rel, target = self._resolve(path)
             self._check_zone(rel, provenance)
             if not target.is_file():
@@ -148,6 +179,7 @@ class Vault:
 
     def undo(self, commit_sha: str, provenance: Provenance) -> str:
         with self._lock:
+            self._commit_human_changes_locked()
             try:
                 commit = self._git("rev-parse", "--verify", "--quiet", f"{commit_sha}^{{commit}}")
             except VaultError as exc:
@@ -162,6 +194,31 @@ class Vault:
             body = self._git("log", "-1", "--format=%B").rstrip()
             self._git("commit", "--amend", "-q", "-m", f"{body}\n\n{self._trailers(provenance)}")
             return self._git("rev-parse", "HEAD")
+
+    def commit_human_changes(self) -> str | None:
+        """Commit what the user changed in the vault, as `human`. None when the tree is clean."""
+        with self._lock:
+            return self._commit_human_changes_locked()
+
+    def _commit_human_changes_locked(self) -> str | None:
+        """The commit holds everything, so a brain commit after it cannot carry a user edit."""
+        if not self._git("status", "--porcelain"):
+            return None
+        self._git("add", "-A")
+        staged = self._git("diff", "--cached", "--name-only", "-z", strip=False)
+        files = len([path for path in staged.split("\0") if path])
+        if files == 0:
+            return None
+        self._git(
+            "commit",
+            "-q",
+            "-m",
+            f"human: {files} files",
+            "-m",
+            "Requested-By: human",
+            author=(self._config.human_name, self._config.human_email),
+        )
+        return self._git("rev-parse", "HEAD")
 
     def _check_undo(self, commit: str, provenance: Provenance) -> None:
         """Undoing a commit writes its paths back, so it needs the same zone checks as a write."""
@@ -295,15 +352,21 @@ class Vault:
             ]
         )
 
-    def _git(self, *args: str, strip: bool = True) -> str:
+    def _git(
+        self,
+        *args: str,
+        strip: bool = True,
+        author: tuple[str, str] | None = None,
+    ) -> str:
+        name, email = author if author is not None else (self._config.author_name, self._config.author_email)
         command = [
             "git",
             "-C",
             str(self._root),
             "-c",
-            f"user.name={self._config.author_name}",
+            f"user.name={name}",
             "-c",
-            f"user.email={self._config.author_email}",
+            f"user.email={email}",
             "-c",
             "commit.gpgsign=false",
             *args,

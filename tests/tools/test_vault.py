@@ -480,3 +480,123 @@ def test_a_refused_write_leaves_no_temp_files(root: Path) -> None:
         vault.write("note.md", "second\n", _provenance())
 
     assert list(root.rglob(".tmp-*")) == []
+
+
+def test_a_human_edit_before_a_brain_write_is_its_own_commit(root: Path) -> None:
+    vault = _vault(root)
+    (root / "topics").mkdir()
+    (root / "topics/human.md").write_text("edited by hand\n")
+
+    sha = vault.write("topics/brain.md", "written by the brain\n", _provenance())
+
+    human, brain = _git(root, "rev-parse", "HEAD~1"), _git(root, "rev-parse", "HEAD")
+    assert sha == brain
+    assert _git(root, "log", "-1", "--format=%s", human) == "human: 1 files"
+    assert "Requested-By: human" in _message(root, human)
+    assert _git(root, "log", "-1", "--format=%an <%ae>", human) == "human <human@localhost>"
+    assert _git(root, "show", "--name-only", "--format=", human).split() == ["topics/human.md"]
+    assert _git(root, "show", "--name-only", "--format=", brain).split() == ["topics/brain.md"]
+    assert _git(root, "status", "--porcelain") == ""
+
+
+def test_a_human_edit_before_a_move_is_its_own_commit(root: Path) -> None:
+    vault = _vault(root)
+    vault.write("inbox/note.md", "hello\n", _provenance())
+    (root / "human.md").write_text("edited by hand\n")
+
+    vault.move("inbox/note.md", "topics/note.md", _provenance())
+
+    assert _git(root, "log", "-1", "--format=%s", "HEAD~1") == "human: 1 files"
+    brain_paths = _git(root, "show", "--name-only", "--no-renames", "--format=", "HEAD").split()
+    assert brain_paths == ["inbox/note.md", "topics/note.md"]
+    assert _git(root, "status", "--porcelain") == ""
+
+
+def test_a_human_edit_before_a_delete_is_its_own_commit(root: Path) -> None:
+    vault = _vault(root)
+    vault.write("note.md", "hello\n", _provenance())
+    (root / "human.md").write_text("edited by hand\n")
+
+    vault.delete("note.md", _provenance())
+
+    assert _git(root, "log", "-1", "--format=%s", "HEAD~1") == "human: 1 files"
+    assert "human.md" not in _git(root, "show", "--name-only", "--format=", "HEAD")
+    assert _git(root, "status", "--porcelain") == ""
+
+
+def test_a_human_edit_before_an_undo_is_its_own_commit(root: Path) -> None:
+    vault = _vault(root, quiet_seconds=0)
+    vault.write("note.md", "one\n", _provenance())
+    second = vault.write("note.md", "two\n", _provenance())
+    (root / "human.md").write_text("edited by hand\n")
+
+    vault.undo(second, _provenance())
+
+    assert _git(root, "log", "-1", "--format=%s", "HEAD~1") == "human: 1 files"
+    assert "human.md" not in _git(root, "show", "--name-only", "--format=", "HEAD")
+    assert (root / "note.md").read_text() == "one\n"
+    assert _git(root, "status", "--porcelain") == ""
+
+
+def test_commit_human_changes_counts_the_paths_it_commits(root: Path) -> None:
+    vault = _vault(root)
+    (root / "one.md").write_text("one\n")
+    (root / "two.md").write_text("two\n")
+
+    sha = vault.commit_human_changes()
+
+    assert sha == _git(root, "rev-parse", "HEAD")
+    assert _message(root).splitlines() == ["human: 2 files", "", "Requested-By: human"]
+    assert _git(root, "status", "--porcelain") == ""
+
+
+def test_commit_human_changes_is_a_noop_on_a_clean_tree(root: Path) -> None:
+    vault = _vault(root)
+    head = _git(root, "rev-parse", "HEAD")
+
+    assert vault.commit_human_changes() is None
+    assert _git(root, "rev-parse", "HEAD") == head
+
+
+def test_commit_human_changes_keeps_the_trash_out_when_it_is_gitignored(root: Path) -> None:
+    (root / ".gitignore").write_text(".trash/\n")
+    _git(root, "add", ".gitignore")
+    _git(root, "commit", "-q", "-m", "ignore trash")
+    vault = _vault(root)
+    (root / ".trash").mkdir()
+    (root / ".trash/gone.md").write_text("deleted\n")
+    (root / "note.md").write_text("hello\n")
+
+    vault.commit_human_changes()
+
+    assert _git(root, "show", "--name-only", "--format=", "HEAD").split() == ["note.md"]
+    assert _git(root, "status", "--porcelain") == ""
+
+
+def test_undo_of_a_human_commit_is_refused(root: Path) -> None:
+    vault = _vault(root)
+    (root / "note.md").write_text("edited by hand\n")
+    human = vault.commit_human_changes()
+    assert human is not None
+
+    with pytest.raises(VaultError) as error:
+        vault.undo(human, _provenance())
+
+    assert error.value.code == "zone_denied"
+    assert "only commits authored by the brain" in error.value.message
+    assert _git(root, "rev-parse", "HEAD") == human
+    assert (root / "note.md").read_text() == "edited by hand\n"
+
+
+def test_human_author_cannot_be_the_brain_author(root: Path) -> None:
+    with pytest.raises(ValueError, match="human_email must differ"):
+        VaultConfig(root=root, human_email="brain@localhost")
+
+
+def test_human_author_is_configurable(root: Path) -> None:
+    vault = _vault(root, human_name="owner", human_email="owner@localhost")
+    (root / "note.md").write_text("edited by hand\n")
+
+    vault.commit_human_changes()
+
+    assert _git(root, "log", "-1", "--format=%an <%ae>") == "owner <owner@localhost>"

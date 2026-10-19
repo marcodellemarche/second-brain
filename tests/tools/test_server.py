@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,7 +14,14 @@ import pytest
 
 from second_brain.tools.core_vault import vault_tools
 from second_brain.tools.registry import Registry
-from second_brain.tools.server import BearerAuth, build_server, dispatch, tool_callable
+from second_brain.tools.server import (
+    BearerAuth,
+    build_server,
+    commit_human_changes_once,
+    dispatch,
+    start_human_commit_timer,
+    tool_callable,
+)
 from second_brain.tools.vault import Vault, VaultConfig
 
 TOKEN = "test-token-9f3a"
@@ -265,3 +273,28 @@ def test_main_reads_only_the_tools_config(
     assert served["host"] == "127.0.0.1"
     assert served["port"] == 9999
     assert served["app"] is not None
+
+
+def test_the_timer_commits_the_changes_made_by_hand(vault_root: Path) -> None:
+    vault = Vault(VaultConfig(root=vault_root))
+    (vault_root / "note.md").write_text("edited by hand\n")
+
+    thread = start_human_commit_timer(vault, 0.01)
+    deadline = time.monotonic() + 5
+    while _git(vault_root, "status", "--porcelain") and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert thread.daemon is True
+    assert _git(vault_root, "log", "-1", "--format=%s") == "human: 1 files"
+    assert _git(vault_root, "status", "--porcelain") == ""
+
+
+def test_one_tick_of_the_timer_commits_pending_changes(vault_root: Path) -> None:
+    vault = Vault(VaultConfig(root=vault_root))
+    (vault_root / "note.md").write_text("edited by hand\n")
+
+    sha = commit_human_changes_once(vault)
+
+    assert sha == _git(vault_root, "rev-parse", "HEAD")
+    assert _git(vault_root, "log", "-1", "--format=%s") == "human: 1 files"
+    assert commit_human_changes_once(vault) is None

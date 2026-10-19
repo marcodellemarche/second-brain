@@ -119,6 +119,7 @@ class ToolsConfig(BaseModel):
     vault: VaultConfig
     token_file: Path
     listen: Listen = Field(default_factory=Listen)
+    human_commit_seconds: float = Field(default=300, gt=0)
     calendar: CalendarToolsConfig | None = None
     weather: WeatherConfig | None = None
     links: LinkConfig | None = None
@@ -193,7 +194,8 @@ def build_registry(
     caller passes one (the tests do).
     """
     registry = Registry()
-    for tool in vault_tools(Vault(config.vault)):
+    vault = Vault(config.vault)
+    for tool in vault_tools(vault):
         registry.add(tool)
     for tool in _optional_tools(config, calendar_backend):
         registry.add(tool)

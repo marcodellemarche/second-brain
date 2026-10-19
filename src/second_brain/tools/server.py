@@ -12,6 +12,8 @@ import hmac
 import inspect
 import json
 import logging
+import threading
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Annotated, Any, Literal, cast
 
@@ -22,7 +24,7 @@ from pydantic import BaseModel, Field, ValidationError, WithJsonSchema
 
 from second_brain.tools.config import ToolsConfig, build_registry
 from second_brain.tools.registry import Registry
-from second_brain.tools.vault import Provenance, VaultError
+from second_brain.tools.vault import Provenance, Vault, VaultError
 
 log = logging.getLogger(__name__)
 
@@ -219,9 +221,32 @@ def main() -> None:
     config = ToolsConfig.load()
     token = config.read_token()
     registry = build_registry(config)
+    start_human_commit_timer(Vault(config.vault), config.human_commit_seconds)
     host, port = config.listen.host, config.listen.port
     log.info("brain_tools serving %d tools on %s:%d", len(registry.specs()), host, port)
     uvicorn.run(build_app(registry, token), host=host, port=port, log_level="info")
+
+
+def commit_human_changes_once(vault: Vault) -> str | None:
+    """One tick of the timer. A failure is logged, never raised: the server keeps serving."""
+    try:
+        return vault.commit_human_changes()
+    except VaultError:
+        log.exception("could not commit the changes made in the vault by hand")
+        return None
+
+
+def start_human_commit_timer(vault: Vault, seconds: float) -> threading.Thread:
+    """Commit the user's edits in the background, so history shows them even with no brain write."""
+
+    def loop() -> None:
+        while True:
+            time.sleep(seconds)
+            commit_human_changes_once(vault)
+
+    thread = threading.Thread(target=loop, name="brain_tools-human-commit", daemon=True)
+    thread.start()
+    return thread
 
 
 if __name__ == "__main__":
