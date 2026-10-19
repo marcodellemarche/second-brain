@@ -6,15 +6,21 @@ child read as if it came from the user. Instead the work is queued here and a si
 a new Hermes run through a webhook route whose toolset is restricted by hand in the Hermes config.
 
 The payload never carries vault content: a title, a question and an optional note path. A research
-job therefore cannot see the vault, which is what makes it safe to give it the web.
+job therefore cannot see the vault. It can still reach the web, and whatever the model writes into
+the question leaves the system, so a kind with `web` set is enqueued through its own tool with
+effect `external`, which puts it under the guard's rule of two. Kinds without the web go through
+`job_enqueue`, which only changes our own data.
 
 The queue is one SQLite file. `claim` moves a job from queued to running inside an immediate
-transaction, so two runners never take the same job. A job that fails goes back to the queue until
-it has been tried three times, then it is `failed` with the last error. Enqueueing the same kind
-with the same canonical payload while a job is still queued or running returns that job's id, so a
-model that asks twice does not start two runs.
+transaction, so two runners never take the same job. A 2xx from the webhook means Hermes accepted
+the run, not that the work is done, so the job becomes `dispatched` and only `finished` once its
+result note exists. A job that cannot be sent goes back to the queue until it has been tried three
+times, then it is `failed` with the last error. A job left `running` for too long (the runner died
+between the claim and the send) is reclaimed and counted as a used attempt. Enqueueing the same
+kind with the same canonical payload while a job is still queued, running or dispatched returns
+that job's id, so a model that asks twice does not start two runs.
 
-Error code of the tool: `unknown_kind`.
+Error codes of the tools: `unknown_kind` and `wrong_tool`.
 """
 
 from __future__ import annotations
@@ -39,7 +45,10 @@ JOB_CREDENTIALS: tuple[str, ...] = ()
 
 MAX_ATTEMPTS = 3
 MAX_ERROR_LENGTH = 500
-STATUSES: tuple[str, ...] = ("queued", "running", "finished", "failed")
+DEFAULT_STALE_AFTER = 15 * 60.0
+STALE_ERROR = "the run was claimed and never reported back"
+STATUSES: tuple[str, ...] = ("queued", "running", "dispatched", "finished", "failed")
+_IN_FLIGHT: tuple[str, ...] = ("queued", "running", "dispatched")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -51,6 +60,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     session TEXT NOT NULL,
     created REAL NOT NULL,
     started REAL,
+    dispatched REAL,
     finished REAL,
     attempts INTEGER NOT NULL DEFAULT 0,
     error TEXT
@@ -78,6 +88,10 @@ class JobKind(BaseModel):
         description="Name of the Hermes webhook route, as configured by hand.",
     )
     description: str = Field(min_length=1, max_length=200, description="What this kind does.")
+    web: bool = Field(
+        description="True when the route can reach the web, which makes enqueueing it an "
+        "external call. There is no default: forgetting it must not silently relax the guard."
+    )
 
 
 def _vault_path(value: str) -> str:
@@ -145,6 +159,8 @@ class JobPayload(BaseModel):
 
 
 class JobEnqueueParams(BaseModel):
+    """The params of both enqueue tools: they differ in effect, not in what they carry."""
+
     model_config = ConfigDict(extra="forbid")
 
     kind: str = Field(min_length=1, max_length=64, description="Kind of job, one of the configured ones.")
@@ -172,6 +188,7 @@ class Job:
     session: str
     created: float
     started: float | None
+    dispatched: float | None
     finished: float | None
     attempts: int
     error: str | None
@@ -187,6 +204,7 @@ def _job(row: sqlite3.Row, **overrides: Any) -> Job:
         "session": row["session"],
         "created": row["created"],
         "started": row["started"],
+        "dispatched": row["dispatched"],
         "finished": row["finished"],
         "attempts": row["attempts"],
         "error": row["error"],
@@ -198,9 +216,18 @@ def _job(row: sqlite3.Row, **overrides: Any) -> Job:
 class JobStore:
     """One SQLite file with the queue. Every operation is serialized inside the process."""
 
-    def __init__(self, path: Path | str, *, clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        clock: Callable[[], float] = time.time,
+        stale_after: float = DEFAULT_STALE_AFTER,
+    ) -> None:
+        if stale_after <= 0:
+            raise ValueError("stale_after must be positive")
         self._path = Path(path)
         self._clock = clock
+        self._stale_after = stale_after
         self._lock = threading.Lock()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(self._path, check_same_thread=False, isolation_level=None)
@@ -209,6 +236,13 @@ class JobStore:
             self._connection.execute("PRAGMA journal_mode=WAL")
             self._connection.execute("PRAGMA busy_timeout=5000")
             self._connection.executescript(_SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add the columns a queue file from an older release is missing."""
+        columns = {row["name"] for row in self._connection.execute("PRAGMA table_info(jobs)")}
+        if "dispatched" not in columns:
+            self._connection.execute("ALTER TABLE jobs ADD COLUMN dispatched REAL")
 
     @property
     def path(self) -> Path:
@@ -234,7 +268,8 @@ class JobStore:
             cursor.execute("BEGIN IMMEDIATE")
             try:
                 waiting = cursor.execute(
-                    "SELECT id FROM jobs WHERE kind = ? AND payload = ? AND status IN ('queued', 'running')"
+                    "SELECT id FROM jobs WHERE kind = ? AND payload = ?"
+                    " AND status IN ('queued', 'running', 'dispatched')"
                     " ORDER BY created, rowid LIMIT 1",
                     (kind, canonical),
                 ).fetchone()
@@ -244,9 +279,9 @@ class JobStore:
                 job_id = uuid.uuid4().hex
                 cursor.execute(
                     "INSERT INTO jobs"
-                    " (id, kind, payload, status, requested_by, session, created, started, finished,"
-                    " attempts, error)"
-                    " VALUES (?, ?, ?, 'queued', ?, ?, ?, NULL, NULL, 0, NULL)",
+                    " (id, kind, payload, status, requested_by, session, created, started,"
+                    " dispatched, finished, attempts, error)"
+                    " VALUES (?, ?, ?, 'queued', ?, ?, ?, NULL, NULL, NULL, 0, NULL)",
                     (job_id, kind, canonical, requested_by, session, self._clock()),
                 )
                 cursor.execute("COMMIT")
@@ -269,8 +304,8 @@ class JobStore:
                     return None
                 started = self._clock()
                 cursor.execute(
-                    "UPDATE jobs SET status = 'running', started = ?, attempts = attempts + 1"
-                    " WHERE id = ? AND status = 'queued'",
+                    "UPDATE jobs SET status = 'running', started = ?, dispatched = NULL,"
+                    " attempts = attempts + 1 WHERE id = ? AND status = 'queued'",
                     (started, row["id"]),
                 )
                 if cursor.rowcount != 1:
@@ -279,36 +314,89 @@ class JobStore:
             except BaseException:
                 cursor.execute("ROLLBACK")
                 raise
-        return _job(row, status="running", started=started, attempts=row["attempts"] + 1)
+        return _job(row, status="running", started=started, dispatched=None, attempts=row["attempts"] + 1)
 
-    def finish(self, job_id: str) -> None:
-        """Mark a running job finished. A job that is not running is left alone."""
+    def dispatch(self, job_id: str) -> None:
+        """Record that Hermes accepted the run. The work itself is not done yet."""
         with self._lock:
             self._connection.execute(
-                "UPDATE jobs SET status = 'finished', finished = ?, error = NULL"
+                "UPDATE jobs SET status = 'dispatched', dispatched = ?, error = NULL"
                 " WHERE id = ? AND status = 'running'",
                 (self._clock(), job_id),
             )
 
-    def fail(self, job_id: str, error: str) -> None:
-        """Record the error, and put the job back in the queue until it has been tried enough."""
+    def mark_finished(self, job_id: str) -> None:
+        """Mark a job finished: its result note exists, so the run did what it was asked."""
+        with self._lock:
+            self._connection.execute(
+                "UPDATE jobs SET status = 'finished', finished = ?, error = NULL"
+                " WHERE id = ? AND status IN ('running', 'dispatched')",
+                (self._clock(), job_id),
+            )
+
+    def fail(self, job_id: str, error: str, *, retry: bool = True) -> None:
+        """Record the error, and put the job back in the queue until it has been tried enough.
+
+        `retry=False` gives up immediately: a run that was already dispatched may still be
+        working, so sending it again would duplicate the work instead of recovering it.
+        """
         message = " ".join(str(error).split())[:MAX_ERROR_LENGTH] or "unknown error"
         with self._lock:
-            row = self._connection.execute("SELECT attempts FROM jobs WHERE id = ?", (job_id,)).fetchone()
-            if row is None:
+            row = self._connection.execute(
+                "SELECT status, attempts FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if row is None or row["status"] not in ("running", "dispatched"):
                 return
-            if row["attempts"] < MAX_ATTEMPTS:
+            if retry and row["attempts"] < MAX_ATTEMPTS:
                 self._connection.execute(
-                    "UPDATE jobs SET status = 'queued', started = NULL, error = ?"
-                    " WHERE id = ? AND status = 'running'",
+                    "UPDATE jobs SET status = 'queued', started = NULL, dispatched = NULL, error = ?"
+                    " WHERE id = ? AND status IN ('running', 'dispatched')",
                     (message, job_id),
                 )
                 return
             self._connection.execute(
                 "UPDATE jobs SET status = 'failed', finished = ?, error = ?"
-                " WHERE id = ? AND status = 'running'",
+                " WHERE id = ? AND status IN ('running', 'dispatched')",
                 (self._clock(), message, job_id),
             )
+
+    def reclaim_stale(self) -> list[str]:
+        """Return the jobs left running for too long to the queue, or fail them for good.
+
+        A job is running only between the claim and the send, so one that has been running for
+        longer than `stale_after` belongs to a runner that died. The attempt it used is kept, so a
+        job that keeps killing its runner stops after `MAX_ATTEMPTS`.
+        """
+        now = self._clock()
+        reclaimed: list[str] = []
+        with self._lock:
+            cursor = self._connection.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            try:
+                rows = cursor.execute(
+                    "SELECT id, attempts FROM jobs WHERE status = 'running'"
+                    " AND started IS NOT NULL AND started < ?",
+                    (now - self._stale_after,),
+                ).fetchall()
+                for row in rows:
+                    if row["attempts"] >= MAX_ATTEMPTS:
+                        cursor.execute(
+                            "UPDATE jobs SET status = 'failed', finished = ?, error = ?"
+                            " WHERE id = ? AND status = 'running'",
+                            (now, STALE_ERROR, row["id"]),
+                        )
+                    else:
+                        cursor.execute(
+                            "UPDATE jobs SET status = 'queued', started = NULL, dispatched = NULL,"
+                            " error = ? WHERE id = ? AND status = 'running'",
+                            (STALE_ERROR, row["id"]),
+                        )
+                    reclaimed.append(str(row["id"]))
+                cursor.execute("COMMIT")
+            except BaseException:
+                cursor.execute("ROLLBACK")
+                raise
+        return reclaimed
 
     def list(self, status: str | None = None, limit: int = 50) -> list[Job]:
         """The most recent jobs first, optionally only those in one status."""
@@ -331,46 +419,90 @@ def _refused(exc: JobError) -> dict[str, Any]:
     return {"ok": False, "code": exc.code, "message": exc.message}
 
 
-def _guarded(run: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-    """Run an enqueue, turning a refusal into a result instead of an exception."""
-    try:
-        return {"ok": True, **run()}
-    except JobError as exc:
-        return _refused(exc)
+def _enqueue(
+    store: JobStore,
+    accepted: Mapping[str, JobKind],
+    kinds: Mapping[str, JobKind],
+    tool_name: str,
+) -> Callable[[BaseModel, Provenance], dict[str, Any]]:
+    """The handler of one enqueue tool, accepting only the kinds of its own effect class."""
 
-
-def job_tools(store: JobStore, kinds: dict[str, JobKind]) -> list[Tool]:
-    def job_enqueue(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
+    def handler(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
         assert isinstance(params, JobEnqueueParams)
 
         def run() -> dict[str, Any]:
             kind = params.kind.strip()
-            if kind not in kinds:
-                known = ", ".join(sorted(kinds)) or "none"
+            if kind not in accepted:
+                if kind in kinds:
+                    other = "research_enqueue" if kinds[kind].web else "job_enqueue"
+                    raise JobError(
+                        "wrong_tool",
+                        f"job kind {kind!r} is not enqueued with {tool_name}, use {other}",
+                    )
+                known = ", ".join(sorted(accepted)) or "none"
                 raise JobError("unknown_kind", f"no job kind {kind!r}, configured: {known}")
             payload = JobPayload(title=params.title, question=params.question, note_path=params.note_path)
             job_id = store.enqueue(kind, payload, provenance.requested_by, provenance.session)
             return {"job_id": job_id, "kind": kind, "status": "queued"}
 
-        return _guarded(run)
+        try:
+            return {"ok": True, **run()}
+        except JobError as exc:
+            return _refused(exc)
 
-    return [
-        Tool(
-            spec=ToolSpec(
-                name="job_enqueue",
-                description=(
-                    "Queue work to run in the background: developing an idea, researching a "
-                    "question, answering an open question in a note. The background run receives "
-                    "only the title and the question, never the vault, so write the question out "
-                    "in full. The result lands in a note. The same kind with the same question "
-                    "while one is still waiting returns the job already queued."
+    return handler
+
+
+def job_tools(store: JobStore, kinds: Mapping[str, JobKind]) -> list[Tool]:
+    """The enqueue tools this brain needs, one per effect class.
+
+    A kind whose route can reach the web gets its own external tool, so the guard's rule of two
+    sees the call. A brain with no web kind does not get the research tool at all.
+    """
+    web_kinds = {name: kind for name, kind in kinds.items() if kind.web}
+    local_kinds = {name: kind for name, kind in kinds.items() if not kind.web}
+    tools: list[Tool] = []
+    if web_kinds:
+        tools.append(
+            Tool(
+                spec=ToolSpec(
+                    name="research_enqueue",
+                    description=(
+                        "Queue research to run in the background with web access. The background "
+                        "run receives only the title and the question, never the vault, but "
+                        "whatever the question says leaves the system, so it must be the user's "
+                        "own question and must not carry private content. The result lands in a "
+                        "note. The same kind with the same question while one is still in flight "
+                        "returns the job already queued."
+                    ),
+                    params=JobEnqueueParams,
+                    effect=Effect.EXTERNAL,
+                    autonomy=Autonomy.AUTO,
+                    hosts=JOB_HOSTS,
+                    credentials=JOB_CREDENTIALS,
                 ),
-                params=JobEnqueueParams,
-                effect=Effect.INTERNAL,
-                autonomy=Autonomy.NOTIFY,
-                hosts=JOB_HOSTS,
-                credentials=JOB_CREDENTIALS,
-            ),
-            handler=job_enqueue,
+                handler=_enqueue(store, web_kinds, kinds, "research_enqueue"),
+            )
         )
-    ]
+    if local_kinds:
+        tools.append(
+            Tool(
+                spec=ToolSpec(
+                    name="job_enqueue",
+                    description=(
+                        "Queue work to run in the background without web access: developing an "
+                        "idea, answering an open question in a note. The background run receives "
+                        "only the title and the question, never the vault, so write the question "
+                        "out in full. The result lands in a note. The same kind with the same "
+                        "question while one is still in flight returns the job already queued."
+                    ),
+                    params=JobEnqueueParams,
+                    effect=Effect.INTERNAL,
+                    autonomy=Autonomy.NOTIFY,
+                    hosts=JOB_HOSTS,
+                    credentials=JOB_CREDENTIALS,
+                ),
+                handler=_enqueue(store, local_kinds, kinds, "job_enqueue"),
+            )
+        )
+    return tools

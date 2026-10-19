@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from second_brain.tools.archive import ArchiveConfig, archive_tools
 from second_brain.tools.calendar import (
@@ -24,6 +24,7 @@ from second_brain.tools.calendar import (
     calendar_tools,
 )
 from second_brain.tools.core_vault import vault_tools
+from second_brain.tools.jobs import JobKind, JobStore, job_tools
 from second_brain.tools.links import LinkConfig, link_tools
 from second_brain.tools.registry import Registry, Tool
 from second_brain.tools.vault import Vault, VaultConfig
@@ -65,6 +66,31 @@ class CalendarToolsConfig(BaseModel):
         )
 
 
+class JobsConfig(BaseModel):
+    """The background job section: the queue file and the kinds this brain can queue.
+
+    A kind says whether its webhook route can reach the web, which decides whether enqueueing it
+    is an internal call or an external one. A kind whose route is not listed here cannot be
+    queued at all, so the model cannot invent a route.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    store_path: Path
+    kinds: dict[str, JobKind] = Field(min_length=1)
+
+    @field_validator("kinds")
+    @classmethod
+    def _check_kinds(cls, value: dict[str, JobKind]) -> dict[str, JobKind]:
+        for name in value:
+            if not name or name != name.strip() or len(name) > 64:
+                raise ValueError(f"not a job kind name: {name!r}")
+        return value
+
+    def store(self) -> JobStore:
+        return JobStore(self.store_path)
+
+
 class Listen(BaseModel):
     """Where the server listens, written in the file as one `host:port` string."""
 
@@ -97,6 +123,7 @@ class ToolsConfig(BaseModel):
     weather: WeatherConfig | None = None
     links: LinkConfig | None = None
     archive: ArchiveConfig | None = None
+    jobs: JobsConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -185,6 +212,8 @@ def _optional_tools(config: ToolsConfig, backend: CalendarBackend | None) -> lis
         tools.extend(link_tools(config.links))
     if config.archive is not None:
         tools.extend(archive_tools(config.archive))
+    if config.jobs is not None:
+        tools.extend(job_tools(config.jobs.store(), config.jobs.kinds))
     return tools
 
 

@@ -1,4 +1,4 @@
-"""Tests for the job queue and the job_enqueue tool."""
+"""Tests for the job queue and the two enqueue tools."""
 
 from __future__ import annotations
 
@@ -13,7 +13,9 @@ from pydantic import ValidationError
 
 from second_brain.core.types import Autonomy, Effect
 from second_brain.tools.jobs import (
+    DEFAULT_STALE_AFTER,
     MAX_ATTEMPTS,
+    STATUSES,
     Job,
     JobEnqueueParams,
     JobKind,
@@ -25,8 +27,8 @@ from second_brain.tools.registry import Tool
 from second_brain.tools.vault import Provenance
 
 KINDS = {
-    "research": JobKind(route="background-research", description="Research a question on the web."),
-    "develop_idea": JobKind(route="background-idea", description="Develop an idea into a note."),
+    "research": JobKind(route="background-research", description="Research a question on the web.", web=True),
+    "develop_idea": JobKind(route="background-idea", description="Develop an idea into a note.", web=False),
 }
 
 
@@ -37,6 +39,19 @@ class FakeClock:
     def __call__(self) -> float:
         self.now += 1.0
         return self.now
+
+
+class ManualClock:
+    """A clock that only moves when the test moves it."""
+
+    def __init__(self, now: float = 1000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
 
 
 def _provenance(**overrides: object) -> Provenance:
@@ -69,8 +84,8 @@ def _payload(**overrides: Any) -> dict[str, Any]:
     return values
 
 
-def _call(tools: dict[str, Tool], params: dict[str, Any], **prov: object) -> dict[str, Any]:
-    tool = tools["job_enqueue"]
+def _call(tools: dict[str, Tool], name: str, params: dict[str, Any], **prov: object) -> dict[str, Any]:
+    tool = tools[name]
     parsed = tool.spec.params.model_validate(params)
     return tool.handler(parsed, _provenance(**prov))
 
@@ -84,8 +99,15 @@ def _claimed(store: JobStore) -> Job:
 # --- specs ---------------------------------------------------------------------------------
 
 
-def test_there_is_exactly_one_job_tool(tools: dict[str, Tool]) -> None:
-    assert set(tools) == {"job_enqueue"}
+def test_there_is_one_tool_per_effect_class(tools: dict[str, Tool]) -> None:
+    assert set(tools) == {"research_enqueue", "job_enqueue"}
+
+
+def test_research_enqueue_is_external_and_auto(tools: dict[str, Tool]) -> None:
+    spec = tools["research_enqueue"].spec
+    assert (spec.effect, spec.autonomy) == (Effect.EXTERNAL, Autonomy.AUTO)
+    assert spec.hosts == ()
+    assert spec.credentials == ()
 
 
 def test_job_enqueue_is_internal_and_notifies(tools: dict[str, Tool]) -> None:
@@ -95,9 +117,33 @@ def test_job_enqueue_is_internal_and_notifies(tools: dict[str, Tool]) -> None:
     assert spec.credentials == ()
 
 
+def test_the_two_tools_take_the_same_params(tools: dict[str, Tool]) -> None:
+    assert tools["research_enqueue"].spec.params is JobEnqueueParams
+    assert tools["job_enqueue"].spec.params is JobEnqueueParams
+
+
+def test_a_web_kind_is_required_to_say_so() -> None:
+    with pytest.raises(ValidationError):
+        JobKind.model_validate({"route": "background-research", "description": "Research."})
+
+
 def test_the_payload_has_no_field_for_vault_content() -> None:
     assert set(JobPayload.model_fields) == {"title", "question", "note_path"}
     assert set(JobEnqueueParams.model_fields) == {"kind", "title", "question", "note_path"}
+
+
+def test_a_brain_with_only_web_kinds_gets_only_the_research_tool(store: JobStore) -> None:
+    kinds = {"research": KINDS["research"]}
+    assert {tool.spec.name for tool in job_tools(store, kinds)} == {"research_enqueue"}
+
+
+def test_a_brain_with_only_local_kinds_gets_only_the_job_tool(store: JobStore) -> None:
+    kinds = {"develop_idea": KINDS["develop_idea"]}
+    assert {tool.spec.name for tool in job_tools(store, kinds)} == {"job_enqueue"}
+
+
+def test_no_kinds_means_no_tools(store: JobStore) -> None:
+    assert job_tools(store, {}) == []
 
 
 # --- enqueue -------------------------------------------------------------------------------
@@ -112,9 +158,7 @@ def test_enqueue_returns_a_job_that_is_queued(store: JobStore) -> None:
     assert (job.id, job.kind, job.status) == (job_id, "research", "queued")
     assert (job.requested_by, job.session) == ("user-1", "session-1")
     assert job.attempts == 0
-    assert job.started is None
-    assert job.finished is None
-    assert job.error is None
+    assert (job.started, job.dispatched, job.finished, job.error) == (None, None, None, None)
 
 
 def test_enqueue_keeps_the_payload(store: JobStore) -> None:
@@ -136,6 +180,13 @@ def test_enqueue_is_idempotent_for_the_same_payload(store: JobStore) -> None:
 def test_enqueue_is_idempotent_for_the_same_payload_while_running(store: JobStore) -> None:
     first = store.enqueue("research", _payload(), "user-1", "session-1")
     assert store.claim() is not None
+    assert store.enqueue("research", _payload(), "user-1", "session-1") == first
+
+
+def test_enqueue_is_idempotent_for_the_same_payload_while_dispatched(store: JobStore) -> None:
+    first = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    store.dispatch(first)
     assert store.enqueue("research", _payload(), "user-1", "session-1") == first
 
 
@@ -161,7 +212,7 @@ def test_enqueue_treats_a_different_question_as_a_different_job(store: JobStore)
 def test_a_finished_job_does_not_block_a_new_one(store: JobStore) -> None:
     first = store.enqueue("research", _payload(), "user-1", "session-1")
     store.claim()
-    store.finish(first)
+    store.mark_finished(first)
     second = store.enqueue("research", _payload(), "user-1", "session-1")
     assert second != first
 
@@ -283,22 +334,56 @@ def test_two_threads_enqueueing_the_same_payload_get_one_job(tmp_path: Path) -> 
     assert len(first.list()) == 1
 
 
-# --- finish and fail -----------------------------------------------------------------------
+# --- dispatch and finish -------------------------------------------------------------------
 
 
-def test_finish_marks_the_job_finished(store: JobStore) -> None:
+def test_dispatch_marks_the_job_dispatched(store: JobStore) -> None:
     job_id = store.enqueue("research", _payload(), "user-1", "session-1")
     store.claim()
-    store.finish(job_id)
+    store.dispatch(job_id)
+    job = store.list()[0]
+    assert (job.status, job.error) == ("dispatched", None)
+    assert job.dispatched is not None
+    assert job.finished is None
+
+
+def test_dispatch_leaves_a_queued_job_alone(store: JobStore) -> None:
+    job_id = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.dispatch(job_id)
+    assert store.list()[0].status == "queued"
+
+
+def test_mark_finished_finishes_a_dispatched_job(store: JobStore) -> None:
+    job_id = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    store.dispatch(job_id)
+    store.mark_finished(job_id)
     job = store.list()[0]
     assert (job.status, job.error) == ("finished", None)
     assert job.finished is not None
 
 
-def test_finish_leaves_a_queued_job_alone(store: JobStore) -> None:
+def test_mark_finished_finishes_a_running_job(store: JobStore) -> None:
     job_id = store.enqueue("research", _payload(), "user-1", "session-1")
-    store.finish(job_id)
+    store.claim()
+    store.mark_finished(job_id)
+    assert store.list()[0].status == "finished"
+
+
+def test_mark_finished_leaves_a_queued_job_alone(store: JobStore) -> None:
+    job_id = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.mark_finished(job_id)
     assert store.list()[0].status == "queued"
+
+
+def test_a_dispatched_job_is_not_claimed_again(store: JobStore) -> None:
+    job_id = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    store.dispatch(job_id)
+    assert store.claim() is None
+
+
+# --- fail ----------------------------------------------------------------------------------
 
 
 def test_fail_puts_the_job_back_in_the_queue(store: JobStore) -> None:
@@ -330,6 +415,25 @@ def test_a_job_fails_after_three_attempts(store: JobStore) -> None:
     assert store.claim() is None
 
 
+def test_a_failed_job_can_be_failed_without_a_retry(store: JobStore) -> None:
+    job_id = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    store.dispatch(job_id)
+    store.fail(job_id, "no result note", retry=False)
+    job = store.list()[0]
+    assert (job.status, job.attempts) == ("failed", 1)
+    assert job.error == "no result note"
+
+
+def test_a_dispatched_job_can_go_back_to_the_queue(store: JobStore) -> None:
+    job_id = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    store.dispatch(job_id)
+    store.fail(job_id, "boom")
+    job = store.list()[0]
+    assert (job.status, job.dispatched) == ("queued", None)
+
+
 def test_a_job_that_failed_is_not_retried_by_enqueue(store: JobStore) -> None:
     job_id = store.enqueue("research", _payload(), "user-1", "session-1")
     for _ in range(MAX_ATTEMPTS):
@@ -353,6 +457,93 @@ def test_fail_on_an_unknown_job_does_nothing(store: JobStore) -> None:
     assert store.list() == []
 
 
+def test_fail_leaves_a_finished_job_alone(store: JobStore) -> None:
+    job_id = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    store.mark_finished(job_id)
+    store.fail(job_id, "boom")
+    assert store.list()[0].status == "finished"
+
+
+# --- stale jobs ----------------------------------------------------------------------------
+
+
+def test_the_stale_window_is_fifteen_minutes() -> None:
+    assert DEFAULT_STALE_AFTER == 900.0
+
+
+def test_a_running_job_goes_back_to_the_queue_when_it_is_stale(tmp_path: Path) -> None:
+    clock = ManualClock()
+    store = JobStore(tmp_path / "jobs.sqlite3", clock=clock)
+    job_id = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    clock.advance(DEFAULT_STALE_AFTER + 1)
+    assert store.reclaim_stale() == [job_id]
+    job = store.list()[0]
+    assert (job.status, job.attempts, job.started) == ("queued", 1, None)
+    assert job.error is not None
+    assert store.reclaim_stale() == []
+
+
+def test_a_reclaimed_job_can_be_claimed_again_and_counts_the_attempt(tmp_path: Path) -> None:
+    clock = ManualClock()
+    store = JobStore(tmp_path / "jobs.sqlite3", clock=clock)
+    job_id = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    clock.advance(DEFAULT_STALE_AFTER + 1)
+    store.reclaim_stale()
+    again = _claimed(store)
+    assert (again.id, again.attempts) == (job_id, 2)
+
+
+def test_a_fresh_running_job_is_left_alone(tmp_path: Path) -> None:
+    clock = ManualClock()
+    store = JobStore(tmp_path / "jobs.sqlite3", clock=clock)
+    store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    clock.advance(DEFAULT_STALE_AFTER - 1)
+    assert store.reclaim_stale() == []
+    assert len(store.list("running")) == 1
+
+
+def test_a_stale_job_that_used_every_attempt_fails(tmp_path: Path) -> None:
+    clock = ManualClock()
+    store = JobStore(tmp_path / "jobs.sqlite3", clock=clock)
+    store.enqueue("research", _payload(), "user-1", "session-1")
+    for _ in range(MAX_ATTEMPTS):
+        store.claim()
+        clock.advance(DEFAULT_STALE_AFTER + 1)
+        store.reclaim_stale()
+    job = store.list()[0]
+    assert (job.status, job.attempts) == ("failed", MAX_ATTEMPTS)
+    assert store.claim() is None
+
+
+def test_a_dispatched_job_is_not_stale(tmp_path: Path) -> None:
+    clock = ManualClock()
+    store = JobStore(tmp_path / "jobs.sqlite3", clock=clock)
+    job_id = store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    store.dispatch(job_id)
+    clock.advance(DEFAULT_STALE_AFTER * 4)
+    assert store.reclaim_stale() == []
+    assert store.list()[0].status == "dispatched"
+
+
+def test_the_stale_window_is_configurable(tmp_path: Path) -> None:
+    clock = ManualClock()
+    store = JobStore(tmp_path / "jobs.sqlite3", clock=clock, stale_after=10)
+    store.enqueue("research", _payload(), "user-1", "session-1")
+    store.claim()
+    clock.advance(11)
+    assert len(store.reclaim_stale()) == 1
+
+
+def test_a_useless_stale_window_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        JobStore(tmp_path / "jobs.sqlite3", stale_after=0)
+
+
 # --- list ----------------------------------------------------------------------------------
 
 
@@ -370,10 +561,15 @@ def test_list_filters_by_status_and_limit(store: JobStore) -> None:
     done = store.enqueue("research", _payload(question="Done one."), "user-1", "session-1")
     store.enqueue("research", _payload(question="Queued one."), "user-1", "session-1")
     store.claim()
-    store.finish(done)
+    store.mark_finished(done)
     assert [job.id for job in store.list("finished")] == [done]
     assert len(store.list("queued")) == 1
     assert len(store.list(limit=1)) == 1
+
+
+def test_every_status_can_be_listed(store: JobStore) -> None:
+    for status in STATUSES:
+        assert store.list(status) == []
 
 
 def test_list_refuses_an_unknown_status(store: JobStore) -> None:
@@ -387,71 +583,119 @@ def test_the_store_reopens_the_same_file(tmp_path: Path) -> None:
     assert [job.id for job in JobStore(path).list()] == [job_id]
 
 
-# --- the tool ------------------------------------------------------------------------------
+def test_a_queue_file_from_before_the_dispatch_column_still_opens(tmp_path: Path) -> None:
+    path = tmp_path / "jobs.sqlite3"
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            "CREATE TABLE jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL,"
+            " status TEXT NOT NULL, requested_by TEXT NOT NULL, session TEXT NOT NULL,"
+            " created REAL NOT NULL, started REAL, finished REAL,"
+            " attempts INTEGER NOT NULL DEFAULT 0, error TEXT);"
+        )
+    job_id = JobStore(path).enqueue("research", _payload(), "user-1", "session-1")
+    job = JobStore(path).list()[0]
+    assert (job.id, job.dispatched) == (job_id, None)
 
 
-def test_job_enqueue_queues_a_job(tools: dict[str, Tool], store: JobStore) -> None:
-    result = _call(tools, {"kind": "research", **_payload()})
+# --- the tools -----------------------------------------------------------------------------
+
+
+def test_research_enqueue_queues_a_web_job(tools: dict[str, Tool], store: JobStore) -> None:
+    result = _call(tools, "research_enqueue", {"kind": "research", **_payload()})
     assert result == {"ok": True, "job_id": store.list()[0].id, "kind": "research", "status": "queued"}
     job = store.list()[0]
     assert (job.requested_by, job.session) == ("user-1", "session-1")
 
 
+def test_job_enqueue_queues_a_local_job(tools: dict[str, Tool], store: JobStore) -> None:
+    result = _call(tools, "job_enqueue", {"kind": "develop_idea", **_payload()})
+    assert result["ok"] is True
+    assert store.list()[0].kind == "develop_idea"
+
+
 def test_job_enqueue_uses_the_provenance_as_the_requester(tools: dict[str, Tool], store: JobStore) -> None:
-    _call(tools, {"kind": "develop_idea", **_payload()}, requested_by="user-7", session="session-9")
+    _call(
+        tools,
+        "job_enqueue",
+        {"kind": "develop_idea", **_payload()},
+        requested_by="user-7",
+        session="session-9",
+    )
     job = store.list()[0]
     assert (job.kind, job.requested_by, job.session) == ("develop_idea", "user-7", "session-9")
 
 
-def test_job_enqueue_returns_the_same_id_twice(tools: dict[str, Tool], store: JobStore) -> None:
-    first = _call(tools, {"kind": "research", **_payload()})
-    second = _call(tools, {"kind": "research", **_payload()})
+def test_research_enqueue_refuses_a_local_kind(tools: dict[str, Tool], store: JobStore) -> None:
+    result = _call(tools, "research_enqueue", {"kind": "develop_idea", **_payload()})
+    assert (result["ok"], result["code"]) == (False, "wrong_tool")
+    assert "job_enqueue" in result["message"]
+    assert store.list() == []
+
+
+def test_job_enqueue_refuses_a_web_kind(tools: dict[str, Tool], store: JobStore) -> None:
+    result = _call(tools, "job_enqueue", {"kind": "research", **_payload()})
+    assert (result["ok"], result["code"]) == (False, "wrong_tool")
+    assert "research_enqueue" in result["message"]
+    assert store.list() == []
+
+
+def test_each_tool_returns_the_same_id_twice(tools: dict[str, Tool], store: JobStore) -> None:
+    first = _call(tools, "research_enqueue", {"kind": "research", **_payload()})
+    second = _call(tools, "research_enqueue", {"kind": "research", **_payload()})
     assert first["job_id"] == second["job_id"]
     assert len(store.list()) == 1
 
 
-def test_job_enqueue_refuses_an_unknown_kind(tools: dict[str, Tool], store: JobStore) -> None:
-    result = _call(tools, {"kind": "delete_the_vault", **_payload()})
+def test_research_enqueue_refuses_an_unknown_kind(tools: dict[str, Tool], store: JobStore) -> None:
+    result = _call(tools, "research_enqueue", {"kind": "delete_the_vault", **_payload()})
     assert result["ok"] is False
     assert result["code"] == "unknown_kind"
     assert "research" in result["message"]
     assert store.list() == []
 
 
-def test_job_enqueue_refuses_a_question_over_the_limit(tools: dict[str, Tool], store: JobStore) -> None:
-    with pytest.raises(ValidationError):
-        _call(tools, {"kind": "research", **_payload(question="x" * 2001)})
+def test_job_enqueue_refuses_an_unknown_kind(tools: dict[str, Tool], store: JobStore) -> None:
+    result = _call(tools, "job_enqueue", {"kind": "delete_the_vault", **_payload()})
+    assert result["ok"] is False
+    assert result["code"] == "unknown_kind"
+    assert "develop_idea" in result["message"]
+    assert "research" not in result["message"]
     assert store.list() == []
 
 
-def test_job_enqueue_accepts_a_question_at_the_limit(tools: dict[str, Tool], store: JobStore) -> None:
-    result = _call(tools, {"kind": "research", **_payload(question="x" * 2000)})
+def test_the_unknown_kind_message_of_a_single_tool_lists_its_own_kinds(store: JobStore) -> None:
+    tools = {tool.spec.name: tool for tool in job_tools(store, {"develop_idea": KINDS["develop_idea"]})}
+    result = _call(tools, "job_enqueue", {"kind": "research", **_payload()})
+    assert (result["ok"], result["code"]) == (False, "unknown_kind")
+
+
+def test_a_question_over_the_limit_is_refused(tools: dict[str, Tool], store: JobStore) -> None:
+    with pytest.raises(ValidationError):
+        _call(tools, "research_enqueue", {"kind": "research", **_payload(question="x" * 2001)})
+    assert store.list() == []
+
+
+def test_a_question_at_the_limit_is_accepted(tools: dict[str, Tool]) -> None:
+    result = _call(tools, "research_enqueue", {"kind": "research", **_payload(question="x" * 2000)})
     assert result["ok"] is True
 
 
-def test_job_enqueue_refuses_an_empty_question(tools: dict[str, Tool]) -> None:
+def test_an_empty_question_is_refused(tools: dict[str, Tool]) -> None:
     with pytest.raises(ValidationError):
-        _call(tools, {"kind": "research", **_payload(question="   ")})
+        _call(tools, "research_enqueue", {"kind": "research", **_payload(question="   ")})
 
 
-def test_job_enqueue_flattens_the_title(tools: dict[str, Tool], store: JobStore) -> None:
-    _call(tools, {"kind": "research", **_payload(title="  Heat   pumps\nbelow zero  ")})
+def test_the_title_is_flattened(tools: dict[str, Tool], store: JobStore) -> None:
+    _call(tools, "research_enqueue", {"kind": "research", **_payload(title="  Heat   pumps\nbelow zero  ")})
     assert store.list()[0].payload.title == "Heat pumps below zero"
 
 
-def test_job_enqueue_refuses_a_note_path_outside_the_vault(tools: dict[str, Tool]) -> None:
+def test_a_note_path_outside_the_vault_is_refused(tools: dict[str, Tool]) -> None:
     for path in ("../outside.md", "/etc/notes.md", "ideas/../../x.md", "ideas//x.md", "ideas/x.txt"):
         with pytest.raises(ValidationError):
-            _call(tools, {"kind": "research", **_payload(note_path=path)})
+            _call(tools, "research_enqueue", {"kind": "research", **_payload(note_path=path)})
 
 
-def test_job_enqueue_keeps_a_note_path_inside_the_vault(tools: dict[str, Tool], store: JobStore) -> None:
-    _call(tools, {"kind": "research", **_payload(note_path="ideas/heat-pumps.md")})
+def test_a_note_path_inside_the_vault_is_kept(tools: dict[str, Tool], store: JobStore) -> None:
+    _call(tools, "job_enqueue", {"kind": "develop_idea", **_payload(note_path="ideas/heat-pumps.md")})
     assert store.list()[0].payload.note_path == "ideas/heat-pumps.md"
-
-
-def test_job_enqueue_without_kinds_refuses_everything(store: JobStore) -> None:
-    tools = {tool.spec.name: tool for tool in job_tools(store, {})}
-    result = _call(tools, {"kind": "research", **_payload()})
-    assert (result["ok"], result["code"]) == (False, "unknown_kind")
-    assert store.list() == []

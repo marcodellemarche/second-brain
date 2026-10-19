@@ -32,6 +32,26 @@ LINKS = {
     "vault_folder": "vault",
     "archive_folder": "archive",
 }
+JOB_KINDS = {
+    "research": {
+        "route": "background-research",
+        "description": "Research a question on the web.",
+        "web": True,
+    },
+    "develop_idea": {
+        "route": "background-idea",
+        "description": "Develop an idea into a note.",
+        "web": False,
+    },
+}
+
+
+def _jobs(tmp_path: Path, kinds: dict[str, Any] | None = None) -> dict[str, Any]:
+    """A jobs section whose queue file lives under tmp_path, so the registry can create it."""
+    return {
+        "store_path": str(tmp_path / "state" / "jobs.sqlite3"),
+        "kinds": copy.deepcopy(JOB_KINDS if kinds is None else kinds),
+    }
 
 
 class FakeBackend:
@@ -86,6 +106,7 @@ def _full(vault_root: Path, tmp_path: Path) -> dict[str, Any]:
             "root": str(tmp_path / "archive"),
             "inbox_media_dir": str(tmp_path / "media"),
         },
+        "jobs": _jobs(tmp_path),
     }
 
 
@@ -115,6 +136,7 @@ def test_minimal_config_loads(vault_root: Path, tmp_path: Path) -> None:
     assert config.weather is None
     assert config.links is None
     assert config.archive is None
+    assert config.jobs is None
 
 
 def test_listen_defaults_to_loopback(vault_root: Path, tmp_path: Path) -> None:
@@ -131,6 +153,11 @@ def test_full_config_loads(vault_root: Path, tmp_path: Path) -> None:
     assert config.weather is not None and config.weather.enabled is True
     assert config.links is not None
     assert config.archive is not None
+    assert config.jobs is not None
+    assert config.jobs.store_path == tmp_path / "state" / "jobs.sqlite3"
+    assert set(config.jobs.kinds) == {"research", "develop_idea"}
+    assert config.jobs.kinds["research"].web is True
+    assert config.jobs.kinds["develop_idea"].web is False
 
 
 def test_unknown_key_is_rejected(vault_root: Path, tmp_path: Path) -> None:
@@ -237,7 +264,82 @@ def test_full_registry_has_every_group(
         "archive_categories",
         "archive_store",
         "archive_discard",
+        "research_enqueue",
+        "job_enqueue",
     }
+
+
+def test_a_jobs_section_registers_one_tool_per_effect_class(
+    vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["jobs"] = _jobs(tmp_path)
+    config = ToolsConfig.from_yaml(_write(tmp_path, payload))
+    assert _names(config, monkeypatch) == {
+        "vault_read",
+        "vault_write",
+        "vault_move",
+        "vault_delete",
+        "vault_undo",
+        "research_enqueue",
+        "job_enqueue",
+    }
+
+
+def test_only_local_kinds_register_only_the_job_tool(
+    vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["jobs"] = _jobs(tmp_path, {"develop_idea": JOB_KINDS["develop_idea"]})
+    config = ToolsConfig.from_yaml(_write(tmp_path, payload))
+    names = _names(config, monkeypatch)
+    assert "job_enqueue" in names
+    assert "research_enqueue" not in names
+
+
+def test_only_web_kinds_register_only_the_research_tool(
+    vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["jobs"] = _jobs(tmp_path, {"research": JOB_KINDS["research"]})
+    config = ToolsConfig.from_yaml(_write(tmp_path, payload))
+    names = _names(config, monkeypatch)
+    assert "research_enqueue" in names
+    assert "job_enqueue" not in names
+
+
+def test_a_job_kind_must_say_whether_it_has_the_web(vault_root: Path, tmp_path: Path) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["jobs"] = _jobs(
+        tmp_path, {"research": {"route": "background-research", "description": "Research."}}
+    )
+    with pytest.raises(ToolsConfigError, match="invalid tools config"):
+        ToolsConfig.from_yaml(_write(tmp_path, payload))
+
+
+def test_a_jobs_section_needs_at_least_one_kind(vault_root: Path, tmp_path: Path) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["jobs"] = _jobs(tmp_path, {})
+    with pytest.raises(ToolsConfigError, match="invalid tools config"):
+        ToolsConfig.from_yaml(_write(tmp_path, payload))
+
+
+def test_an_unknown_key_in_a_job_kind_is_rejected(vault_root: Path, tmp_path: Path) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["jobs"] = _jobs(tmp_path)
+    payload["jobs"]["kinds"]["research"]["toolset"] = "everything"
+    with pytest.raises(ToolsConfigError, match="invalid tools config"):
+        ToolsConfig.from_yaml(_write(tmp_path, payload))
+
+
+def test_the_jobs_section_builds_its_queue_file(vault_root: Path, tmp_path: Path) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["jobs"] = _jobs(tmp_path)
+    config = ToolsConfig.from_yaml(_write(tmp_path, payload))
+    assert config.jobs is not None
+    store = config.jobs.store()
+    assert store.path == tmp_path / "state" / "jobs.sqlite3"
+    assert store.list() == []
 
 
 def test_disabled_weather_is_not_registered(
