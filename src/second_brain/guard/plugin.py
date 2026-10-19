@@ -23,7 +23,14 @@ from typing import Any
 from second_brain.core.types import Autonomy, stricter
 from second_brain.guard.audit import AuditLog
 from second_brain.guard.budget import BudgetVerdict, check_budget, note_search_result
-from second_brain.guard.classify import MCP_PREFIX, ToolClass, classify, path_taint
+from second_brain.guard.classify import (
+    MCP_PREFIX,
+    TERMINAL_DENIED_MESSAGE,
+    ToolClass,
+    classify,
+    path_taint,
+    terminal_denied,
+)
 from second_brain.guard.config import GuardConfig
 from second_brain.guard.heartbeat import write_heartbeat
 from second_brain.guard.rules import Decision, decide
@@ -277,12 +284,15 @@ class Guard:
         session_id: str,
         budget: BudgetVerdict | None = None,
     ) -> Verdict:
-        """Budget first when one is given, then the policy rules. No state is changed here."""
+        """Budget first when one is given, then the terminal rules, then the policy. No state changes."""
         tool_class = classify(tool_name, self.tool_classes)
         autonomy = self._autonomy(tool_name, tool_class)
         untrusted, private = self.store.flags(session_id)
+        denied = _terminal_reason(tool_name, args)
         if budget is not None and not budget.ok:
             decision, message = Decision("block", budget.reason), budget.message_to_model
+        elif denied is not None:
+            decision, message = Decision("block", denied), TERMINAL_DENIED_MESSAGE.format(reason=denied)
         else:
             decision = decide(
                 tool_class.effect,
@@ -302,12 +312,15 @@ class Guard:
         tool_call_id: str,
         verdict: Verdict,
     ) -> None:
+        # The exact text the human is shown, so the audit says what was asked, not only that.
+        prompt = _approval_text(tool_name, args, verdict.decision) if verdict.decision.action == "ask" else ""
         self.audit.append(
             {
                 "event": "decision",
                 "tool": tool_name,
                 "action": verdict.decision.action,
                 "reason": verdict.decision.reason,
+                "prompt": prompt,
                 "session": session_id,
                 "call": tool_call_id,
                 "sender": self.store.sender(session_id),
@@ -385,7 +398,10 @@ class Guard:
 
 def register(ctx: Any) -> None:
     """Entry point Hermes calls once, when it loads the plugin."""
-    guard = Guard(GuardConfig.load())
+    config = GuardConfig.load()
+    # Before anything else: an approval the guard stamps is only worth the human behind it.
+    config.check_approvals()
+    guard = Guard(config)
     guard.start_heartbeat()
     guard.audit.append({"event": "loaded", "pid": os.getpid()})
     ctx.register_hook("pre_llm_call", guard.pre_llm_call)
@@ -411,6 +427,14 @@ def _preview(args: dict[str, Any], limit: int) -> str:
 
 def _is_brain_tool(tool_name: str) -> bool:
     return tool_name.startswith(MCP_PREFIX)
+
+
+def _terminal_reason(tool_name: str, args: dict[str, Any]) -> str | None:
+    """Why a terminal call is refused outright, or None. Not a policy question: never allowed."""
+    if tool_name != "terminal":
+        return None
+    command = args.get("command", "")
+    return terminal_denied(command) if isinstance(command, str) else None
 
 
 def _policy_name(tool_name: str) -> str:

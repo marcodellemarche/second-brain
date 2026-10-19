@@ -19,6 +19,8 @@ from second_brain.guard.classify import ToolClass
 
 CONFIG_ENV = "BRAIN_GUARD_CONFIG"
 DEFAULT_SEARCH_TOOLS = ("web_search", "search_files", "session_search")
+APPROVAL_MODES = ("manual", "smart", "off")
+REQUIRED_APPROVAL_MODE = "manual"
 
 
 class GuardConfigError(RuntimeError):
@@ -39,6 +41,8 @@ class GuardConfig(BaseModel):
 
     vault_root: str
     guard_dir: str
+    # Hermes' own config.yaml. The guard refuses to start unless it says `approvals.mode: manual`.
+    hermes_config_path: str
     policy: PolicyConfig = Field(default_factory=PolicyConfig)
     private_prefixes: tuple[str, ...] = ()
     untrusted_prefixes: tuple[str, ...] = ()
@@ -74,3 +78,32 @@ class GuardConfig(BaseModel):
     def tool_classes(self) -> dict[str, ToolClass]:
         """The brain_tools table `classify` looks tools up in, keyed by name without the prefix."""
         return {name: ToolClass(tool.effect, tool.autonomy) for name, tool in self.mcp_tools.items()}
+
+    def check_approvals(self) -> None:
+        """Raise unless Hermes asks a human about every dangerous command.
+
+        The guard stamps `approval: human:<sender>` when it escalates a call, and that is only
+        true while a person really answers the prompt. Under `smart` an auxiliary model can
+        approve it, under `off` nothing is asked at all.
+        """
+        path = Path(self.hermes_config_path)
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            raise GuardConfigError(f"cannot read Hermes config {path}: {exc}") from exc
+        approvals = raw.get("approvals") if isinstance(raw, dict) else None
+        mode = approvals.get("mode") if isinstance(approvals, dict) else None
+        if _approval_mode(mode) != REQUIRED_APPROVAL_MODE:
+            raise GuardConfigError(
+                f"Hermes config {path} must set approvals.mode: {REQUIRED_APPROVAL_MODE} (found {mode!r})"
+            )
+
+
+def _approval_mode(value: object) -> str:
+    """Hermes' own normalization: YAML reads a bare `off` as False, and anything unknown is smart."""
+    if isinstance(value, bool):
+        return "off" if value is False else REQUIRED_APPROVAL_MODE
+    if isinstance(value, str):
+        mode = value.strip().lower()
+        return mode if mode in APPROVAL_MODES else "smart"
+    return "smart"
