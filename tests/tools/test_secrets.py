@@ -153,3 +153,28 @@ def test_redact_keeps_the_rest_of_the_text() -> None:
 def test_scan_of_plain_text_returns_nothing() -> None:
     assert scan("") == []
     assert scan("just a normal sentence about the weather") == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.example.com/v1/items?access_token=fakeTokenValue12345",
+        "https://maps.example.com/tile?x=1&key=FAKEkeyVALUE987654",
+        "https://storage.example.com/obj?X-Amz-Date=1&sig=FakeSignatureValue42",
+    ],
+)
+def test_a_credential_in_a_url_query_is_flagged(url: str) -> None:
+    assert [finding.rule for finding in scan(f"See {url} for details.")] == ["url_query_secret"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/search?q=something&page=2",
+        "https://example.com/docs?key=short",
+        "https://example.com/api?token=<your-token>",
+        "https://example.com/keyboard?monkey=bananas123456",
+    ],
+)
+def test_an_ordinary_url_query_is_not_flagged(url: str) -> None:
+    assert scan(f"See {url} for details.") == []

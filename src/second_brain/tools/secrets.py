@@ -49,6 +49,14 @@ _RULES: tuple[tuple[str, Pattern[str]], ...] = (
         "assignment",
         re.compile(r"(?i)\b(?:password|passwd|secret|api[_-]?key|token)\b\s*[:=]\s*(?P<value>\S{8,})"),
     ),
+    # URLs are exempt from the entropy rule, so a credential in the query string needs its own.
+    (
+        "url_query_secret",
+        re.compile(
+            r"(?i)[?&](?:access_token|refresh_token|id_token|token|api[_-]?key|apikey|key|secret|"
+            r"client_secret|password|passwd|sig|signature|auth)=(?P<value>[^&#\s]{8,})"
+        ),
+    ),
 )
 
 _ENTROPY_RE = re.compile(rf"[A-Za-z0-9+/=_-]{{{ENTROPY_MIN_LENGTH},}}")
@@ -91,7 +99,7 @@ def _shannon_entropy(value: str) -> float:
 def _candidates(text: str) -> Iterator[_Match]:
     for rule, pattern in _RULES:
         for match in pattern.finditer(text):
-            if rule == "assignment" and _is_placeholder(match.group("value")):
+            if rule in ("assignment", "url_query_secret") and _is_placeholder(match.group("value")):
                 continue
             yield _Match(rule, match.start(), match.end(), match.group(0))
 
