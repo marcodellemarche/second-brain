@@ -509,6 +509,8 @@ def calendar_tools(backend: CalendarBackend, config: CalendarConfig) -> list[Too
                 autonomy=Autonomy.AUTO,
                 hosts=CALENDAR_HOSTS,
                 credentials=CALENDAR_CREDENTIALS,
+                taints_untrusted=True,
+                taints_private=True,
             ),
             handler=list_,
         ),

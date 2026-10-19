@@ -226,3 +226,42 @@ def test_requests_without_a_bearer_token_get_401() -> None:
     headers = [(b"authorization", f"Bearer {TOKEN}".encode())]
     with pytest.raises(AssertionError, match="must not reach the app"):
         asyncio.run(guarded({"type": "http", "headers": headers}, receive, send))
+
+
+def test_main_reads_only_the_tools_config(
+    vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yaml
+
+    from second_brain.tools import config as config_module
+    from second_brain.tools import registry as registry_module
+    from second_brain.tools import server as server_module
+
+    token_file = tmp_path / "token"
+    token_file.write_text(TOKEN, encoding="utf-8")
+    config_file = tmp_path / "tools.yaml"
+    config_file.write_text(
+        yaml.safe_dump(
+            {
+                "vault": {"root": str(vault_root)},
+                "token_file": str(token_file),
+                "listen": "127.0.0.1:9999",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(config_module.CONFIG_ENV, str(config_file))
+    monkeypatch.setattr(registry_module, "entry_points", lambda group: [])
+
+    served: dict[str, Any] = {}
+
+    def fake_run(app: Any, **kwargs: Any) -> None:
+        served["app"] = app
+        served.update(kwargs)
+
+    monkeypatch.setattr(server_module.uvicorn, "run", fake_run)
+    server_module.main()
+
+    assert served["host"] == "127.0.0.1"
+    assert served["port"] == 9999
+    assert served["app"] is not None

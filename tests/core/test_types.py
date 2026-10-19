@@ -46,6 +46,18 @@ def test_tool_spec_defaults_are_empty_tuples() -> None:
     assert spec.credentials == ()
 
 
+def test_tool_spec_taints_default_to_false() -> None:
+    spec = make_spec()
+    assert spec.taints_untrusted is False
+    assert spec.taints_private is False
+
+
+def test_tool_spec_accepts_taints() -> None:
+    spec = make_spec(taints_untrusted=True, taints_private=True)
+    assert spec.taints_untrusted is True
+    assert spec.taints_private is True
+
+
 @pytest.mark.parametrize("name", ["weather", "vault_write", "a1"])
 def test_tool_spec_accepts_valid_names(name: str) -> None:
     assert make_spec(name=name).name == name

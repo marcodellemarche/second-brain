@@ -94,6 +94,7 @@ def vault_tools(vault: Vault) -> list[Tool]:
                 params=ReadParams,
                 effect=Effect.READ,
                 autonomy=Autonomy.AUTO,
+                taints_private=True,
             ),
             handler=read,
         ),

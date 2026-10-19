@@ -28,12 +28,14 @@ class GuardConfigError(RuntimeError):
 
 
 class McpToolPolicy(BaseModel):
-    """Effect and default autonomy of one brain_tools tool, as the instance declares it."""
+    """Effect, default autonomy and taints of one brain_tools tool, as the instance declares it."""
 
     model_config = ConfigDict(extra="forbid")
 
     effect: Effect
     autonomy: Autonomy
+    taints_untrusted: bool = False
+    taints_private: bool = False
 
 
 class GuardConfig(BaseModel):
@@ -77,7 +79,10 @@ class GuardConfig(BaseModel):
 
     def tool_classes(self) -> dict[str, ToolClass]:
         """The brain_tools table `classify` looks tools up in, keyed by name without the prefix."""
-        return {name: ToolClass(tool.effect, tool.autonomy) for name, tool in self.mcp_tools.items()}
+        return {
+            name: ToolClass(tool.effect, tool.autonomy, tool.taints_untrusted, tool.taints_private)
+            for name, tool in self.mcp_tools.items()
+        }
 
     def check_approvals(self) -> None:
         """Raise unless Hermes asks a human about every dangerous command.

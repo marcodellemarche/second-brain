@@ -96,3 +96,8 @@ class ToolSpec(BaseModel):
     autonomy: Autonomy
     hosts: tuple[str, ...] = ()
     credentials: tuple[str, ...] = ()
+    # The result carries content written by someone other than the user: mail, web, a calendar
+    # description, another brain's answer.
+    taints_untrusted: bool = False
+    # The result carries private data: vault notes, documents, mail.
+    taints_private: bool = False

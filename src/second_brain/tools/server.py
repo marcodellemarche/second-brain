@@ -12,9 +12,7 @@ import hmac
 import inspect
 import json
 import logging
-import os
 from collections.abc import Awaitable, Callable, Mapping
-from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
 import uvicorn
@@ -22,9 +20,9 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field, ValidationError, WithJsonSchema
 
-from second_brain.tools.core_vault import vault_tools
+from second_brain.tools.config import ToolsConfig, build_registry
 from second_brain.tools.registry import Registry
-from second_brain.tools.vault import Provenance, Vault, VaultConfig, VaultError
+from second_brain.tools.vault import Provenance, VaultError
 
 log = logging.getLogger(__name__)
 
@@ -215,26 +213,13 @@ def build_app(registry: Registry, token: str) -> ASGIApp:
     return BearerAuth(build_server(registry, token).streamable_http_app(), token)
 
 
-def _required_env(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise RuntimeError(f"{name} is required")
-    return value
-
-
 def main() -> None:
-    """Serve the tools over streamable HTTP, configured from the environment."""
+    """Serve the tools over streamable HTTP, configured from `BRAIN_TOOLS_CONFIG`."""
     logging.basicConfig(level=logging.INFO)
-    token = _required_env("BRAIN_TOOLS_TOKEN")
-    root = Path(_required_env("BRAIN_VAULT_ROOT"))
-    host = os.environ.get("BRAIN_TOOLS_HOST", "127.0.0.1")
-    port = int(os.environ.get("BRAIN_TOOLS_PORT", "8765"))
-
-    vault = Vault(VaultConfig(root=root))
-    registry = Registry()
-    for tool in vault_tools(vault):
-        registry.add(tool)
-    registry.load_entry_points()
+    config = ToolsConfig.load()
+    token = config.read_token()
+    registry = build_registry(config)
+    host, port = config.listen.host, config.listen.port
     log.info("brain_tools serving %d tools on %s:%d", len(registry.specs()), host, port)
     uvicorn.run(build_app(registry, token), host=host, port=port, log_level="info")
 
