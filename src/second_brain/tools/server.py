@@ -1,9 +1,13 @@
-"""The MCP server (brain_tools) over streamable HTTP.
+"""The MCP server (brain_tools) over streamable HTTP, plus the outbox endpoint beside it.
 
 Every registered tool becomes an MCP tool whose input schema is the tool's pydantic params plus
 one extra optional `guard` object. brain_guard fills `guard` before the call leaves Hermes; a call
 that arrives without it is refused, so a caller that skipped the guard cannot write. The HTTP layer
 refuses a request without the bearer token before it reaches the MCP handler.
+
+The one route outside the bearer token is `POST /outbox`, where Hermes posts the reply of a research
+run: Hermes cannot send a bearer token, so that route verifies the outbound-hook signature instead
+(`tools/outbox.py`). Everything else on the port still needs the token.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field, ValidationError, WithJsonSchema
 
 from second_brain.tools.config import ToolsConfig, build_registry
+from second_brain.tools.outbox import MAX_BODY_BYTES, OUTBOX_PATH, OutboxReceiver, Receipt
 from second_brain.tools.registry import Registry
 from second_brain.tools.vault import Provenance, Vault, VaultError
 
@@ -210,9 +215,76 @@ def _header(scope: dict[str, Any], name: bytes) -> str | None:
     return None
 
 
-def build_app(registry: Registry, token: str) -> ASGIApp:
-    """The ASGI app: the MCP server behind bearer authentication."""
-    return BearerAuth(build_server(registry, token).streamable_http_app(), token)
+def _scope_headers(scope: Mapping[str, Any]) -> dict[str, str]:
+    """Every header of one request, so the outbox can look one up by name."""
+    return {key.decode("latin-1"): value.decode("latin-1") for key, value in scope.get("headers", [])}
+
+
+async def _read_body(receive: Any, limit: int) -> bytes:
+    """Read the request body, stopping one byte past the limit so an oversized one is refused."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        message = await receive()
+        if message.get("type") != "http.request":
+            break
+        chunk = message.get("body", b"")
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > limit or not message.get("more_body", False):
+            break
+    return b"".join(chunks)
+
+
+async def _answer(send: Any, status: int, body: Mapping[str, Any]) -> None:
+    payload = json.dumps(dict(body)).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(payload)).encode()),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": payload})
+
+
+class OutboxEndpoint:
+    """ASGI middleware: `POST /outbox` goes to the receiver, everything else to the app.
+
+    The receiver answers with a `Receipt`, which becomes the status and a small JSON body. A request
+    to another path, or with another method, is not touched here: the app behind decides.
+    """
+
+    def __init__(self, app: ASGIApp, receiver: OutboxReceiver, path: str = OUTBOX_PATH) -> None:
+        self._app = app
+        self._receiver = receiver
+        self._path = path
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or scope.get("path") != self._path:
+            await self._app(scope, receive, send)
+            return
+        if scope.get("method") != "POST":
+            await _answer(send, 405, {"ok": False, "code": "method_not_allowed"})
+            return
+        body = await _read_body(receive, MAX_BODY_BYTES)
+        receipt: Receipt = self._receiver.handle(_scope_headers(scope), body)
+        await _answer(
+            send,
+            receipt.status,
+            {"ok": 200 <= receipt.status < 300, "code": receipt.code, "message": receipt.message},
+        )
+
+
+def build_app(registry: Registry, token: str, outbox: OutboxReceiver | None = None) -> ASGIApp:
+    """The ASGI app: the MCP server behind bearer authentication, plus the outbox when configured."""
+    app: ASGIApp = BearerAuth(build_server(registry, token).streamable_http_app(), token)
+    if outbox is None:
+        return app
+    return OutboxEndpoint(app, outbox)
 
 
 def main() -> None:
@@ -223,8 +295,13 @@ def main() -> None:
     registry = build_registry(config)
     start_human_commit_timer(Vault(config.vault), config.human_commit_seconds)
     host, port = config.listen.host, config.listen.port
+    outbox = None
+    if config.outbox is not None and config.jobs is not None:
+        outbox = config.outbox.receiver(config.jobs.store(), config.jobs.kinds)
+    elif config.outbox is not None:
+        log.warning("outbox configured without a job queue: results cannot be checked, not serving it")
     log.info("brain_tools serving %d tools on %s:%d", len(registry.specs()), host, port)
-    uvicorn.run(build_app(registry, token), host=host, port=port, log_level="info")
+    uvicorn.run(build_app(registry, token, outbox), host=host, port=port, log_level="info")
 
 
 def commit_human_changes_once(vault: Vault) -> str | None:

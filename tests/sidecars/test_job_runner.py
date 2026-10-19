@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from second_brain.core.schema import load_schema
 from second_brain.sidecars.job_runner import (
     DEFAULT_DISPATCH_TIMEOUT,
     DEFAULT_TIMEOUT,
@@ -22,6 +24,8 @@ from second_brain.sidecars.job_runner import (
     sign_body,
 )
 from second_brain.tools.jobs import MAX_ATTEMPTS, Job, JobKind, JobStore
+from second_brain.tools.outbox import OutboxImporter
+from second_brain.tools.vault import Vault, VaultConfig
 
 KINDS = {
     "research": JobKind(route="background-research", description="Research a question on the web.", web=True),
@@ -649,3 +653,128 @@ def test_run_forever_survives_a_broken_store(vault_root: Path, secret_file: Path
     sleep.runner = runner
     runner.run_forever(poll_seconds=1.0)
     assert len(sleep.calls) == 2
+
+
+# --- the outbox sweep ----------------------------------------------------------------------
+
+OUTBOX_SECRET = "outbox-secret-not-a-real-one"
+SCHEMA = """# Schema
+
+```yaml
+language: en
+zones:
+  inbox: inbox
+  raw: raw
+  calls: calls
+  topics: topics
+  knowledge: knowledge
+  ideas: ideas
+  projects: projects
+  people: people
+  work: work
+  documents: documents
+  answers: answers
+  drawings: drawings
+  archive: archive
+  _brain: _brain
+  _meta: _meta
+types:
+  capture: something captured and not processed yet
+  idea: an idea, with its state
+```
+"""
+
+
+def _research_delivery(
+    job_id: str, reply: str = "Turbines use the current. See https://example.org/t."
+) -> bytes:
+    payload = {
+        "hook_event_name": "post_llm_call",
+        "profile": "default",
+        "session_id": "session-1",
+        "extra": {
+            "platform": "webhook",
+            "assistant_response": reply,
+            "user_message": f"Background research job {job_id}. Tidal energy\n\nHow does it work?",
+        },
+        "delivery_id": "0123456789abcdef",
+    }
+    return json.dumps(payload).encode("utf-8")
+
+
+def _outbox_runner(
+    store: JobStore,
+    vault_root: Path,
+    secret_file: Path,
+    post: FakePost,
+    tmp_path: Path,
+) -> tuple[JobRunner, Path]:
+    """A runner with an importer, and the vault it writes into."""
+    (vault_root / "_meta").mkdir(parents=True, exist_ok=True)
+    (vault_root / "_meta" / "SCHEMA.md").write_text(SCHEMA, encoding="utf-8")
+    for command in (
+        ["init", "-q"],
+        ["config", "user.name", "tester"],
+        ["config", "user.email", "t@localhost"],
+    ):
+        subprocess.run(["git", "-C", str(vault_root), *command], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(vault_root), "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True,
+        capture_output=True,
+    )
+    outbox_dir = tmp_path / "outbox"
+    outbox_dir.mkdir()
+    vault = Vault(VaultConfig(root=vault_root, quiet_seconds=0))
+    importer = OutboxImporter(outbox_dir, vault, load_schema(vault_root), store, KINDS, "develop_idea")
+    runner = JobRunner(
+        store, KINDS, BASE_URL, secret_file, vault_root=vault_root, post=post, importer=importer
+    )
+    return runner, outbox_dir
+
+
+def test_the_sweep_imports_a_stored_result_and_queues_the_follow_up(
+    store: JobStore, vault_root: Path, secret_file: Path, post: FakePost, tmp_path: Path
+) -> None:
+    runner, outbox_dir = _outbox_runner(store, vault_root, secret_file, post, tmp_path)
+    job_id = _enqueue(store)
+    runner.run_once()
+    (outbox_dir / "0123456789abcdef.json").write_bytes(_research_delivery(job_id))
+    runner.sweep()
+    assert store.get(job_id).status == "finished"  # type: ignore[union-attr]
+    notes = list((vault_root / "raw" / "web").glob("*.md"))
+    assert len(notes) == 1
+    assert "https://example.org/t" in notes[0].read_text(encoding="utf-8")
+    followups = store.list("queued")
+    assert [job.kind for job in followups] == ["develop_idea"]
+    assert "raw/web/" in followups[0].payload.question
+
+
+def test_the_sweep_keeps_going_when_the_outbox_is_broken(
+    store: JobStore, vault_root: Path, secret_file: Path, post: FakePost, tmp_path: Path
+) -> None:
+    class BrokenImporter(OutboxImporter):
+        def sweep(self) -> list[Any]:
+            raise RuntimeError("the outbox is gone")
+
+    runner, outbox_dir = _outbox_runner(store, vault_root, secret_file, post, tmp_path)
+    runner._importer = BrokenImporter(  # the sweep must not care
+        outbox_dir,
+        Vault(VaultConfig(root=vault_root, quiet_seconds=0)),
+        load_schema(vault_root),
+        store,
+        KINDS,
+        "develop_idea",
+    )
+    job_id = _enqueue(store, note_path="ideas/heat-pumps.md")
+    runner.run_once()
+    (vault_root / "ideas" / "heat-pumps.md").write_text("---\ntype: idea\n---\n", encoding="utf-8")
+    runner.sweep()
+    assert store.get(job_id).status == "finished"  # type: ignore[union-attr]
+
+
+def test_a_runner_without_an_importer_only_watches_for_notes(store: JobStore, runner: JobRunner) -> None:
+    job_id = _enqueue(store)
+    runner.run_once()
+    runner.sweep()
+    assert store.get(job_id).status == "dispatched"  # type: ignore[union-attr]

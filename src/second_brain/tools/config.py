@@ -27,6 +27,7 @@ from second_brain.tools.core_vault import vault_tools
 from second_brain.tools.jobs import JobKind, JobStore, job_tools
 from second_brain.tools.links import LinkConfig, link_tools
 from second_brain.tools.notify import NotifyConfig, notify_tools
+from second_brain.tools.outbox import OutboxConfig
 from second_brain.tools.registry import Registry, Tool
 from second_brain.tools.vault import Vault, VaultConfig
 from second_brain.tools.weather import weather_tools
@@ -127,6 +128,7 @@ class ToolsConfig(BaseModel):
     archive: ArchiveConfig | None = None
     jobs: JobsConfig | None = None
     notify: NotifyConfig | None = None
+    outbox: OutboxConfig | None = None
 
     @model_validator(mode="before")
     @classmethod

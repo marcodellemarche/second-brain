@@ -26,6 +26,7 @@ VALUES: dict[str, str] = {
     "terminal_cwd": "/workspace",
     "terminal_ssh_key": "/run/secrets/terminal_ssh_key",
     "brain_tools_url": "http://brain-tools:8765/mcp",
+    "brain_tools_outbox_url": "http://brain-tools:8765/outbox",
     "egress_proxy_url": "http://egress:3128",
     "owner_telegram_id": OWNER_ID,
     "owner_slack_id": "U0000000001",
@@ -111,6 +112,21 @@ def test_terminal_goes_over_ssh_to_a_separate_container(config: dict[str, Any]) 
     assert terminal["ssh_port"] == 2222
     assert terminal["ssh_key"] == VALUES["terminal_ssh_key"]
     assert terminal["cwd"] == VALUES["terminal_cwd"]
+
+
+def test_the_research_reply_comes_back_through_an_outbound_hook(config: dict[str, Any]) -> None:
+    """A research route has no vault, so its reply is POSTed to brain_tools' outbox endpoint."""
+    targets = config["hooks"]["outbound"]
+    assert isinstance(targets, list) and targets
+    target = targets[0]
+    assert target["url"] == VALUES["brain_tools_outbox_url"]
+    assert target["url"].endswith(":8765/outbox")
+    # post_llm_call is the event that carries the finished turn's reply text.
+    assert target["events"] == ["post_llm_call"]
+    # The secret is an env var name, never the value, and never in this file.
+    assert target["secret_env"] == "HERMES_OUTBOX_SECRET"
+    assert "secret" not in target
+    assert config["hooks_auto_accept"] is False
 
 
 def test_stt_is_local_with_automatic_language(config: dict[str, Any]) -> None:
@@ -205,7 +221,8 @@ def test_private_urls_stay_blocked(config: dict[str, Any]) -> None:
 def test_brain_guard_is_the_enabled_plugin(config: dict[str, Any]) -> None:
     assert config["plugins"]["enabled"] == ["brain-guard"]
     assert config["plugins"]["auto_apply"] is False
-    assert config["hooks"] == {}
+    # The only hooks are the outbound ones that bring a research reply back.
+    assert set(config["hooks"]) == {"outbound"}
     assert config["hooks_auto_accept"] is False
 
 

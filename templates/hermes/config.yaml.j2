@@ -103,7 +103,17 @@ plugins:
   auto_apply: false
   hook_callback_timeout: 30
   auto_update_check_hours: 0
-hooks: {}
+# Outbound hooks: the reply of a research run comes back to brain_tools this way, because a webhook
+# route has no vault to write to. `post_llm_call` is the event that carries a finished turn's
+# `assistant_response`; `matcher` is ignored on that event (it only applies to the tool-call
+# events), so the receiver checks the payload itself and keeps only the research routes.
+hooks:
+  outbound:
+    - name: research-outbox
+      url: "{{ brain_tools_outbox_url }}"
+      events: [post_llm_call]
+      secret_env: HERMES_OUTBOX_SECRET
+      timeout: 10
 hooks_auto_accept: false
 quick_commands: {}
 

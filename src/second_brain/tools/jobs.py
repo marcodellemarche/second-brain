@@ -45,6 +45,7 @@ JOB_CREDENTIALS: tuple[str, ...] = ()
 
 MAX_ATTEMPTS = 3
 MAX_ERROR_LENGTH = 500
+MAX_QUESTION_CHARS = 2000
 DEFAULT_STALE_AFTER = 15 * 60.0
 STALE_ERROR = "the run was claimed and never reported back"
 STATUSES: tuple[str, ...] = ("queued", "running", "dispatched", "finished", "failed")
@@ -123,7 +124,7 @@ class JobPayload(BaseModel):
     title: str = Field(min_length=1, max_length=120, description="Short title of the job.")
     question: str = Field(
         min_length=1,
-        max_length=2000,
+        max_length=MAX_QUESTION_CHARS,
         description="The work, written out in full: the background run cannot read the vault.",
     )
     note_path: str | None = Field(
@@ -289,6 +290,12 @@ class JobStore:
                 cursor.execute("ROLLBACK")
                 raise
         return job_id
+
+    def get(self, job_id: str) -> Job | None:
+        """One job by id, or None when the queue never had it."""
+        with self._lock:
+            row = self._connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return None if row is None else _job(row)
 
     def claim(self) -> Job | None:
         """Take the oldest queued job and mark it running, in one immediate transaction."""

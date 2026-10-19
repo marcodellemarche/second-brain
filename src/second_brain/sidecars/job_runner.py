@@ -2,8 +2,8 @@
 
 Each job is a POST to a Hermes webhook route whose toolset is restricted by hand in the Hermes
 config, so a background run can do the work and nothing else. The sidecar never talks to the model
-and never writes the vault: it takes a job from the queue, signs the body, reports that the run was
-accepted, and later notices the result note appearing.
+and never writes the vault itself: it takes a job from the queue, signs the body, reports that the
+run was accepted, and later collects the result.
 
 Hermes v0.22.2 validates the replay-safe signature as `X-Webhook-Signature-V2`, the hex HMAC-SHA256
 of `"<timestamp>.<body>"`, with the same timestamp in `X-Webhook-Timestamp` and at most five
@@ -13,6 +13,12 @@ minutes of skew (`gateway/platforms/webhook.py:800-808`). The signing itself liv
 A 2xx answer means Hermes accepted the run, not that the work is done, so the job becomes
 `dispatched`. It becomes `finished` when the result note exists in the vault, and `failed` when the
 note has not appeared after `dispatch_timeout`.
+
+A research route cannot write the vault, so its reply comes back out of band: Hermes POSTs it to
+the outbox endpoint of brain_tools, and `OutboxImporter` turns it into an untrusted raw note. That
+is why every sweep imports the outbox first: an imported result finishes its research job and
+queues the follow-up vault job, which then writes the note the job asked for. Without an importer
+the sidecar only watches for notes, which is what a brain with no research kind does.
 
 One job at a time by default: the model is shared with the conversation, and a queue of research
 runs must not starve it. The POST function is injectable, so the tests drive the whole loop without
@@ -39,6 +45,7 @@ from second_brain.sidecars.webhook import (
     signed_headers,
 )
 from second_brain.tools.jobs import Job, JobKind, JobStore
+from second_brain.tools.outbox import OutboxImporter
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +87,7 @@ class JobRunner:
         timeout: float = DEFAULT_TIMEOUT,
         dispatch_timeout: float = DEFAULT_DISPATCH_TIMEOUT,
         sweep_seconds: float = DEFAULT_SWEEP_SECONDS,
+        importer: OutboxImporter | None = None,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -105,6 +113,7 @@ class JobRunner:
         self._timeout = timeout
         self._dispatch_timeout = dispatch_timeout
         self._sweep_seconds = sweep_seconds
+        self._importer = importer
         self._clock = clock
         self._sleep = sleep
         self._last_sweep: float | None = None
@@ -160,12 +169,28 @@ class JobRunner:
         return True
 
     def sweep(self) -> None:
-        """Reclaim the jobs whose runner died and settle the ones that were dispatched."""
+        """Reclaim the jobs whose runner died, import the research results, settle the rest."""
         reclaimed = self._store.reclaim_stale()
         if reclaimed:
             log.warning("reclaimed %d stale job(s): %s", len(reclaimed), ", ".join(reclaimed))
+        self._import_outbox()
         self._settle_dispatched()
         self._last_sweep = self._clock()
+
+    def _import_outbox(self) -> None:
+        """Bring in the replies Hermes posted while we were not looking. A bad file is not fatal."""
+        if self._importer is None:
+            return
+        try:
+            imported = self._importer.sweep()
+        except Exception:
+            log.exception("could not sweep the outbox")
+            return
+        for result in imported:
+            if result.ok:
+                log.info("imported %s as %s", result.source, result.note)
+            else:
+                log.warning("outbox file %s failed: %s", result.source, result.error)
 
     def _settle_dispatched(self) -> None:
         """Finish the dispatched jobs whose result note exists, fail the ones that timed out."""
@@ -227,6 +252,7 @@ __all__ = [
     "HttpPost",
     "JobRunner",
     "JobRunnerError",
+    "OutboxImporter",
     "SIGNATURE_HEADER",
     "TIMESTAMP_HEADER",
     "job_body",
