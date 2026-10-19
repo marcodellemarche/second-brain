@@ -1,0 +1,63 @@
+# The only way out of a brain. Everything else is on an internal network with no gateway.
+#
+# This file is the real egress control. The terminal install denylist inside the guard is a
+# heuristic and stays one: pipx, npx, a base64-encoded installer and a plain `curl | sh` all walk
+# around it. What a command cannot walk around is a proxy that refuses the connection, so package
+# registries are denied by name below and only the hosts a feature needs are allowed.
+#
+# `sb init` renders {{ egress_hosts }} from the model endpoint host, api.telegram.org, and the
+# ToolSpec.hosts of the tools this instance enabled. A host nobody enabled is not on the list.
+
+http_port 3128
+visible_hostname brain-egress
+max_filedescriptors 4096
+cache deny all
+access_log /var/log/squid/access.log
+pid_filename none
+coredump_dir /tmp
+
+acl SSL_ports port 443
+acl CONNECT method CONNECT
+# No plain HTTP at all: everything allowed here is an HTTPS endpoint.
+http_access deny !CONNECT
+http_access deny CONNECT !SSL_ports
+
+# The allowlist. One `dstdomain` line per host: a name appended to the same ACL is one more value.
+# The allowlist, one host per line: each `dstdomain` line adds a value to the same ACL.
+{% for host in egress_hosts %}
+acl allowed_egress dstdomain {{ host }}
+{% endfor %}
+acl allowed_egress dstdomain {{ searxng_upstream_hosts }}
+
+# Package registries and OS mirrors, denied before the allowlist so a host that somehow ends up in
+# both is still refused. This is what stops the model from installing a package even with an
+# approved command: there is nowhere to download it from.
+acl package_registries dstdomain pypi.org
+acl package_registries dstdomain files.pythonhosted.org
+acl package_registries dstdomain registry.npmjs.org
+acl package_registries dstdomain crates.io
+acl package_registries dstdomain static.crates.io
+acl package_registries dstdomain deb.debian.org
+acl package_registries dstdomain security.debian.org
+acl package_registries dstdomain dl-cdn.alpinelinux.org
+
+# Private, loopback, link-local, CGNAT and multicast ranges. `dst` checks the resolved address, so
+# a public name that resolves to something internal is denied too. Docker's own DNS hands out
+# 127.0.0.11, which is inside this list on purpose: no proxy hop into another container.
+acl private_dst dst 0.0.0.0/8
+acl private_dst dst 10.0.0.0/8
+acl private_dst dst 100.64.0.0/10
+acl private_dst dst 127.0.0.0/8
+acl private_dst dst 169.254.0.0/16
+acl private_dst dst 172.16.0.0/12
+acl private_dst dst 192.168.0.0/16
+acl private_dst dst 224.0.0.0/4
+acl private_dst dst 240.0.0.0/4
+acl private_dst dst ::1
+acl private_dst dst fc00::/7
+acl private_dst dst fe80::/10
+
+http_access deny package_registries
+http_access deny private_dst
+http_access allow CONNECT allowed_egress
+http_access deny all

@@ -23,7 +23,8 @@ VALUES: dict[str, str] = {
     "timezone": "Europe/Rome",
     "skills_dir": "/data/skills",
     "media_dir": "/data/media",
-    "terminal_cwd": "/data/workspace",
+    "terminal_cwd": "/workspace",
+    "terminal_ssh_key": "/run/secrets/terminal_ssh_key",
     "brain_tools_url": "http://brain-tools:8765/mcp",
     "egress_proxy_url": "http://egress:3128",
     "owner_telegram_id": OWNER_ID,
@@ -102,11 +103,14 @@ def test_media_is_strict_with_one_output_dir(config: dict[str, Any]) -> None:
     assert gateway["media_delivery_allow_dirs"] == [VALUES["media_dir"]]
 
 
-def test_terminal_is_a_docker_sandbox_without_network(config: dict[str, Any]) -> None:
+def test_terminal_goes_over_ssh_to_a_separate_container(config: dict[str, Any]) -> None:
     terminal = config["terminal"]
-    assert terminal["backend"] == "docker"
-    assert terminal["docker_network"] is False
-    assert terminal["docker_mount_cwd_to_workspace"] is False
+    assert terminal["backend"] == "ssh"
+    assert terminal["ssh_host"] == "terminal"
+    assert terminal["ssh_user"] == "agent"
+    assert terminal["ssh_port"] == 2222
+    assert terminal["ssh_key"] == VALUES["terminal_ssh_key"]
+    assert terminal["cwd"] == VALUES["terminal_cwd"]
 
 
 def test_stt_is_local_with_automatic_language(config: dict[str, Any]) -> None:
@@ -187,9 +191,9 @@ def test_no_fallback_provider_and_no_delegation_toolset(config: dict[str, Any]) 
 def test_the_terminal_sandbox_is_capped_and_disposable(config: dict[str, Any]) -> None:
     terminal = config["terminal"]
     assert terminal["env_passthrough"] == []
-    assert terminal["docker_forward_env"] == []
-    assert terminal["container_persistent"] is False
-    assert terminal["docker_volumes"] == [f"{VALUES['media_dir']}:{VALUES['media_dir']}"]
+    assert terminal["ssh_persistent"] is False
+    # The docker backend would need the socket, so none of its keys may come back.
+    assert not [key for key in terminal if key.startswith(("docker_", "container_"))]
 
 
 def test_private_urls_stay_blocked(config: dict[str, Any]) -> None:

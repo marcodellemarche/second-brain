@@ -1,0 +1,47 @@
+# A private SearXNG: Hermes' `web_search` calls it over the internal network, it calls its engines
+# over the internet, and nothing is exposed. No public instance, no limiter, no metrics endpoint.
+use_default_settings: true
+
+general:
+  instance_name: "{{ instance_name }} search"
+  # The JSON API is what Hermes uses; the HTML pages are for a human debugging a result.
+  enable_metrics: false
+
+server:
+  bind_address: "0.0.0.0"
+  port: 8080
+  # The placeholder is a reminder to render a real one: it signs the session cookie, and a shared
+  # key would let anyone who knows it forge one.
+  secret_key: "{{ searxng_secret_key }}"
+  # No reverse proxy in front and no public URL: this is the address the containers use.
+  base_url: http://searxng:8080/
+  limiter: false
+  image_proxy: false
+  public_instance: false
+  method: "GET"
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+
+# A few general engines, no media ones: a search result is text and a link, and every extra engine
+# is one more upstream host that has to be on the egress allowlist.
+engines:
+  - name: duckduckgo
+    engine: duckduckgo
+    categories: [general]
+    disabled: false
+  - name: brave
+    engine: brave
+    categories: [general]
+    disabled: false
+  - name: wikipedia
+    engine: wikipedia
+    categories: [general]
+    disabled: false
+  - name: qwant
+    engine: qwant
+    categories: [general]
+    disabled: false

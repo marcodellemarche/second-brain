@@ -1,0 +1,310 @@
+# One brain: Hermes, its tools, its sidecars and the only two containers that can reach the
+# internet. `sb init` renders the placeholders and writes the secrets under `secrets/`.
+#
+# Nothing publishes a port. Telegram is long polling, the webhook listener is reachable only on
+# the internal network, and the way out is the egress proxy.
+name: {{ instance_name }}
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-brain: &brain
+  <<: *hardening
+  image: {{ brain_image }}
+  read_only: true
+  tmpfs: [/tmp]
+
+# The sidecars open no port, so there is nothing to probe from outside: the check reads the
+# process' own cmdline, and fails only when the interpreter it runs on is gone.
+x-sidecar-health: &sidecar-health
+  test: ["CMD", "python", "-c", "import sys;sys.exit(0 if b'second_brain' in open('/proc/1/cmdline','rb').read() else 1)"]
+  interval: 60s
+  timeout: 5s
+  retries: 3
+
+networks:
+  # Everything that must not reach the internet. Docker gives an internal network no gateway.
+  internal:
+    internal: true
+  # The terminal talks to Hermes and to nothing else: on `internal` it could still open a CONNECT through egress to any allowlisted host, and the allowlist is not a place to trust a shell.
+  terminal-net:
+    internal: true
+  # The internet, for the three services that are allowed to see it.
+  egress-net: {}
+
+volumes:
+  # The guard writes its heartbeat here, the watchdog reads it.
+  guard:
+  # brain_tools state: the job queue, the archive staging area.
+  data:
+  # Hermes' own home: session history, skills, the memory files.
+  hermes-home:
+
+# Every secret is a file, mounted read-only, and only into the service that reads it. Hermes is the one that cannot take a file: it wants the MCP bearer token, the Telegram token and the three webhook secrets as environment values, so `sb init` renders them into `/etc/hermes/.env`, the managed env scope Hermes pins and the agent cannot edit. Same source secrets, mounted rather than passed on the command line, so none of them shows up in `docker inspect`.
+secrets:
+  model_api_key:
+    file: ./secrets/model_api_key
+  tools_token:
+    file: ./secrets/tools_token
+  calendar_token:
+    file: ./secrets/calendar_token
+  terminal_ssh_key:
+    file: ./secrets/terminal_ssh_key
+  webhook_ingest:
+    file: ./secrets/webhook_ingest
+  webhook_research:
+    file: ./secrets/webhook_research
+  webhook_idea:
+    file: ./secrets/webhook_idea
+
+services:
+  hermes:
+    <<: *hardening
+    image: {{ hermes_image }}
+    container_name: {{ instance_name }}-hermes
+    command: ["gateway", "run"]
+    networks: [internal, terminal-net]
+    depends_on:
+      brain-tools:
+        condition: service_healthy
+      gate:
+        condition: service_healthy
+      terminal:
+        condition: service_healthy
+      watchdog:
+        condition: service_started
+      egress:
+        condition: service_started
+    environment:
+      HERMES_UID: "23001"
+      HERMES_GID: "23001"
+      # The model gate ignores this value and uses the real key it holds. Hermes never has it.
+      MODEL_GATE_API_KEY: "held-by-the-gate"
+      # A file write outside these two roots is refused, whatever the model was told. The
+      # workspace is the terminal container's, which Hermes reaches over ssh, so it is not here.
+      HERMES_WRITE_SAFE_ROOT: "{{ media_dir }}:/opt/data/cache/scratch"
+      TERMINAL_CWD: "{{ terminal_cwd }}"
+      BRAIN_GUARD_CONFIG: /etc/brain-guard/config.yaml
+      BRAIN_GUARD_HEARTBEAT: /guard/heartbeat.json
+      # The only way out. Every internal name is in NO_PROXY, or the MCP call to brain-tools and
+      # the model call to the gate would be sent through squid, which refuses plain HTTP.
+      HTTP_PROXY: http://egress:3128
+      HTTPS_PROXY: http://egress:3128
+      http_proxy: http://egress:3128
+      https_proxy: http://egress:3128
+      NO_PROXY: localhost,127.0.0.1,brain-tools,gate,watchdog,searxng,terminal
+      no_proxy: localhost,127.0.0.1,brain-tools,gate,watchdog,searxng,terminal
+    volumes:
+      # The managed config scope: Hermes deep-merges it on top of the user config and wins at every leaf. Read-only, and the agent cannot save into it.
+      - ./config/hermes/config.yaml:/etc/hermes/config.yaml:ro
+      # The managed env scope: TOOLS_TOKEN, TELEGRAM_BOT_TOKEN and the three WEBHOOK_SECRET_* the config above references by name. Read-only, and pinned against the agent like the config.
+      - ./secrets/hermes.env:/etc/hermes/.env:ro
+      - ./config/hermes/SOUL.md:/opt/data/SOUL.md:ro
+      - ./config/hermes/USER.md:/opt/data/USER.md:ro
+      - ./config/brain-guard.yaml:/etc/brain-guard/config.yaml:ro
+      - ./plugins/brain-guard:/opt/data/plugins/brain-guard:ro
+      # The vault is read-only here: brain_tools is the only writer.
+      - {{ vault_dir }}:/vault:ro
+      - {{ media_dir }}:{{ media_dir }}
+      - guard:/guard
+      - hermes-home:/opt/data
+      - ./config/hooks:/opt/data/hooks:ro
+      - ./config/scripts:/opt/data/scripts:ro
+    secrets: [terminal_ssh_key]
+    healthcheck:
+      # The webhook listener is the one port Hermes opens, so a socket that accepts means the
+      # gateway is up.
+      test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',8644),3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+    mem_limit: 3g
+    pids_limit: 512
+
+  terminal:
+    <<: *hardening
+    image: {{ terminal_image }}
+    container_name: {{ instance_name }}-terminal
+    # Reached over ssh by Hermes, never started by it: there is no docker socket in this deployment, so a `docker run` from the model is not a thing that can happen.
+    networks: [terminal-net]
+    environment:
+      WORKSPACE: "{{ terminal_cwd }}"
+    read_only: true
+    tmpfs:
+      - /tmp
+      # The workspace is a tmpfs, so nothing a command writes survives the container restart.
+      - {{ terminal_cwd }}
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2222"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    cpus: 1.0
+    mem_limit: 1g
+    pids_limit: 256
+
+  brain-tools:
+    <<: *brain
+    container_name: {{ instance_name }}-brain-tools
+    command: ["python", "-m", "second_brain.tools.server"]
+    networks: [internal]
+    user: "23002:23002"
+    environment:
+      BRAIN_TOOLS_CONFIG: /etc/brain-tools/config.yaml
+      HOME: /tmp
+    volumes:
+      # The one writer of the vault, and the only place it is mounted read-write.
+      - {{ vault_dir }}:/vault
+      - ./config/brain-tools.yaml:/etc/brain-tools/config.yaml:ro
+      - data:/data
+      # Media Hermes wrote, read-only: a reply may point at a file, and that is all.
+      - {{ media_dir }}:{{ media_dir }}:ro
+    secrets: [tools_token, calendar_token]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',8765),3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    mem_limit: 512m
+    pids_limit: 256
+
+  gate:
+    <<: *brain
+    container_name: {{ instance_name }}-gate
+    command: ["python", "-m", "second_brain.gate.proxy"]
+    # Straight out: the gate is one of the three services on the internet, and it does not go
+    # through squid, so a proxy misconfiguration cannot take the model down.
+    networks: [internal, egress-net]
+    environment:
+      GATE_UPSTREAM: "{{ model_upstream }}"
+      GATE_API_KEY_FILE: /run/secrets/model_api_key
+      GATE_HEALTH_URL: http://watchdog:8081/ok
+      GATE_LISTEN: 0.0.0.0:8080
+    secrets: [model_api_key]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',8080),3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    mem_limit: 256m
+    pids_limit: 128
+
+  watchdog:
+    <<: *brain
+    container_name: {{ instance_name }}-watchdog
+    command: ["python", "-m", "second_brain.gate.watchdog"]
+    networks: [internal]
+    environment:
+      WATCHDOG_CONTAINER: {{ instance_name }}-hermes
+      WATCHDOG_HEARTBEAT: /guard/heartbeat.json
+      WATCHDOG_DOCKER_SOCKET: /var/run/docker.sock
+      WATCHDOG_LISTEN: 0.0.0.0:8081
+    volumes:
+      - guard:/guard:ro
+      # The only docker socket in the deployment, and the only thing this container can do with it is stop Hermes when the guard stops answering.
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      # Not `/ok`: that answers 503 when the guard is down, which is exactly when the watchdog must stay alive to stop Hermes.
+      test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',8081),3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    mem_limit: 128m
+    pids_limit: 128
+
+  vault-watcher:
+    <<: *brain
+    container_name: {{ instance_name }}-vault-watcher
+    command: ["python", "-m", "second_brain.sidecars.vault_watcher"]
+    networks: [internal]
+    environment:
+      VAULT_DIR: /vault
+      HOME: /tmp
+    volumes:
+      - {{ vault_dir }}:/vault:ro
+    secrets: [webhook_ingest]
+    healthcheck: *sidecar-health
+    mem_limit: 256m
+    pids_limit: 128
+
+  call-router:
+    <<: *brain
+    container_name: {{ instance_name }}-call-router
+    command: ["python", "-m", "second_brain.sidecars.call_router"]
+    networks: [internal]
+    environment:
+      VAULT_DIR: /vault
+      HOME: /tmp
+    volumes:
+      - {{ vault_dir }}:/vault:ro
+    secrets: [webhook_ingest]
+    healthcheck: *sidecar-health
+    mem_limit: 256m
+    pids_limit: 128
+
+  job-runner:
+    <<: *brain
+    container_name: {{ instance_name }}-job-runner
+    command: ["python", "-m", "second_brain.sidecars.job_runner"]
+    networks: [internal]
+    environment:
+      VAULT_DIR: /vault
+      HOME: /tmp
+    volumes:
+      - {{ vault_dir }}:/vault:ro
+      # The queue is brain_tools' file: it writes a job, the runner takes it.
+      - data:/data
+    secrets: [webhook_research, webhook_idea]
+    healthcheck: *sidecar-health
+    mem_limit: 256m
+    pids_limit: 128
+
+  egress:
+    <<: *hardening
+    image: {{ egress_image }}
+    container_name: {{ instance_name }}-egress
+    # The one door. The allowlist in squid.conf is rendered from the model endpoint host, the Telegram API and the hosts the enabled brain_tools tools declare.
+    networks: [internal, egress-net]
+    volumes:
+      - ./config/squid.conf:/etc/squid/squid.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "squid -k check -f /etc/squid/squid.conf"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    mem_limit: 256m
+    pids_limit: 128
+
+  searxng:
+    <<: *hardening
+    image: {{ searxng_image }}
+    container_name: {{ instance_name }}-searxng
+    # web_search goes through this instance, and it needs the internet to reach its engines.
+    networks: [internal, egress-net]
+    environment:
+      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
+      SEARXNG_BASE_URL: http://searxng:8080/
+    volumes:
+      - ./config/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    read_only: true
+    tmpfs: [/tmp]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    mem_limit: 512m
+    pids_limit: 128

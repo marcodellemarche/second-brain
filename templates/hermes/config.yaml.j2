@@ -1,6 +1,8 @@
-# Hermes v0.22.2 config for a second brain. `sb init` renders the placeholders and mounts the
-# result read-only: nothing here is meant to be changed from the chat (/sethome, "Always
-# Approve" on a config write, `hermes config set`), so every choice is made in this file.
+# Hermes v0.22.2 config for a second brain. `sb init` renders the placeholders into the managed
+# scope, /etc/hermes/config.yaml, which Hermes deep-merges on top of the user config and lets the
+# managed file win at every leaf. The file is mounted read-only and the agent cannot modify it:
+# nothing here is meant to be changed from the chat (/sethome, "Always Approve" on a config write,
+# `hermes config set`), so every choice is made in this file.
 _config_version: 50
 
 # The model is any OpenAI-compatible endpoint behind the model gate, which holds the real key.
@@ -112,21 +114,21 @@ gateway:
   max_inbound_media_bytes: 26214400
   allow_all_users: false
 
-# The terminal runs in a container with no network, and its writes are limited to one workspace
-# (HERMES_WRITE_SAFE_ROOT is env-only and is set by the compose file, not here).
+# The terminal runs in its own container, reached over ssh, and that container has no route out:
+# no docker socket (a socket is control of the host, and the docker backend would need one), no
+# network, no secrets. Hermes only ever sees a shell inside it.
+# HERMES_WRITE_SAFE_ROOT is env-only and is set by the compose file, not here.
 terminal:
-  backend: docker
+  backend: ssh
   cwd: "{{ terminal_cwd }}"
   timeout: 120
-  docker_network: false
-  docker_mount_cwd_to_workspace: false
-  docker_volumes: ["{{ media_dir }}:{{ media_dir }}"]
-  docker_forward_env: []
+  ssh_host: terminal
+  ssh_user: agent
+  ssh_port: 2222
+  # The key is a mounted secret, read-only, and only in this container.
+  ssh_key: "{{ terminal_ssh_key }}"
+  ssh_persistent: false
   env_passthrough: []
-  container_cpu: 1
-  container_memory: 1024
-  container_disk: 4096
-  container_persistent: false
 
 # Voice notes are transcribed locally with faster-whisper. The language is detected per clip:
 # Whisper's "en" default misreads short Italian and Portuguese recordings.
