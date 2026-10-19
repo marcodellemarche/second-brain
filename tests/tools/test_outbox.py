@@ -147,7 +147,7 @@ def _delivery(
             "platform": platform,
             "assistant_response": reply,
             "user_message": user_message
-            or f"Background research job {job_id}. Tidal energy in the North Sea\n\nHow does tidal energy work?",
+            or f"Background research job {job_id}. Tidal energy\n\nHow does tidal energy work?",
             "session_id": "session-1",
         },
         "delivery_id": delivery_id,
