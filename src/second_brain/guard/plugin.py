@@ -471,7 +471,20 @@ def _scheduled(task_id: str, session_id: str) -> str:
 
 def _approval_text(tool_name: str, args: dict[str, Any], decision: Decision) -> str:
     """What the human sees when asked: the tool, the arguments, and why the guard is asking."""
-    return f"{tool_name} ({_preview(args, ARGS_PREVIEW_CHARS)}): {decision.reason}"
+    text = f"{tool_name} ({_preview(args, ARGS_PREVIEW_CHARS)}): {decision.reason}"
+    calendar = _target_calendar(tool_name, args)
+    return f"Calendar: {calendar.upper()}\n{text}" if calendar else text
+
+
+def _target_calendar(tool_name: str, args: dict[str, Any]) -> str | None:
+    """The calendar a calendar write lands on, shown first: the arguments preview is easy to skim."""
+    name = _policy_name(tool_name)
+    if not name.startswith("calendar_"):
+        return None
+    if name == "calendar_main_write":
+        return "main"
+    calendar = args.get("calendar")
+    return calendar if isinstance(calendar, str) and calendar else None
 
 
 def _is_untrusted_note(text: str) -> bool:

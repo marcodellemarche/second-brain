@@ -9,6 +9,7 @@ from second_brain.core.types import Autonomy
 from second_brain.guard import plugin
 from second_brain.guard.config import GuardConfig, GuardConfigError
 from second_brain.guard.heartbeat import read_heartbeat
+from second_brain.guard.rules import Decision
 
 CONFIG: dict[str, Any] = {
     "vault_root": "/vault",
@@ -367,6 +368,16 @@ def test_approval_text_truncates_the_arguments(guard: plugin.Guard) -> None:
     assert decision is not None
     assert "..." in decision["message"]
     assert len(decision["message"]) < 400
+
+
+def test_approval_text_names_the_target_calendar_first() -> None:
+    decision = Decision(action="ask", reason="visible effect")
+    main = plugin._approval_text("mcp__brain__calendar_main_write", {"action": "create"}, decision)
+    assert main.startswith("Calendar: MAIN\n")
+    invite = plugin._approval_text("mcp__brain__calendar_invite", {"calendar": "assistant"}, decision)
+    assert invite.startswith("Calendar: ASSISTANT\n")
+    other = plugin._approval_text("web_search", {"query": "x"}, decision)
+    assert not other.startswith("Calendar:")
 
 
 def test_pre_tool_call_blocks_an_unknown_mcp_tool(guard: plugin.Guard) -> None:
