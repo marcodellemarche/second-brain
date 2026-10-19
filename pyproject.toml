@@ -15,6 +15,9 @@ dev = [
     "ruff",
 ]
 
+[project.scripts]
+sb = "second_brain.cli.main:main"
+
 [project.entry-points."hermes_agent.plugins"]
 brain-guard = "second_brain.guard.plugin:register"
 

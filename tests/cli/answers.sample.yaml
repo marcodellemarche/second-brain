@@ -1,0 +1,42 @@
+# A sample answers file for `sb init`, every value fake. Secrets are never here: `sb init`
+# generates the internal ones and leaves an empty file under secrets/ for the rest.
+instance_name: sample-brain
+language: en
+owner_name: Sample Owner
+owner_telegram_id: "100000001"
+timezone: Europe/Rome
+
+# Absolute paths on the host. The vault is scaffolded only when it is missing or empty.
+vault_dir: /srv/brain/vault
+media_dir: /srv/brain/media
+archive_dir: /srv/brain/archive
+
+model_endpoint: https://model.example.com/v1
+model_name: sample-model
+model_context_length: 131072
+
+tools:
+  calendar:
+    assistant_calendar_id: assistant@example.com
+    main_calendar_id: main@example.com
+  weather: true
+  links:
+    base_url: https://cloud.example.com
+    vault_folder: Vault
+    archive_folder: Archive
+  archive:
+    discard_dir: _discard
+  jobs: true
+  notify:
+    initiative_path: _brain/initiative.md
+    default_daily: 6
+
+job_kinds:
+  research:
+    route: background-research
+    description: Search the web for an answer and write it into the vault.
+    web: true
+  idea:
+    route: background-idea
+    description: Develop an idea from what the vault already knows.
+    web: false

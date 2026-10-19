@@ -109,7 +109,6 @@ services:
       - ./config/hermes/SOUL.md:/opt/data/SOUL.md:ro
       - ./config/hermes/USER.md:/opt/data/USER.md:ro
       - ./config/brain-guard.yaml:/etc/brain-guard/config.yaml:ro
-      - ./plugins/brain-guard:/opt/data/plugins/brain-guard:ro
       # The vault is read-only here: brain_tools is the only writer.
       - {{ vault_dir }}:/vault:ro
       - {{ media_dir }}:{{ media_dir }}
