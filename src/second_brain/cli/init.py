@@ -153,10 +153,12 @@ A brain built by `sb init`. Next steps:
 1. Fill in the files under `secrets/` that are still empty. `secrets/README.md` says what each
    one is and where it comes from. `hermes.env` needs the same chat token, under the name Hermes
    reads (`TELEGRAM_BOT_TOKEN` or `SLACK_BOT_TOKEN`).
-2. Download the faster-whisper model into `models/`, laid out as a Hugging Face cache:
-   `python -c "from faster_whisper import WhisperModel; WhisperModel('small', download_root='models/hf')"`.
-   The Hermes image copies `models/` in, so the image builds and runs offline.
-3. Build the three images from `templates/deploy/` (`Dockerfile.hermes`, `Dockerfile.brain`,
+2. In the second-brain repo root, download the faster-whisper model into `models/` as a Hugging
+   Face cache (`models/hub/models--Systran--faster-whisper-small`), which is where Hermes looks
+   with no network:
+   `HF_HOME=models python -c "from huggingface_hub import snapshot_download; snapshot_download('Systran/faster-whisper-small')"`.
+3. Build the three images with the repo root as context
+   (`docker build -f templates/deploy/Dockerfile.hermes .`, same for `Dockerfile.brain` and
    `Dockerfile.terminal`) and tag them as `compose.yaml` expects.
 4. Start it: `docker compose up -d`.
 5. Check it: `sb check {values["instance_dir"]}`.
