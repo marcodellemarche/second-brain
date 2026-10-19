@@ -1,0 +1,244 @@
+# Hermes v0.22.2 config for a second brain. `sb init` renders the placeholders and mounts the
+# result read-only: nothing here is meant to be changed from the chat (/sethome, "Always
+# Approve" on a config write, `hermes config set`), so every choice is made in this file.
+_config_version: 50
+
+# The model is any OpenAI-compatible endpoint behind the model gate, which holds the real key.
+model:
+  default: "{{ model_name }}"
+  provider: custom
+  base_url: "{{ model_gate_url }}"
+  key_env: MODEL_GATE_API_KEY
+  context_length: {{ model_context_length }}
+  openai_runtime: auto
+fallback_providers: []
+timezone: "{{ timezone }}"
+
+nous:
+  guest: false
+model_catalog:
+  enabled: false
+updates:
+  check: false
+telemetry:
+  shared_metrics:
+    enabled: false
+lsp:
+  enabled: false
+
+tools:
+  connectors:
+    enabled: false
+  tool_search:
+    enabled: "off"
+
+security:
+  redact_secrets: true
+  protected_instruction_files: true
+  allow_lazy_installs: false
+  allow_private_urls: false
+
+agent:
+  reasoning_effort: none
+  # browser is here on purpose: web access goes through web_search/web_extract, which the guard
+  # classifies and can refuse. A headless browser is a second, unclassified network path. Drop
+  # `browser` from this list for a brain that really needs it, and add a policy rule for it first.
+  disabled_toolsets: [code_execution, cronjob, connections, catalog, computer_use, desktop_ui, browser, image_gen, tts, kanban]
+
+# Approvals are manual, so the human the guard names in `approval` really answered. `deny` for
+# cron, single-query and unattended runs: nobody is there to press a button.
+approvals:
+  mode: manual
+  timeout: 300
+  cron_mode: deny
+  single_query_mode: deny
+  unattended_mode: deny
+  destructive_slash_confirm: true
+  mcp_reload_confirm: true
+
+# The model never schedules work. Jobs come from brain_tools' queue, run by our own sidecar.
+cron:
+  allow_agent_scheduling: false
+
+checkpoints:
+  enabled: false
+
+kanban:
+  dispatch_in_gateway: false
+  review_dispatch: false
+
+# No external memory provider: memory stays in Hermes' own bounded files, and a write asks first.
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  provider: ""
+  write_approval: true
+
+# Skill writes are staged for approval, and a new skill lands outside the vault: the vault is
+# written only through brain_tools.
+skills:
+  inline_shell: false
+  external_dirs: []
+  write_approval: true
+  create_dir: "{{ skills_dir }}"
+
+curator:
+  enabled: false
+
+auxiliary:
+  title_generation:
+    enabled: false
+  background_review:
+    enabled: false
+  compression:
+    provider: main
+  approval:
+    provider: main
+
+plugins:
+  enabled: [brain-guard]
+  disabled: []
+  auto_apply: false
+  hook_callback_timeout: 30
+  auto_update_check_hours: 0
+hooks: {}
+hooks_auto_accept: false
+quick_commands: {}
+
+gateway:
+  strict: true
+  trust_recent_files: false
+  media_delivery_allow_dirs: ["{{ media_dir }}"]
+  max_inbound_media_bytes: 26214400
+  allow_all_users: false
+
+# The terminal runs in a container with no network, and its writes are limited to one workspace
+# (HERMES_WRITE_SAFE_ROOT is env-only and is set by the compose file, not here).
+terminal:
+  backend: docker
+  cwd: "{{ terminal_cwd }}"
+  timeout: 120
+  docker_network: false
+  docker_mount_cwd_to_workspace: false
+  docker_volumes: ["{{ media_dir }}:{{ media_dir }}"]
+  docker_forward_env: []
+  env_passthrough: []
+  container_cpu: 1
+  container_memory: 1024
+  container_disk: 4096
+  container_persistent: false
+
+# Voice notes are transcribed locally with faster-whisper. The language is detected per clip:
+# Whisper's "en" default misreads short Italian and Portuguese recordings.
+stt:
+  enabled: true
+  provider: local
+  echo_transcripts: true
+  language: ""
+  local:
+    model: small
+    language: ""
+
+# brain_tools is the only writer of the vault and the only holder of credentials. The token is
+# an env var, never this file, and the server cannot ask Hermes to sample or elicit anything.
+mcp_servers:
+  brain:
+    url: "{{ brain_tools_url }}"
+    headers:
+      Authorization: "Bearer ${TOOLS_TOKEN}"
+    sampling:
+      enabled: false
+    elicitation:
+      enabled: false
+
+platforms:
+  api_server:
+    enabled: false
+  telegram:
+    enabled: true
+    # Long polling through the egress proxy: no public URL, no webhook.
+    proxy_url: "{{ egress_proxy_url }}"
+    # allow_from is TELEGRAM_ALLOWED_USERS: the only id that gets an answer.
+    allow_from: ["{{ owner_telegram_id }}"]
+    group_allow_from: ["{{ owner_telegram_id }}"]
+    # Webhook chats and groups count as the "group" scope for slash commands, so both admin
+    # scopes are set to the owner: nobody else can run /yolo or any other command.
+    allow_admin_from: ["{{ owner_telegram_id }}"]
+    group_allow_admin_from: ["{{ owner_telegram_id }}"]
+    # No group id matches, so every group is dropped at intake. DMs are gated by allow_from.
+    allowed_chats: ["{{ owner_telegram_id }}"]
+    require_mention: true
+    unauthorized_dm_behavior: ignore
+    user_allowed_commands: []
+    group_user_allowed_commands: []
+    # The config is read-only, so /sethome can never work: the home channel is written here, and
+    # cron results and proactive messages land in the owner's DM.
+    home_channel:
+      platform: telegram
+      chat_id: "{{ owner_telegram_id }}"
+      name: "{{ owner_name }}"
+  # Signed webhook routes for our sidecars. Each route has its own secret and its own toolsets:
+  # `toolsets` per route is the only place a background run's reach is decided, and the model
+  # cannot create or edit a route.
+  webhook:
+    enabled: true
+    extra:
+      # The sidecars are separate containers, so the listener has to accept their connection. No
+      # port is published: the only way in is the internal network, and every route checks its own
+      # HMAC signature before anything runs.
+      host: "0.0.0.0"
+      port: 8644
+      max_body_bytes: 1048576
+      # Webhook chats are not DMs, so the "group" scope keys are the ones that apply here.
+      allow_admin_from: ["{{ owner_telegram_id }}"]
+      group_allow_admin_from: ["{{ owner_telegram_id }}"]
+      user_allowed_commands: []
+      group_user_allowed_commands: []
+      # The route's reply stays at the default `deliver: log`: a job writes its result note through
+      # brain_tools, so nothing is pushed to a chat from here. A route prompt is rendered from the
+      # JSON body the sidecar signs (`{kind}` and `{path}` for vault events, `{title}` and
+      # `{question}` for a job), so it never needs the whole payload.
+      routes:
+        # Vault events: a note moved, a transcript landed, a call note to route. No web.
+        ingest:
+          secret: "${WEBHOOK_SECRET_INGEST}"
+          prompt: "{kind}: {path}"
+          toolsets: [file, skills, brain]
+        # Job kinds. A research route sees the web and nothing else: no vault, no brain_tools,
+        # so the question it was given is all it has. `no_mcp` is required, not decorative: a route
+        # list that names no MCP server inherits every globally enabled one, so without it this
+        # route would get brain_tools back. A vault route is the opposite and names `brain`.
+        background-research:
+          secret: "${WEBHOOK_SECRET_RESEARCH}"
+          prompt: "Background research job. {title}\n\n{question}"
+          toolsets: [web, no_mcp]
+        background-idea:
+          secret: "${WEBHOOK_SECRET_IDEA}"
+          prompt: "Background job. {title}\n\n{question}"
+          toolsets: [file, skills, brain]
+
+# Slack Socket Mode, for a team brain. No public URL either: SLACK_BOT_TOKEN (xoxb-) and
+# SLACK_APP_TOKEN (xapp-) live in the env, and the home channel is set from the start because the
+# config is read-only. Add this block under the `platforms:` key above (do not repeat the key, or
+# the Telegram and webhook entries above are lost).
+#   slack:
+#     enabled: true
+#     allow_from: ["{{ owner_slack_id }}"]
+#     group_allow_from: ["{{ owner_slack_id }}"]
+#     allow_admin_from: ["{{ owner_slack_id }}"]
+#     group_allow_admin_from: ["{{ owner_slack_id }}"]
+#     allowed_channels: ["{{ slack_home_channel }}"]
+#     require_mention: true
+#     home_channel:
+#       platform: slack
+#       chat_id: "{{ slack_home_channel }}"
+#       name: "{{ owner_name }}"
+# One session per person in a shared thread is a top-level key, not a platform one:
+# thread_sessions_per_user: true
+
+# The model does not delegate either: `delegation` is not in any list below, so a background run
+# is always a separate signed run with its own toolsets, never a child of the conversation. The
+# webhook default has no `web`: a route reaches the internet only when its own `toolsets` say so.
+platform_toolsets:
+  telegram: [file, web, memory, skills, todo, brain]
+  webhook: [file, skills, brain]
