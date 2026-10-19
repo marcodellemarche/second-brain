@@ -73,7 +73,7 @@ tests/                unit tests per package; tests/security/ for attack scenari
 
 ## How to work here
 
-- Python 3.12, `uv` for everything (`uv run pytest`, `uv run ruff check`). Type hints everywhere, pydantic for config and tool params.
+- Python 3.12, `uv` for everything (`uv run pytest`, `uv run ruff check`, `uv run ruff format`). Type hints everywhere, pydantic for config and tool params.
 - Small, readable modules. Default to no comments: add one only for a non-obvious why or a security constraint. Never narrate history in comments.
 - Every behaviour change comes with tests. Security rules come with a test in `tests/security/` that tries to break them.
 - Do not add dependencies without a reason written in the task summary.
