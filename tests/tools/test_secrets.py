@@ -1,0 +1,155 @@
+"""Tests for the secret scanner. Every fake value is built at runtime."""
+
+from __future__ import annotations
+
+import string
+
+import pytest
+
+from second_brain.tools.secrets import Finding, redact, scan
+
+
+def _aws() -> str:
+    return "AKIA" + "A" * 16
+
+
+def _github() -> str:
+    return "ghp_" + "a1B2c3D4e5" * 4
+
+
+def _gitlab() -> str:
+    return "glpat-" + "a1B2c3D4e5f6G7h8I9j0"
+
+
+def _slack() -> str:
+    return "xoxb-" + "1234567890-abcdefghij"
+
+
+def _openai() -> str:
+    return "sk-" + "a1B2c3D4e5f6G7h8I9j0K1l2"
+
+
+def _private_key() -> str:
+    return "-----BEGIN RSA PRIVATE KEY-----"
+
+
+def _jwt() -> str:
+    return ".".join(["eyJ" + "A" * 9, "B" * 12, "C" * 12])
+
+
+def _entropy() -> str:
+    return "Zx9Kq2Lm8Rt4Vw7Yb1Nc6Hd3Fg5Jp0Qs"
+
+
+def _random_hex(length: int = 64) -> str:
+    return (string.hexdigits[:16] * 8)[:length]
+
+
+@pytest.mark.parametrize(
+    ("rule", "value"),
+    [
+        ("aws_access_key_id", _aws()),
+        ("github_token", _github()),
+        ("gitlab_token", _gitlab()),
+        ("slack_token", _slack()),
+        ("openai_key", _openai()),
+        ("private_key", _private_key()),
+        ("jwt", _jwt()),
+        ("assignment", "password = " + "hunter2hunter2"),
+        ("high_entropy", _entropy()),
+    ],
+)
+def test_each_rule_flags_its_value(rule: str, value: str) -> None:
+    findings = scan(f"Some note text.\n{value}\nMore text.\n")
+
+    assert [finding.rule for finding in findings] == [rule]
+    assert findings[0].line == 2
+
+
+def test_assignment_rule_covers_the_documented_keywords() -> None:
+    for key in ("password", "passwd", "secret", "api_key", "api-key", "token", "PASSWORD"):
+        findings = scan(f"{key}: {'v' * 12}")
+        assert [finding.rule for finding in findings] == ["assignment"], key
+
+
+def test_normal_markdown_is_not_flagged() -> None:
+    note = "\n".join(
+        [
+            "---",
+            "type: note",
+            "created: 2024-05-01",
+            "updated: 2024-05-01T10:00:00",
+            "original_sha256: " + _random_hex(),
+            "tags: [one, two]",
+            "---",
+            "",
+            "See [[Some Topic]] and [[2024-05-01 planning]].",
+            "Link: https://example.com/a/long/path/to/some/resource?ref=notes",
+            "Digest sha256:" + _random_hex(),
+            "Date 2024-05-01 and 2024-05-01T10:00:00Z.",
+        ]
+    )
+
+    assert scan(note) == []
+
+
+def test_placeholder_values_are_not_flagged() -> None:
+    for value in ("<your-token-here>", "***", "xxxxxxxx", "changeme", "example-value", "${TOKEN}"):
+        assert scan(f"token = {value}") == [], value
+
+
+def test_short_values_are_not_flagged() -> None:
+    assert scan("token = abc123") == []
+
+
+def test_preview_keeps_at_most_four_real_characters() -> None:
+    finding = scan(_aws())[0]
+
+    assert finding.preview == "AKIA" + "*" * 8
+    assert len(finding.preview) <= 12
+    assert set(finding.preview[4:]) == {"*"}
+
+
+def test_preview_masks_short_matches_entirely_after_four_chars() -> None:
+    finding = scan(_private_key())[0]
+
+    assert finding.preview.startswith("----")
+    assert set(finding.preview[4:]) == {"*"}
+
+
+def test_line_and_column_are_one_based() -> None:
+    text = "first line\nsecond line " + _aws() + "\n"
+
+    finding = scan(text)[0]
+
+    assert (finding.line, finding.column) == (2, 13)
+
+
+def test_finding_is_frozen() -> None:
+    finding = Finding(rule="rule", line=1, column=1, preview="****")
+
+    with pytest.raises(AttributeError):
+        finding.rule = "other"  # type: ignore[misc]
+
+
+def test_redact_removes_every_finding() -> None:
+    text = f"aws {_aws()} and gh {_github()} and password = {'hunter2hunter2'}\n"
+
+    redacted = redact(text)
+
+    assert scan(redacted) == []
+    assert _aws() not in redacted
+    assert _github() not in redacted
+    assert "hunter2hunter2" not in redacted
+    assert redacted.count("[REDACTED:") == 3
+
+
+def test_redact_keeps_the_rest_of_the_text() -> None:
+    text = f"line one\nkey: {_aws()}\nline three\n"
+
+    assert redact(text) == "line one\nkey: [REDACTED:aws_access_key_id]\nline three\n"
+
+
+def test_scan_of_plain_text_returns_nothing() -> None:
+    assert scan("") == []
+    assert scan("just a normal sentence about the weather") == []
