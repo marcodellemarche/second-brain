@@ -7,8 +7,8 @@ accepted, and later notices the result note appearing.
 
 Hermes v0.22.2 validates the replay-safe signature as `X-Webhook-Signature-V2`, the hex HMAC-SHA256
 of `"<timestamp>.<body>"`, with the same timestamp in `X-Webhook-Timestamp` and at most five
-minutes of skew (`gateway/platforms/webhook.py:800-808`). The body-only `X-Hub-Signature-256` is
-the legacy path: it has no timestamp, so a captured request replays forever.
+minutes of skew (`gateway/platforms/webhook.py:800-808`). The signing itself lives in
+`sidecars/webhook.py`, shared with the other sidecars, so the two cannot drift apart.
 
 A 2xx answer means Hermes accepted the run, not that the work is done, so the job becomes
 `dispatched`. It becomes `finished` when the result note exists in the vault, and `failed` when the
@@ -21,51 +21,35 @@ a network or a running Hermes.
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 import logging
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from second_brain.sidecars.webhook import (
+    DEFAULT_TIMEOUT,
+    SIGNATURE_HEADER,
+    TIMESTAMP_HEADER,
+    HttpPost,
+    WebhookError,
+    http_post,
+    read_secret,
+    sign_body,
+    signed_headers,
+)
 from second_brain.tools.jobs import Job, JobKind, JobStore
 
 log = logging.getLogger(__name__)
 
-SIGNATURE_HEADER = "X-Webhook-Signature-V2"
-TIMESTAMP_HEADER = "X-Webhook-Timestamp"
 DEFAULT_POLL_SECONDS = 5.0
-DEFAULT_TIMEOUT = 30.0
 DEFAULT_DISPATCH_TIMEOUT = 60 * 60.0
 DEFAULT_SWEEP_SECONDS = 60.0
 _DISPATCHED_SCAN = 500
 
-# What one POST attempt answers: the HTTP status and the response body, for the error message.
-HttpPost = Callable[[str, bytes, Mapping[str, str], float], tuple[int, bytes]]
-
 
 class JobRunnerError(RuntimeError):
     """The runner cannot start: a missing secret file, for example."""
-
-
-def sign_body(secret: bytes, body: bytes, timestamp: str) -> str:
-    """The header value Hermes expects: the hex HMAC-SHA256 of `"<timestamp>.<body>"`."""
-    signed = timestamp.encode("ascii") + b"." + body
-    return hmac.new(secret, signed, hashlib.sha256).hexdigest()
-
-
-def _http_post(url: str, body: bytes, headers: Mapping[str, str], timeout: float) -> tuple[int, bytes]:
-    request = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, response.read()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read()
-    except (OSError, ValueError) as exc:
-        raise JobRunnerError(f"{url} unreachable: {exc}") from exc
 
 
 def job_body(job: Job) -> bytes:
@@ -117,7 +101,7 @@ class JobRunner:
         self._secret_file = Path(hmac_secret_file)
         self._vault_root = root
         self._max_concurrent = max_concurrent
-        self._post = post or _http_post
+        self._post = post or http_post
         self._timeout = timeout
         self._dispatch_timeout = dispatch_timeout
         self._sweep_seconds = sweep_seconds
@@ -139,22 +123,13 @@ class JobRunner:
         return f"{self._base}/{route}"
 
     def _secret(self) -> bytes:
-        """The HMAC secret, read at every send so a rotation does not need a restart."""
         try:
-            secret = self._secret_file.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise JobRunnerError(f"cannot read the HMAC secret: {exc}") from exc
-        if not secret:
-            raise JobRunnerError(f"the HMAC secret in {self._secret_file} is empty")
-        return secret.encode("utf-8")
+            return read_secret(self._secret_file)
+        except WebhookError as exc:
+            raise JobRunnerError(str(exc)) from exc
 
     def _headers(self, body: bytes, timestamp: str) -> dict[str, str]:
-        return {
-            SIGNATURE_HEADER: sign_body(self._secret(), body, timestamp),
-            TIMESTAMP_HEADER: timestamp,
-            "Content-Type": "application/json",
-            "User-Agent": "second-brain-job-runner",
-        }
+        return signed_headers(self._secret(), body, timestamp, user_agent="second-brain-job-runner")
 
     def run_job(self, job: Job) -> bool:
         """Send one claimed job and report the outcome. True when Hermes accepted the run."""
@@ -163,7 +138,7 @@ class JobRunner:
         try:
             headers = self._headers(body, timestamp)
             status, response = self._post(self.url(job.kind), body, headers, self._timeout)
-        except (JobRunnerError, OSError, ValueError) as exc:
+        except (JobRunnerError, WebhookError, OSError, ValueError) as exc:
             self._store.fail(job.id, str(exc))
             log.warning("job %s (%s) not sent: %s", job.id, job.kind, exc)
             return False
@@ -243,3 +218,17 @@ class JobRunner:
         if self._last_sweep is None:
             return True
         return self._clock() - self._last_sweep >= self._sweep_seconds
+
+
+__all__ = [
+    "DEFAULT_DISPATCH_TIMEOUT",
+    "DEFAULT_POLL_SECONDS",
+    "DEFAULT_TIMEOUT",
+    "HttpPost",
+    "JobRunner",
+    "JobRunnerError",
+    "SIGNATURE_HEADER",
+    "TIMESTAMP_HEADER",
+    "job_body",
+    "sign_body",
+]
