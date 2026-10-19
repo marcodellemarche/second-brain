@@ -26,6 +26,7 @@ from second_brain.cli.config import export_registry
 from second_brain.cli.secrets import GENERATED, SECRET_MODE, SECRETS_DIR, TERMINAL_SSH_KEY
 from second_brain.gate.watchdog import DEFAULT_MAX_AGE
 from second_brain.guard.config import GuardConfig, GuardConfigError
+from second_brain.sidecars.config import SidecarsConfig, SidecarsConfigError
 from second_brain.tools.config import ToolsConfig, ToolsConfigError
 from second_brain.tools.export import export_guard_classes
 
@@ -48,6 +49,7 @@ RENDERED_FILES: tuple[str, ...] = (
     "config/brain-guard.yaml",
     "config/squid.conf",
     "config/searxng/settings.yml",
+    "config/sidecars.yaml",
     "config/hermes/config.yaml",
     "config/hermes/SOUL.md",
     "config/hermes/USER.md",
@@ -68,6 +70,13 @@ PACKAGE_REGISTRIES: tuple[str, ...] = (
 )
 
 PLACEHOLDER_MARKERS: tuple[bytes, ...] = (b"{{", b"{%", b"{#")
+
+# The routes the scheduler is allowed to post to, and the only one that may deliver its reply into
+# the chat. A scheduled run that reaches the web or mirrors its reply is how untrusted content ends
+# up quoted into the conversation.
+SCHEDULED_ROUTES: tuple[str, ...] = ("scheduled-digest", "scheduled-lint", "scheduled-brief")
+DELIVERING_ROUTE = "scheduled-digest"
+NO_DELIVERY: tuple[Any, ...] = (None, False, "", "log", "none")
 
 HEARTBEAT_MAX_AGE = DEFAULT_MAX_AGE
 
@@ -136,6 +145,8 @@ class _Instance:
     guard_error: str | None
     tools: ToolsConfig | None
     tools_error: str | None
+    sidecars: SidecarsConfig | None
+    sidecars_error: str | None
     compose: dict[str, Any] | None
     compose_error: str | None
 
@@ -157,6 +168,10 @@ def static_checks(instance: Path) -> list[CheckResult]:
         _owner_check(ctx),
         _plugin_check(ctx),
         _research_routes_check(ctx),
+        _sidecars_config_check(ctx),
+        _sidecar_routes_check(ctx),
+        _team_domains_check(ctx),
+        _scheduled_routes_check(ctx),
         _guard_tools_check(ctx),
         _squid_check(ctx),
     ]
@@ -190,9 +205,20 @@ def _load(root: Path) -> _Instance:
     hermes, hermes_error = _read_yaml(root / "config/hermes/config.yaml")
     guard, guard_error = _read_guard(root / "config/brain-guard.yaml")
     tools, tools_error = _read_tools(root / "config/brain-tools.yaml")
+    sidecars, sidecars_error = _read_sidecars(root / "config/sidecars.yaml")
     compose, compose_error = _read_yaml(root / "compose.yaml")
     return _Instance(
-        root, hermes, hermes_error, guard, guard_error, tools, tools_error, compose, compose_error
+        root,
+        hermes,
+        hermes_error,
+        guard,
+        guard_error,
+        tools,
+        tools_error,
+        sidecars,
+        sidecars_error,
+        compose,
+        compose_error,
     )
 
 
@@ -217,6 +243,13 @@ def _read_tools(path: Path) -> tuple[ToolsConfig | None, str | None]:
     try:
         return ToolsConfig.from_yaml(path), None
     except ToolsConfigError as exc:
+        return None, str(exc)
+
+
+def _read_sidecars(path: Path) -> tuple[SidecarsConfig | None, str | None]:
+    try:
+        return SidecarsConfig.from_yaml(path), None
+    except SidecarsConfigError as exc:
         return None, str(exc)
 
 
@@ -570,6 +603,91 @@ def _webhook_routes(hermes: dict[str, Any]) -> dict[str, Any]:
     extra = webhook.get("extra") if isinstance(webhook, dict) else None
     routes = extra.get("routes") if isinstance(extra, dict) else None
     return routes if isinstance(routes, dict) else {}
+
+
+# --- sidecars -------------------------------------------------------------------------------
+
+
+def _sidecars_config_check(ctx: _Instance) -> CheckResult:
+    name = "sidecars_config"
+    if ctx.sidecars is None:
+        return _fail(name, ctx.sidecars_error or "the sidecars config is not readable")
+    sections = [
+        section
+        for section in ("vault_watcher", "call_router", "job_runner", "scheduler")
+        if getattr(ctx.sidecars, section) is not None
+    ]
+    return _pass(name, f"config/sidecars.yaml loads: {', '.join(sections)}")
+
+
+def _sidecar_routes_check(ctx: _Instance) -> CheckResult:
+    name = "sidecar_routes"
+    if ctx.sidecars is None:
+        return _fail(name, ctx.sidecars_error or "the sidecars config is not readable")
+    hermes, error = _hermes(ctx, name)
+    if error is not None:
+        return error
+    configured = _webhook_routes(hermes)
+    problems: list[str] = []
+    for route, secret in sorted(ctx.sidecars.route_secrets.items()):
+        if not isinstance(configured.get(route), dict):
+            problems.append(f"{route} is not a webhook route in the Hermes config")
+        if not (ctx.root / SECRETS_DIR / secret.name).is_file():
+            problems.append(f"{route} points at {secret}, and {SECRETS_DIR}/{secret.name} is missing")
+    if problems:
+        return _fail(name, "; ".join(problems))
+    count = len(ctx.sidecars.route_secrets)
+    return _pass(name, f"all {count} routes are a webhook route with its secret file in {SECRETS_DIR}/")
+
+
+def _team_domains_check(ctx: _Instance) -> CheckResult:
+    name = "team_domains"
+    if ctx.sidecars is None:
+        return _fail(name, ctx.sidecars_error or "the sidecars config is not readable")
+    router = ctx.sidecars.call_router
+    domains = list(router.rules.team_domains) if router is not None else []
+    if not domains:
+        return _pass(name, "no team domain is set, so every call stays personal")
+    # There is no team brain to route a call to yet, so a domain here loses the call instead of
+    # sending it anywhere.
+    return _fail(
+        name,
+        "team_domains is set but this brain has no team brain to route to: team calls would be lost"
+        f" (found {', '.join(domains)})",
+    )
+
+
+def _scheduled_routes_check(ctx: _Instance) -> CheckResult:
+    name = "scheduled_routes"
+    if ctx.sidecars is None:
+        return _fail(name, ctx.sidecars_error or "the sidecars config is not readable")
+    scheduler = ctx.sidecars.scheduler
+    routes = sorted({entry.route for entry in scheduler.schedule.entries}) if scheduler else []
+    if not routes:
+        return _pass(name, "the scheduler fires nothing, so no scheduled route to check")
+    hermes, error = _hermes(ctx, name)
+    if error is not None:
+        return error
+    configured = _webhook_routes(hermes)
+    problems: list[str] = [
+        f"{route} is not one of {', '.join(SCHEDULED_ROUTES)}"
+        for route in sorted(set(routes) - set(SCHEDULED_ROUTES))
+    ]
+    for route in routes:
+        block = configured.get(route)
+        if not isinstance(block, dict):
+            problems.append(f"{route} is not a webhook route")
+            continue
+        toolsets = [str(toolset) for toolset in block.get("toolsets") or []]
+        if "web" in toolsets:
+            problems.append(f"{route} reaches the web")
+        if block.get("mirror_to_session") not in (None, False):
+            problems.append(f"{route} mirrors its reply into the chat")
+        if route != DELIVERING_ROUTE and block.get("deliver") not in NO_DELIVERY:
+            problems.append(f"{route} delivers, and only {DELIVERING_ROUTE} may")
+    if problems:
+        return _fail(name, "; ".join(problems))
+    return _pass(name, f"{', '.join(routes)}: no web, no mirror, and only the digest is delivered")
 
 
 def _guard_tools_check(ctx: _Instance) -> CheckResult:

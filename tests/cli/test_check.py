@@ -416,3 +416,96 @@ def test_live_checks_fail_when_compose_cannot_be_read(instance: Path) -> None:
     services = next(result for result in results if result.name == "live.services")
     assert services.status == FAIL
     assert "exited 1" in services.reason
+
+
+# --- the sidecars and the scheduled routes --------------------------------------------------
+
+
+def test_a_fresh_instance_passes_the_sidecar_checks(instance: Path) -> None:
+    for name in ("sidecars_config", "sidecar_routes", "team_domains", "scheduled_routes"):
+        status, reason = _status(instance, name)
+        assert status == PASS, (name, reason)
+
+
+def test_a_missing_sidecars_file_fails(instance: Path) -> None:
+    (instance / "config/sidecars.yaml").unlink()
+    status, reason = _status(instance, "sidecars_config")
+    assert status == FAIL
+    assert "sidecars.yaml" in reason
+    assert _status(instance, "files")[0] == FAIL
+    assert "config/sidecars.yaml" in _status(instance, "files")[1]
+
+
+def test_a_route_removed_from_hermes_fails(instance: Path) -> None:
+    _edit_yaml(
+        instance / "config/hermes/config.yaml",
+        lambda data: data["platforms"]["webhook"]["extra"]["routes"].pop("scheduled-lint"),
+    )
+    status, reason = _status(instance, "sidecar_routes")
+    assert status == FAIL
+    assert "scheduled-lint" in reason
+
+
+def test_a_route_whose_secret_file_is_missing_fails(instance: Path) -> None:
+    (instance / "secrets" / "webhook_idea").unlink()
+    status, reason = _status(instance, "sidecar_routes")
+    assert status == FAIL
+    assert "background-idea" in reason
+    assert "webhook_idea" in reason
+
+
+def test_a_team_domain_fails(instance: Path) -> None:
+    _edit_yaml(
+        instance / "config/sidecars.yaml",
+        lambda data: data["call_router"]["rules"].update({"team_domains": ["example.com"]}),
+    )
+    status, reason = _status(instance, "team_domains")
+    assert status == FAIL
+    assert "team calls would be lost" in reason
+
+
+def test_a_scheduled_route_that_reaches_the_web_fails(instance: Path) -> None:
+    _edit_yaml(
+        instance / "config/hermes/config.yaml",
+        lambda data: data["platforms"]["webhook"]["extra"]["routes"]["scheduled-lint"]["toolsets"].append(
+            "web"
+        ),
+    )
+    status, reason = _status(instance, "scheduled_routes")
+    assert status == FAIL
+    assert "scheduled-lint reaches the web" in reason
+
+
+def test_a_scheduled_route_that_mirrors_its_reply_fails(instance: Path) -> None:
+    _edit_yaml(
+        instance / "config/hermes/config.yaml",
+        lambda data: data["platforms"]["webhook"]["extra"]["routes"]["scheduled-brief"].update(
+            {"mirror_to_session": True}
+        ),
+    )
+    status, reason = _status(instance, "scheduled_routes")
+    assert status == FAIL
+    assert "scheduled-brief mirrors its reply" in reason
+
+
+def test_only_the_digest_may_deliver(instance: Path) -> None:
+    _edit_yaml(
+        instance / "config/hermes/config.yaml",
+        lambda data: data["platforms"]["webhook"]["extra"]["routes"]["scheduled-brief"].update(
+            {"deliver": "telegram"}
+        ),
+    )
+    status, reason = _status(instance, "scheduled_routes")
+    assert status == FAIL
+    assert "only scheduled-digest may" in reason
+
+
+def test_a_scheduled_route_outside_the_known_ones_fails(instance: Path) -> None:
+    def mutate(data: dict) -> None:
+        entries = data["scheduler"]["schedule"]["entries"]
+        entries.append({"name": "research", "route": "background-research", "at": "09:00"})
+
+    _edit_yaml(instance / "config/sidecars.yaml", mutate)
+    status, reason = _status(instance, "scheduled_routes")
+    assert status == FAIL
+    assert "background-research is not one of" in reason
