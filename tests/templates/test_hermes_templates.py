@@ -248,6 +248,7 @@ def test_soul_calls_other_content_data_and_forbids_python() -> None:
     assert "read_file" in soul and "search_files" in soul
     assert "Never install software" in soul
     assert VALUES["example_note_path"] in soul
+    assert "`/new`" in soul
 
 
 def test_user_card_carries_the_owner_details() -> None:
