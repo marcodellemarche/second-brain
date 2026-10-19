@@ -1,0 +1,270 @@
+"""Watchdog: freshness, the grace period, the single stop and the `/ok` endpoint."""
+
+from __future__ import annotations
+
+import json
+import threading
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+import pytest
+
+from second_brain.gate.watchdog import Watchdog, make_health_server
+
+MAX_AGE = 45.0
+GRACE = 60.0
+
+
+def _beat(path: Path, ts: float) -> Path:
+    path.write_text(json.dumps({"ts": ts, "pid": 1}), encoding="utf-8")
+    return path
+
+
+class FakeClock:
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class FakeStop:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> None:
+        self.calls += 1
+
+
+def _watchdog(path: Path, *, now: float, started_at: float, stop: FakeStop | None = None) -> Watchdog:
+    return Watchdog(
+        path,
+        max_age=MAX_AGE,
+        stop_action=stop or FakeStop(),
+        grace=GRACE,
+        clock=FakeClock(now),
+        started_at=started_at,
+    )
+
+
+def test_check_fresh(tmp_path: Path) -> None:
+    path = _beat(tmp_path / "heartbeat.json", 1000.0)
+    assert _watchdog(path, now=1010.0, started_at=900.0).check() is True
+
+
+def test_check_stale(tmp_path: Path) -> None:
+    path = _beat(tmp_path / "heartbeat.json", 1000.0)
+    assert _watchdog(path, now=1000.0 + MAX_AGE + 1, started_at=900.0).check() is False
+
+
+def test_check_missing_file(tmp_path: Path) -> None:
+    assert _watchdog(tmp_path / "heartbeat.json", now=1010.0, started_at=900.0).check() is False
+
+
+def test_check_corrupt_file(tmp_path: Path) -> None:
+    path = tmp_path / "heartbeat.json"
+    path.write_text("{not json", encoding="utf-8")
+    assert _watchdog(path, now=1010.0, started_at=900.0).check() is False
+
+
+def test_check_ignores_a_heartbeat_from_before_this_run(tmp_path: Path) -> None:
+    path = _beat(tmp_path / "heartbeat.json", 995.0)
+    assert _watchdog(path, now=1002.0, started_at=1000.0).check() is False
+
+
+def test_tick_waits_inside_the_grace_period(tmp_path: Path) -> None:
+    stop = FakeStop()
+    watchdog = _watchdog(tmp_path / "heartbeat.json", now=1030.0, started_at=1000.0, stop=stop)
+    assert watchdog.tick() is False
+    assert stop.calls == 0
+
+
+def test_tick_stops_once_after_the_grace_period(tmp_path: Path) -> None:
+    stop = FakeStop()
+    clock = FakeClock(1070.0)
+    watchdog = Watchdog(
+        tmp_path / "heartbeat.json",
+        max_age=MAX_AGE,
+        stop_action=stop,
+        grace=GRACE,
+        clock=clock,
+        started_at=1000.0,
+    )
+    assert watchdog.tick() is False
+    assert stop.calls == 1
+
+    clock.now = 1200.0
+    assert watchdog.tick() is False
+    assert stop.calls == 1
+    assert watchdog.stopped is True
+
+
+def test_tick_does_not_stop_while_fresh(tmp_path: Path) -> None:
+    stop = FakeStop()
+    path = _beat(tmp_path / "heartbeat.json", 1000.0)
+    watchdog = _watchdog(path, now=1001.0, started_at=900.0, stop=stop)
+    assert watchdog.tick() is True
+    assert stop.calls == 0
+
+
+def test_stale_heartbeat_after_a_fresh_one_still_stops(tmp_path: Path) -> None:
+    stop = FakeStop()
+    path = _beat(tmp_path / "heartbeat.json", 1000.0)
+    clock = FakeClock(1010.0)
+    watchdog = Watchdog(
+        path, max_age=MAX_AGE, stop_action=stop, grace=GRACE, clock=clock, started_at=900.0
+    )
+    assert watchdog.tick() is True
+
+    clock.now = 1000.0 + MAX_AGE + 1
+    assert watchdog.tick() is False
+    assert stop.calls == 1
+
+
+def test_stop_action_failure_is_not_retried(tmp_path: Path) -> None:
+    calls = []
+
+    def boom() -> None:
+        calls.append(1)
+        raise RuntimeError("docker is down")
+
+    clock = FakeClock(1070.0)
+    watchdog = Watchdog(
+        tmp_path / "heartbeat.json",
+        max_age=MAX_AGE,
+        stop_action=boom,
+        grace=GRACE,
+        clock=clock,
+        started_at=1000.0,
+    )
+    watchdog.tick()
+    clock.now = 1100.0
+    watchdog.tick()
+    assert calls == [1]
+
+
+def test_run_stops_once_and_keeps_watching(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    stop = FakeStop()
+    clock = FakeClock(1000.0)
+    watchdog = Watchdog(
+        tmp_path / "heartbeat.json",
+        max_age=MAX_AGE,
+        stop_action=stop,
+        grace=GRACE,
+        clock=clock,
+        started_at=1000.0,
+    )
+
+    class StopLoop(Exception):
+        pass
+
+    def fake_sleep(seconds: float) -> None:
+        clock.now += seconds
+        if clock.now - 1000.0 > GRACE + 30:
+            raise StopLoop
+
+    monkeypatch.setattr("second_brain.gate.watchdog.time.sleep", fake_sleep)
+    with pytest.raises(StopLoop):
+        watchdog.run(interval=5.0)
+    assert stop.calls == 1
+
+
+def test_reason_mentions_the_problem(tmp_path: Path) -> None:
+    path = _beat(tmp_path / "heartbeat.json", 1000.0)
+    watchdog = _watchdog(path, now=1000.0 + MAX_AGE + 5, started_at=900.0)
+    assert "stale" in watchdog.reason()
+
+
+def test_reason_mentions_a_heartbeat_from_before_the_run(tmp_path: Path) -> None:
+    path = _beat(tmp_path / "heartbeat.json", 995.0)
+    watchdog = _watchdog(path, now=1002.0, started_at=1000.0)
+    assert "older than this run" in watchdog.reason()
+
+
+def test_reason_mentions_a_future_timestamp(tmp_path: Path) -> None:
+    path = _beat(tmp_path / "heartbeat.json", 5000.0)
+    watchdog = _watchdog(path, now=1000.0, started_at=900.0)
+    assert "future" in watchdog.reason()
+
+
+class HealthServer:
+    def __init__(self, check, reason=None) -> None:
+        self.server = make_health_server(check, "127.0.0.1:0", reason)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/ok"
+        self.thread = threading.Thread(target=self.server.serve_forever, args=(0.02,), daemon=True)
+        self.thread.start()
+
+    @classmethod
+    def for_watchdog(cls, watchdog: Watchdog) -> HealthServer:
+        return cls(watchdog.check, watchdog.reason)
+
+    def get(self, path: str = "/ok") -> tuple[int, str]:
+        url = self.url.rsplit("/", 1)[0] + path
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:
+                return response.status, response.read().decode()
+        except urllib.error.HTTPError as exc:
+            return exc.code, exc.read().decode()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+
+@pytest.fixture
+def health(tmp_path: Path):
+    path = _beat(tmp_path / "heartbeat.json", 1000.0)
+    clock = FakeClock(1000.0)
+    watchdog = Watchdog(
+        path, max_age=MAX_AGE, stop_action=FakeStop(), grace=GRACE, clock=clock, started_at=900.0
+    )
+    server = HealthServer.for_watchdog(watchdog)
+    try:
+        yield clock, path, server
+    finally:
+        server.close()
+
+
+def test_health_endpoint_ok(health) -> None:
+    _, _, server = health
+    status, body = server.get()
+    assert status == 200
+    assert body == "ok"
+
+
+def test_health_endpoint_503_when_stale(health) -> None:
+    clock, path, server = health
+    _beat(path, 1000.0)
+    clock.now = 1000.0 + MAX_AGE + 1
+    status, body = server.get()
+    assert status == 503
+    assert "stale" in body
+
+
+def test_health_endpoint_503_when_heartbeat_missing(health) -> None:
+    _, path, server = health
+    path.unlink()
+    status, body = server.get()
+    assert status == 503
+    assert "no heartbeat" in body
+
+
+def test_health_endpoint_503_when_the_check_raises() -> None:
+    def boom() -> bool:
+        raise RuntimeError("unexpected")
+
+    server = HealthServer(boom)
+    try:
+        status, body = server.get()
+    finally:
+        server.close()
+    assert status == 503
+    assert "check failed" in body
+
+
+def test_health_endpoint_404_for_other_paths(health) -> None:
+    _, _, server = health
+    status, _ = server.get("/check")
+    assert status == 404
