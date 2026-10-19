@@ -26,14 +26,23 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field, ValidationError, WithJsonSchema
 
+from second_brain.core.schema import load_schema
 from second_brain.tools.config import ToolsConfig, build_registry
-from second_brain.tools.outbox import MAX_BODY_BYTES, OUTBOX_PATH, OutboxReceiver, Receipt
+from second_brain.tools.outbox import (
+    MAX_BODY_BYTES,
+    OUTBOX_PATH,
+    OutboxImporter,
+    OutboxReceiver,
+    Receipt,
+)
 from second_brain.tools.registry import Registry
 from second_brain.tools.vault import Provenance, Vault, VaultError
 
 log = logging.getLogger(__name__)
 
 INTEGRITY_VALUES: tuple[str, ...] = ("trusted", "untrusted")
+
+OUTBOX_IMPORT_SECONDS = 30.0
 
 ASGIApp = Callable[..., Awaitable[None]]
 
@@ -293,11 +302,15 @@ def main() -> None:
     config = ToolsConfig.load()
     token = config.read_token()
     registry = build_registry(config)
-    start_human_commit_timer(Vault(config.vault), config.human_commit_seconds)
+    vault = Vault(config.vault)
+    start_human_commit_timer(vault, config.human_commit_seconds)
     host, port = config.listen.host, config.listen.port
     outbox = None
     if config.outbox is not None and config.jobs is not None:
-        outbox = config.outbox.receiver(config.jobs.store(), config.jobs.kinds)
+        store = config.jobs.store()
+        outbox = config.outbox.receiver(store, config.jobs.kinds)
+        importer = config.outbox.importer(vault, load_schema(vault.root), store, config.jobs.kinds)
+        start_outbox_timer(importer, OUTBOX_IMPORT_SECONDS)
     elif config.outbox is not None:
         log.warning("outbox configured without a job queue: results cannot be checked, not serving it")
     log.info("brain_tools serving %d tools on %s:%d", len(registry.specs()), host, port)
@@ -325,6 +338,36 @@ def start_human_commit_timer(vault: Vault, seconds: float) -> threading.Thread:
             commit_human_changes_once(vault)
 
     thread = threading.Thread(target=loop, name="brain_tools-human-commit", daemon=True)
+    thread.start()
+    return thread
+
+
+def import_outbox_once(importer: OutboxImporter) -> int:
+    """One tick of the importer. A failure is logged, never raised: the server keeps serving."""
+    try:
+        results = importer.sweep()
+    except Exception:
+        log.exception("could not sweep the outbox")
+        return 0
+    imported = 0
+    for result in results:
+        if result.ok:
+            imported += 1
+            log.info("imported %s as %s for job %s", result.source, result.note, result.job_id)
+        else:
+            log.warning("did not import %s for job %s: %s", result.source, result.job_id, result.error)
+    return imported
+
+
+def start_outbox_timer(importer: OutboxImporter, seconds: float) -> threading.Thread:
+    """Import the research results in the background: this is the only writer of the vault."""
+
+    def loop() -> None:
+        while True:
+            time.sleep(seconds)
+            import_outbox_once(importer)
+
+    thread = threading.Thread(target=loop, name="brain_tools-outbox-import", daemon=True)
     thread.start()
     return thread
 

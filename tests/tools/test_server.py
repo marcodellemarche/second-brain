@@ -13,13 +13,16 @@ from typing import Any
 import pytest
 
 from second_brain.tools.core_vault import vault_tools
+from second_brain.tools.outbox import ImportResult
 from second_brain.tools.registry import Registry
 from second_brain.tools.server import (
     BearerAuth,
     build_server,
     commit_human_changes_once,
     dispatch,
+    import_outbox_once,
     start_human_commit_timer,
+    start_outbox_timer,
     tool_callable,
 )
 from second_brain.tools.vault import Vault, VaultConfig
@@ -298,3 +301,43 @@ def test_one_tick_of_the_timer_commits_pending_changes(vault_root: Path) -> None
     assert sha == _git(vault_root, "rev-parse", "HEAD")
     assert _git(vault_root, "log", "-1", "--format=%s") == "human: 1 files"
     assert commit_human_changes_once(vault) is None
+
+
+class _FakeImporter:
+    def __init__(self, results: list[ImportResult] | None = None, error: Exception | None = None) -> None:
+        self._results = results or []
+        self._error = error
+        self.sweeps = 0
+
+    def sweep(self) -> list[ImportResult]:
+        self.sweeps += 1
+        if self._error is not None:
+            raise self._error
+        return self._results
+
+
+def test_import_outbox_once_counts_the_imported_results() -> None:
+    importer = _FakeImporter(
+        [
+            ImportResult("a.json", "job-1", "raw/web/a.md", None),
+            ImportResult("b.json", "job-2", None, "the job is unknown"),
+            ImportResult("c.json", "job-3", "raw/web/c.md", None),
+        ]
+    )
+
+    assert import_outbox_once(importer) == 2  # type: ignore[arg-type]
+    assert importer.sweeps == 1
+
+
+def test_import_outbox_once_never_raises() -> None:
+    importer = _FakeImporter(error=RuntimeError("the outbox is on fire"))
+
+    assert import_outbox_once(importer) == 0  # type: ignore[arg-type]
+
+
+def test_the_outbox_timer_is_a_daemon_thread_with_its_own_name() -> None:
+    thread = start_outbox_timer(_FakeImporter(), 3600.0)  # type: ignore[arg-type]
+
+    assert thread.daemon is True
+    assert thread.name == "brain_tools-outbox-import"
+    assert thread.is_alive() is True
