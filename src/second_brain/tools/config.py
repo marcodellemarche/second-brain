@@ -26,6 +26,7 @@ from second_brain.tools.calendar import (
 from second_brain.tools.core_vault import vault_tools
 from second_brain.tools.jobs import JobKind, JobStore, job_tools
 from second_brain.tools.links import LinkConfig, link_tools
+from second_brain.tools.notify import NotifyConfig, notify_tools
 from second_brain.tools.registry import Registry, Tool
 from second_brain.tools.vault import Vault, VaultConfig
 from second_brain.tools.weather import weather_tools
@@ -125,6 +126,7 @@ class ToolsConfig(BaseModel):
     links: LinkConfig | None = None
     archive: ArchiveConfig | None = None
     jobs: JobsConfig | None = None
+    notify: NotifyConfig | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -216,6 +218,8 @@ def _optional_tools(config: ToolsConfig, backend: CalendarBackend | None) -> lis
         tools.extend(archive_tools(config.archive))
     if config.jobs is not None:
         tools.extend(job_tools(config.jobs.store(), config.jobs.kinds))
+    if config.notify is not None:
+        tools.extend(notify_tools(config.notify, config.vault.root))
     return tools
 
 
