@@ -11,7 +11,7 @@ Answer the owner in the brain's language. Keep it to what they need to know: wha
 
 ## 1. Resolve the paths first
 
-Read `_meta/SCHEMA.md` of the vault and take the folder of each zone from the `zones` block. Never hardcode a folder name: the same vault can be in Italian or English, and a folder can be renamed. The zones this skill touches are `_brain` (the commitments page, `commitments.md` or `impegni.md`) and, read only, `_meta` for the schema itself.
+Read `_meta/SCHEMA.md` of the vault and take the folder of each zone from the `zones` block. Never hardcode a folder name: the same vault can be in Italian or English, and a folder can be renamed. The zones this skill touches are `_brain` (the `commitments` page, whose file name the schema's `brain_pages` block gives) and, read only, `_meta` for the schema itself.
 
 ## 2. Resolve the date
 

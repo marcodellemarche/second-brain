@@ -7,7 +7,7 @@ description: "Morning and evening digest: what happened, what the brain did with
 
 Two runs a day, morning and evening, sent to the owner on the chat channel. The digest is not a report of everything the vault holds: it is the short list of things the owner would want to know now, in the brain's language, scannable in under a minute.
 
-Read `_meta/SCHEMA.md` first and resolve every zone through its `zones` block: `_brain`, `_meta`, `documents`, `calls`. Folders follow the vault's language, frontmatter stays in English.
+Read `_meta/SCHEMA.md` first and resolve every zone through its `zones` block: `_brain`, `_meta`, `documents`, `calls`. Folders follow the vault's language, frontmatter stays in English. A `_brain/<name>` page in this skill is a logical name: the real file is the one the schema's `brain_pages` block names, for example `_brain/commitments` is `_brain/impegni.md` in an Italian vault.
 
 The morning and evening messages do not count against the initiative budget, so they are not sent through the `notify` tool. Compose them and answer in the conversation.
 

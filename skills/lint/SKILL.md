@@ -11,7 +11,7 @@ The lint reports, it does not fix. Finding a problem is the whole job: no note i
 
 ## Before anything
 
-Read `_meta/SCHEMA.md` first and resolve every zone through its `zones` block. Folders follow the vault's language, frontmatter stays in English. Take the closed `types` and `tags` lists from the same page, plus the frontmatter keys it allows. Never assume a folder name from this page.
+Read `_meta/SCHEMA.md` first and resolve every zone through its `zones` block. Folders follow the vault's language, frontmatter stays in English. Take the closed `types` and `tags` lists from the same page, plus the frontmatter keys it allows. Never assume a folder name from this page. A `_brain/<name>` page in this skill is a logical name: the real file is the one the schema's `brain_pages` block names, for example `_brain/commitments` is `_brain/impegni.md` in an Italian vault.
 
 Notes under the `archive` zone and any note with `index: false` are outside the lint: skip them, do not report them.
 

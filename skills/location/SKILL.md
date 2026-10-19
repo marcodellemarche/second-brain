@@ -11,7 +11,7 @@ Answer the owner in the brain's language, in one line.
 
 ## 1. Resolve the page
 
-Read `_meta/SCHEMA.md` and take the `_brain` zone from the `zones` block. The page is the profile one, `profile.md` in an English vault and `profilo.md` in an Italian one: take the file name from the folder listing rather than guessing, and if there is more than one candidate, prefer the one already containing a "where I am" section.
+Read `_meta/SCHEMA.md` and take the `_brain` zone from the `zones` block. The page is the `profile` one, and its file name comes from the schema's `brain_pages` block (`profile.md` in an English vault, `profilo.md` in an Italian one).
 
 ## 2. Resolve the date
 
