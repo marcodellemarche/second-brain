@@ -18,8 +18,10 @@ log: the assistant keeps working, it just has no reason to stop for the day.
 
 A message goes out while today's count is under both the category limit and the total. Past that it
 is not sent: it is stored as `deferred` and the next digest includes it. An `urgent` message is for
-a real deadline within 48 hours, it always goes out, and it does not use the budget up either, since
-a deadline is not something to ration. The morning and evening digests are not sent through here.
+a real deadline within 48 hours, and it goes out without using the budget up, since a deadline is not
+something to ration. That escape hatch is capped at `urgent_daily` messages a day: past the cap an
+urgent message is handled like any other one, so a model that marks everything urgent still hits the
+budget. The morning and evening digests are not sent through here.
 
 Today is the local date in the configured timezone, recorded on each row, so the count resets at the
 owner's midnight and not at the server's.
@@ -64,6 +66,7 @@ NOTIFY_CREDENTIALS: tuple[str, ...] = ()
 
 MAX_TEXT = 1500
 DEFAULT_DAILY = 6
+DEFAULT_URGENT_DAILY = 5
 STATUS_SENT = "sent"
 STATUS_DEFERRED = "deferred"
 
@@ -137,6 +140,12 @@ class NotifyConfig(BaseModel):
         ge=0,
         description="Messages a day when the budget note is missing or does not parse.",
     )
+    urgent_daily: int = Field(
+        default=DEFAULT_URGENT_DAILY,
+        ge=0,
+        description="Urgent messages a day that skip the budget. Past that an urgent message uses the "
+        "budget like any other, and 0 disables the bypass entirely.",
+    )
     timezone: str = Field(min_length=1, description="IANA timezone deciding when the day rolls over.")
 
     @field_validator("initiative_path")
@@ -194,13 +203,23 @@ class Budget(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class Counts:
-    """What already went out today, urgent messages excluded because they do not use the budget."""
+    """What already went out today: the budget messages per category, and the urgent ones.
+
+    `total` and `categories` leave the urgent messages out, since those skipped the budget.
+    """
 
     total: int
     categories: Mapping[str, int]
+    urgent: int = 0
 
 
-def decide(urgent: bool, category: str, counts: Counts, budget: Budget) -> tuple[Decision, int]:
+def decide(
+    urgent: bool,
+    category: str,
+    counts: Counts,
+    budget: Budget,
+    urgent_daily: int = DEFAULT_URGENT_DAILY,
+) -> tuple[Decision, int]:
     """Send or defer, plus how many messages are left today after this one."""
     limit = budget.categories.get(category)
     left_for_total = max(0, budget.total - counts.total)
@@ -208,7 +227,7 @@ def decide(urgent: bool, category: str, counts: Counts, budget: Budget) -> tuple
         remaining = left_for_total
     else:
         remaining = min(left_for_total, max(0, limit - counts.categories.get(category, 0)))
-    if urgent:
+    if urgent and counts.urgent < urgent_daily:
         return "send", remaining
     if remaining <= 0:
         return "defer", 0
@@ -265,17 +284,24 @@ class NotifyStore:
         urgent: bool,
         budget: Budget,
         now: float,
-    ) -> tuple[Notification, int]:
-        """Decide and record in one lock, so two calls cannot both see the last free slot."""
+        urgent_daily: int = DEFAULT_URGENT_DAILY,
+    ) -> tuple[Notification, int, bool]:
+        """Decide and record in one lock, so two calls cannot both see the last free slot.
+
+        An urgent message past the cap that goes out through the budget is stored with `urgent = 0`,
+        so the counters charge it to the budget instead of the bypass.
+        """
         local_date = self.local_date(now)
         with self._lock:
             counts = self._counts(local_date)
-            decision, remaining = decide(urgent, category, counts, budget)
+            decision, remaining = decide(urgent, category, counts, budget, urgent_daily)
+            capped = urgent and counts.urgent >= urgent_daily
+            stored_urgent = urgent and not (capped and decision == "send")
             status = STATUS_SENT if decision == "send" else STATUS_DEFERRED
             cursor = self._connection.execute(
                 "INSERT INTO notifications (created, local_date, category, text, urgent, status)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
-                (now, local_date, category, text, int(urgent), status),
+                (now, local_date, category, text, int(stored_urgent), status),
             )
             row_id = cursor.lastrowid
         assert row_id is not None
@@ -285,10 +311,10 @@ class NotifyStore:
             local_date=local_date,
             category=category,
             text=text,
-            urgent=urgent,
+            urgent=stored_urgent,
             status=status,
         )
-        return notification, remaining
+        return notification, remaining, capped
 
     def deferred(self, since: float) -> list[Notification]:
         """The messages deferred from `since` on, oldest first, for the digest to include."""
@@ -317,7 +343,12 @@ class NotifyStore:
             (local_date, STATUS_SENT),
         ).fetchall()
         categories = {str(row["category"]): int(row["sent"]) for row in rows}
-        return Counts(total=sum(categories.values()), categories=categories)
+        urgent = self._connection.execute(
+            "SELECT COUNT(*) AS sent FROM notifications WHERE local_date = ? AND status = ? AND urgent = 1",
+            (local_date, STATUS_SENT),
+        ).fetchone()
+        assert urgent is not None
+        return Counts(total=sum(categories.values()), categories=categories, urgent=int(urgent["sent"]))
 
 
 def _notification(row: sqlite3.Row) -> Notification:
@@ -409,10 +440,19 @@ class Notifier:
         return self._store
 
     def notify(self, category: str, text: str, urgent: bool) -> dict[str, Any]:
-        notification, remaining = self._store.submit(
-            category, text, urgent, self._initiative.budget(), self._clock()
+        notification, remaining, urgent_capped = self._store.submit(
+            category,
+            text,
+            urgent,
+            self._initiative.budget(),
+            self._clock(),
+            self._config.urgent_daily,
         )
-        return {"decision": notification.decision, "remaining_today": remaining}
+        return {
+            "decision": notification.decision,
+            "remaining_today": remaining,
+            "urgent_capped": urgent_capped,
+        }
 
     def deferred_notifications(self, since: str) -> dict[str, Any]:
         moment = self._parse_since(since)
@@ -482,8 +522,8 @@ class NotifyParams(BaseModel):
     )
     urgent: bool = Field(
         default=False,
-        description="True only for a real deadline within 48 hours: an urgent message always goes "
-        "out and does not use the daily budget.",
+        description="True only for a real deadline within 48 hours: a few urgent messages a day "
+        "skip the daily budget, and past that cap they use it like any other message.",
     )
 
     @field_validator("category")
@@ -578,8 +618,9 @@ def notify_tools(
                     "developed, the prep for a meeting. It sends nothing itself: it answers 'send' "
                     "when the message fits today's budget, and 'defer' when it does not, in which "
                     "case the message waits for the next digest and must not be written out now. "
-                    "Set urgent only for a real deadline within 48 hours. The morning and evening "
-                    "digests are not sent through this tool."
+                    "Set urgent only for a real deadline within 48 hours: a limited number of urgent "
+                    "messages a day skip the budget, and past that cap they use it like any other. "
+                    "The morning and evening digests are not sent through this tool."
                 ),
                 params=NotifyParams,
                 effect=Effect.VISIBLE,

@@ -316,14 +316,29 @@ def test_an_urgent_message_always_goes_out() -> None:
 
 def test_the_tool_sends_while_the_budget_lasts(vault_root: Path, tools: dict[str, Tool]) -> None:
     _write_initiative(vault_root, 2)
-    assert _notify(tools) == {"ok": True, "decision": "send", "remaining_today": 1}
-    assert _notify(tools) == {"ok": True, "decision": "send", "remaining_today": 0}
+    assert _notify(tools) == {
+        "ok": True,
+        "decision": "send",
+        "remaining_today": 1,
+        "urgent_capped": False,
+    }
+    assert _notify(tools) == {
+        "ok": True,
+        "decision": "send",
+        "remaining_today": 0,
+        "urgent_capped": False,
+    }
 
 
 def test_the_tool_defers_when_the_total_is_used_up(vault_root: Path, tools: dict[str, Tool]) -> None:
     _write_initiative(vault_root, 1)
     _notify(tools)
-    assert _notify(tools) == {"ok": True, "decision": "defer", "remaining_today": 0}
+    assert _notify(tools) == {
+        "ok": True,
+        "decision": "defer",
+        "remaining_today": 0,
+        "urgent_capped": False,
+    }
 
 
 def test_the_category_limit_is_counted_on_its_own(vault_root: Path, tools: dict[str, Tool]) -> None:
@@ -349,7 +364,12 @@ def test_an_urgent_message_goes_out_past_the_budget(vault_root: Path, tools: dic
 def test_an_urgent_message_does_not_use_the_budget(vault_root: Path, tools: dict[str, Tool]) -> None:
     _write_initiative(vault_root, 1)
     assert _notify(tools, urgent=True)["decision"] == "send"
-    assert _notify(tools, "ideas") == {"ok": True, "decision": "send", "remaining_today": 0}
+    assert _notify(tools, "ideas") == {
+        "ok": True,
+        "decision": "send",
+        "remaining_today": 0,
+        "urgent_capped": False,
+    }
 
 
 def test_a_missing_budget_note_uses_the_default(vault_root: Path, tools: dict[str, Tool]) -> None:
@@ -419,7 +439,12 @@ def test_the_day_rolls_over_at_local_midnight(
     assert _notify(tools)["decision"] == "send"
     assert _notify(tools)["decision"] == "defer"
     clock.now = datetime(2024, 5, 2, 0, 1, tzinfo=ROME).timestamp()
-    assert _notify(tools) == {"ok": True, "decision": "send", "remaining_today": 0}
+    assert _notify(tools) == {
+        "ok": True,
+        "decision": "send",
+        "remaining_today": 0,
+        "urgent_capped": False,
+    }
 
 
 def test_the_rollover_follows_the_configured_timezone(
@@ -595,3 +620,155 @@ def _block(block: str) -> str:
     """The YAML body of a rendered block, without the fences."""
     lines = block.splitlines()
     return "\n".join(lines[1:-1])
+
+
+# --- the urgent cap ------------------------------------------------------------------------
+
+
+def _urgent_tools(vault_root: Path, tmp_path: Path, clock: ManualClock, cap: int) -> dict[str, Tool]:
+    config = _config(vault_root, tmp_path, urgent_daily=cap)
+    return {tool.spec.name: tool for tool in notify_tools(config, vault_root, clock=clock)}
+
+
+def test_the_urgent_cap_is_five_by_default() -> None:
+    assert NotifyConfig.model_fields["urgent_daily"].default == 5
+
+
+def test_a_negative_urgent_cap_is_refused(tmp_path: Path, vault_root: Path) -> None:
+    with pytest.raises(ValidationError):
+        _config(vault_root, tmp_path, urgent_daily=-1)
+
+
+def test_urgent_messages_up_to_the_cap_go_out_with_no_budget(
+    vault_root: Path, tmp_path: Path, clock: ManualClock
+) -> None:
+    _write_initiative(vault_root, 0)
+    tools = _urgent_tools(vault_root, tmp_path, clock, 3)
+    for index in range(3):
+        result = _notify(tools, "deadline", urgent=True)
+        assert (result["decision"], result["urgent_capped"]) == ("send", False), index
+
+
+def test_an_urgent_message_past_the_cap_is_deferred_with_no_budget(
+    vault_root: Path, tmp_path: Path, clock: ManualClock
+) -> None:
+    _write_initiative(vault_root, 0)
+    tools = _urgent_tools(vault_root, tmp_path, clock, 2)
+    _notify(tools, "deadline", urgent=True)
+    _notify(tools, "deadline", urgent=True)
+    result = _notify(tools, "deadline", urgent=True)
+    assert (result["decision"], result["urgent_capped"]) == ("defer", True)
+
+
+def test_an_urgent_message_past_the_cap_uses_the_budget(
+    vault_root: Path, tmp_path: Path, clock: ManualClock
+) -> None:
+    _write_initiative(vault_root, 2)
+    tools = _urgent_tools(vault_root, tmp_path, clock, 1)
+    assert _notify(tools, "deadline", urgent=True)["decision"] == "send"
+    result = _notify(tools, "deadline", urgent=True)
+    assert result == {
+        "ok": True,
+        "decision": "send",
+        "remaining_today": 1,
+        "urgent_capped": True,
+    }
+
+
+def test_an_urgent_message_past_the_cap_counts_against_the_budget(
+    vault_root: Path, tmp_path: Path, clock: ManualClock, notifier: Notifier
+) -> None:
+    _write_initiative(vault_root, 2)
+    tools = _urgent_tools(vault_root, tmp_path, clock, 1)
+    _notify(tools, "deadline", urgent=True)
+    _notify(tools, "deadline", urgent=True)
+    assert notifier.store.counts("2024-05-01").total == 1
+    assert _notify(tools, "ideas") == {
+        "ok": True,
+        "decision": "send",
+        "remaining_today": 0,
+        "urgent_capped": False,
+    }
+    assert _notify(tools, "ideas")["decision"] == "defer"
+
+
+def test_a_capped_urgent_message_is_stored_as_a_budget_message(
+    vault_root: Path, tmp_path: Path, clock: ManualClock, notifier: Notifier
+) -> None:
+    _write_initiative(vault_root, 2)
+    tools = _urgent_tools(vault_root, tmp_path, clock, 1)
+    _notify(tools, "deadline", urgent=True)
+    _notify(tools, "deadline", urgent=True)
+    assert [(row.decision, row.urgent) for row in notifier.store.list()] == [
+        ("send", False),
+        ("send", True),
+    ]
+
+
+def test_urgent_capped_is_true_only_when_capped(vault_root: Path, tmp_path: Path, clock: ManualClock) -> None:
+    _write_initiative(vault_root, 5)
+    tools = _urgent_tools(vault_root, tmp_path, clock, 1)
+    assert _notify(tools, "deadline", urgent=True)["urgent_capped"] is False
+    assert _notify(tools, "deadline", urgent=True)["urgent_capped"] is True
+    assert _notify(tools, "ideas")["urgent_capped"] is False
+
+
+def test_a_deferred_urgent_message_is_capped_but_does_not_use_the_budget(
+    vault_root: Path, tmp_path: Path, clock: ManualClock, notifier: Notifier
+) -> None:
+    _write_initiative(vault_root, 0)
+    tools = _urgent_tools(vault_root, tmp_path, clock, 1)
+    _notify(tools, "deadline", urgent=True)
+    result = _notify(tools, "deadline", urgent=True)
+    assert (result["decision"], result["urgent_capped"]) == ("defer", True)
+    assert notifier.store.counts("2024-05-01").total == 0
+
+
+def test_the_urgent_cap_resets_on_the_next_local_day(
+    vault_root: Path, tmp_path: Path, clock: ManualClock
+) -> None:
+    _write_initiative(vault_root, 0)
+    tools = _urgent_tools(vault_root, tmp_path, clock, 1)
+    clock.now = datetime(2024, 5, 1, 23, 30, tzinfo=ROME).timestamp()
+    assert _notify(tools, "deadline", urgent=True)["urgent_capped"] is False
+    assert _notify(tools, "deadline", urgent=True)["decision"] == "defer"
+    clock.now = datetime(2024, 5, 2, 0, 30, tzinfo=ROME).timestamp()
+    result = _notify(tools, "deadline", urgent=True)
+    assert (result["decision"], result["urgent_capped"]) == ("send", False)
+
+
+def test_an_urgent_cap_of_zero_disables_the_bypass(
+    vault_root: Path, tmp_path: Path, clock: ManualClock
+) -> None:
+    _write_initiative(vault_root, 1)
+    tools = _urgent_tools(vault_root, tmp_path, clock, 0)
+    result = _notify(tools, "deadline", urgent=True)
+    assert result == {
+        "ok": True,
+        "decision": "send",
+        "remaining_today": 0,
+        "urgent_capped": True,
+    }
+    assert _notify(tools, "deadline", urgent=True)["decision"] == "defer"
+
+
+def test_the_cap_of_zero_never_lets_an_urgent_message_skip_the_budget(
+    vault_root: Path, tmp_path: Path, clock: ManualClock, notifier: Notifier
+) -> None:
+    _write_initiative(vault_root, 0)
+    tools = _urgent_tools(vault_root, tmp_path, clock, 0)
+    assert _notify(tools, "deadline", urgent=True)["decision"] == "defer"
+    assert notifier.store.counts("2024-05-01").urgent == 0
+
+
+def test_the_decision_takes_the_urgent_cap() -> None:
+    budget = Budget(total=0, categories={})
+    counts = Counts(total=0, categories={}, urgent=2)
+    assert decide(True, "deadline", counts, budget, 3) == ("send", 0)
+    assert decide(True, "deadline", counts, budget, 2) == ("defer", 0)
+
+
+def test_the_tool_description_says_urgent_is_capped(tools: dict[str, Tool]) -> None:
+    description = tools["notify"].spec.description
+    assert "urgent" in description
+    assert "cap" in description
