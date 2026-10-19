@@ -1,0 +1,38 @@
+# The terminal container Hermes reaches over ssh (terminal.backend: ssh). It runs nothing else:
+# a shell, the tools the agent needs, and sshd. No Docker socket, no credentials, no vault.
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        openssh-server \
+        poppler-utils \
+        python3 \
+        ripgrep \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Key-only access: authorized_keys comes from a mounted secret, so there is no password to set.
+RUN useradd --create-home --shell /bin/bash agent \
+    && mkdir -p /home/agent/.ssh /run/sshd \
+    && chmod 700 /home/agent/.ssh \
+    && chown -R agent:agent /home/agent/.ssh
+
+RUN printf '%s\n' \
+    'Port 2222' \
+    'PermitRootLogin no' \
+    'PasswordAuthentication no' \
+    'KbdInteractiveAuthentication no' \
+    'ChallengeResponseAuthentication no' \
+    'UsePAM no' \
+    'PubkeyAuthentication yes' \
+    'AuthorizedKeysFile /home/agent/.ssh/authorized_keys' \
+    'AllowUsers agent' \
+    'X11Forwarding no' \
+    'PrintMotd no' \
+    > /etc/ssh/sshd_config
+
+EXPOSE 2222
+USER agent
+WORKDIR /home/agent
+
+CMD ["/usr/sbin/sshd", "-D", "-e"]

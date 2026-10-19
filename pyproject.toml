@@ -15,6 +15,9 @@ dev = [
     "ruff",
 ]
 
+[project.entry-points."hermes_agent.plugins"]
+brain-guard = "second_brain.guard.plugin:register"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

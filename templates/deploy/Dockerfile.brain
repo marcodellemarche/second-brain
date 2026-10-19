@@ -1,0 +1,19 @@
+# brain_tools: the only writer of the vault and the only holder of credentials.
+# Default command serves the MCP tools; the sidecars, the model gate and the watchdog reuse this
+# image and override the command (python -m second_brain.sidecars.vault_watcher, and so on).
+FROM python:3.12-slim
+
+# git is what the vault ops use to commit and to walk history.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml README.md /build/
+COPY src /build/src
+RUN pip install --no-cache-dir /build && rm -rf /build
+
+RUN useradd --create-home --uid 10001 brain
+USER brain
+WORKDIR /home/brain
+
+CMD ["python", "-m", "second_brain.tools.server"]

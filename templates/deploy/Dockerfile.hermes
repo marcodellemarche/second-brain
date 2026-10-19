@@ -1,0 +1,27 @@
+# Hermes with the brain_guard plugin. The tag must match the pinned version in pyproject.toml
+# (the Hermes source the guard was written against), so bump both together.
+FROM nousresearch/hermes-agent:v0.22.2
+
+# poppler-utils is what firecrawl-anydoc shells out to for PDFs.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# The base image ships a sealed venv at /opt/hermes/.venv, on PATH but never written at runtime,
+# so extra packages have to go in here at build time, with the venv's own pip.
+COPY pyproject.toml README.md /build/
+COPY src /build/src
+RUN /opt/hermes/.venv/bin/pip install --no-cache-dir /build \
+    && /opt/hermes/.venv/bin/pip install --no-cache-dir firecrawl-anydoc faster-whisper "av==18.1.0" \
+    && rm -rf /build
+
+# av 19 breaks faster-whisper's audio decoding, so the pin above is deliberate: do not drop it.
+# HF_HOME is the only place faster-whisper looks for its model cache.
+ENV HF_HOME=/opt/models/hf
+
+# Pre-downloaded faster-whisper `small` model, laid out as a HF cache. `sb init` (the CLI) downloads
+# it once at install time into models/ so the image builds and runs offline.
+COPY models/ /opt/models/hf/
+
+# The terminal backend is not the docker one: Hermes never talks to a Docker socket here, it reaches
+# the terminal container over ssh (terminal.backend: ssh). No docker-cli usage in this image.
