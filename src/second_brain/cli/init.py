@@ -138,6 +138,12 @@ def _yaml(data: object) -> str:
     return yaml.safe_dump(data, sort_keys=True, default_flow_style=False, allow_unicode=True)
 
 
+WHISPER_DOWNLOAD = (
+    'HF_HOME=models python -c "from huggingface_hub import snapshot_download; '
+    "snapshot_download('Systran/faster-whisper-small')\""
+)
+
+
 def _readme(answers: Answers, instance: Path) -> str:
     """The next steps, written from the answers so they name the paths of this instance."""
     values = {
@@ -156,7 +162,7 @@ A brain built by `sb init`. Next steps:
 2. In the second-brain repo root, download the faster-whisper model into `models/` as a Hugging
    Face cache (`models/hub/models--Systran--faster-whisper-small`), which is where Hermes looks
    with no network:
-   `HF_HOME=models python -c "from huggingface_hub import snapshot_download; snapshot_download('Systran/faster-whisper-small')"`.
+   `{WHISPER_DOWNLOAD}`.
 3. Build the three images with the repo root as context
    (`docker build -f templates/deploy/Dockerfile.hermes .`, same for `Dockerfile.brain` and
    `Dockerfile.terminal`) and tag them as `compose.yaml` expects.
