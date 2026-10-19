@@ -95,6 +95,7 @@ def test_every_service_from_the_plan_is_there(services: dict[str, Any]) -> None:
         "vault-watcher",
         "call-router",
         "job-runner",
+        "scheduler",
         "egress",
         "searxng",
     }
@@ -197,7 +198,15 @@ def test_each_secret_goes_to_the_services_that_need_it(services: dict[str, Any])
 
 
 def test_the_sidecars_share_the_brain_image_with_their_own_commands(services: dict[str, Any]) -> None:
-    names = ("brain-tools", "gate", "watchdog", "vault-watcher", "call-router", "job-runner")
+    names = (
+        "brain-tools",
+        "gate",
+        "watchdog",
+        "vault-watcher",
+        "call-router",
+        "job-runner",
+        "scheduler",
+    )
     commands = set()
     for name in names:
         service = services[name]
@@ -257,3 +266,50 @@ def test_searxng_is_private_and_speaks_json() -> None:
     assert "json" in settings["search"]["formats"]
     engines = {engine["name"] for engine in settings["engines"]}
     assert {"duckduckgo", "wikipedia"} <= engines
+
+
+SIDECAR_CONFIG = "./config/sidecars.yaml:/etc/second-brain/sidecars.yaml:ro"
+
+
+@pytest.fixture(scope="module")
+def declared_secrets(compose: dict[str, Any]) -> dict[str, Any]:
+    loaded = compose["secrets"]
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def test_the_scheduler_fires_the_scheduled_tasks(services: dict[str, Any]) -> None:
+    scheduler = services["scheduler"]
+    assert scheduler["container_name"] == "sample-brain-scheduler"
+    assert scheduler["command"] == ["python", "-m", "second_brain.sidecars.scheduler"]
+    assert scheduler["networks"] == ["internal"]
+    assert scheduler["environment"]["SIDECARS_CONFIG"] == "/etc/second-brain/sidecars.yaml"
+    assert scheduler["environment"]["HOME"] == "/tmp"
+    # The schedule and the route secrets come from the config and the mounted secret.
+    assert SIDECAR_CONFIG in _mounts(scheduler)
+    assert "data:/data" in _mounts(scheduler)
+    assert scheduler["secrets"] == ["webhook_schedule"]
+    assert scheduler["mem_limit"] == "128m"
+    assert scheduler["pids_limit"] == 64
+    # The task is a skill: the scheduler has no vault of its own to read.
+    assert not [mount for mount in _mounts(scheduler) if "/vault" in mount]
+
+
+def test_every_sidecar_reads_the_sidecars_config(services: dict[str, Any]) -> None:
+    for name in ("vault-watcher", "call-router", "job-runner", "scheduler"):
+        assert services[name]["environment"]["SIDECARS_CONFIG"] == "/etc/second-brain/sidecars.yaml", name
+        assert SIDECAR_CONFIG in _mounts(services[name]), name
+
+
+def test_brain_tools_reads_the_outbox_secret(
+    services: dict[str, Any], declared_secrets: dict[str, Any]
+) -> None:
+    # The outbox endpoint checks the same secret Hermes signs its outbound hook with.
+    assert "outbox_secret" in services["brain-tools"]["secrets"]
+    assert "outbox_secret" in declared_secrets
+
+
+def test_every_secret_is_a_file_next_to_the_instance(declared_secrets: dict[str, Any]) -> None:
+    assert "webhook_schedule" in declared_secrets
+    for name, secret in declared_secrets.items():
+        assert secret["file"] == f"./secrets/{name}", name

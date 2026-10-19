@@ -34,10 +34,11 @@ VALUES: dict[str, str] = {
     "language": "Italian",
     "languages": "Italian, English",
     "channel": "Telegram",
+    "deliver_platform": "telegram",
     "slack_home_channel": "C0000000001",
     "example_note_path": "knowledge/example.md",
 }
-_PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+_PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*(\|\s*lower\s*)?\}\}")
 
 
 def render(template: Path, values: dict[str, str]) -> str:
@@ -46,7 +47,8 @@ def render(template: Path, values: dict[str, str]) -> str:
     def replace(match: re.Match[str]) -> str:
         name = match.group(1)
         assert name in values, f"{template.name} uses an unknown placeholder {name!r}"
-        return values[name]
+        value = values[name]
+        return value.lower() if match.group(2) else value
 
     return _PLACEHOLDER.sub(replace, template.read_text(encoding="utf-8"))
 
@@ -260,3 +262,34 @@ def test_the_readme_explains_each_template() -> None:
     readme = (TEMPLATES / "README.md").read_text(encoding="utf-8")
     for name in ("config.yaml.j2", "SOUL.md.j2", "USER.md.j2"):
         assert name in readme
+
+
+SCHEDULED_ROUTES = ("scheduled-digest", "scheduled-lint", "scheduled-brief")
+
+
+def _scheduled(config: dict[str, Any]) -> dict[str, Any]:
+    routes = config["platforms"]["webhook"]["extra"]["routes"]
+    assert isinstance(routes, dict)
+    return {name: routes[name] for name in SCHEDULED_ROUTES}
+
+
+def test_the_scheduled_routes_share_the_scheduler_secret(config: dict[str, Any]) -> None:
+    for name, route in _scheduled(config).items():
+        assert route["secret"] == "${WEBHOOK_SECRET_SCHEDULE}", name
+        # The prompt is the whole payload the scheduler signs, and nothing else.
+        assert route["prompt"] == "Scheduled task: {task}. Due {due} ({weekday}).", name
+        assert "web" not in route["toolsets"], name
+        # A mirrored delivery lands in the chat as a user turn, and the digest quotes people.
+        assert route.get("mirror_to_session", False) is False, name
+
+
+def test_only_the_digest_of_the_scheduled_routes_is_delivered(config: dict[str, Any]) -> None:
+    routes = _scheduled(config)
+    # The digest is the message to the owner, so it goes to this brain's chat platform.
+    assert routes["scheduled-digest"]["deliver"] == "telegram"
+    assert routes["scheduled-digest"]["skills"] == ["digest"]
+    # The lint writes its questions into the vault, the brief notifies through brain_tools.
+    assert routes["scheduled-lint"]["skills"] == ["lint", "open-questions"]
+    assert routes["scheduled-brief"]["skills"] == ["brief"]
+    for name in ("scheduled-lint", "scheduled-brief"):
+        assert "deliver" not in routes[name], name

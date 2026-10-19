@@ -47,7 +47,7 @@ volumes:
   # Hermes' own home: session history, skills, the memory files.
   hermes-home:
 
-# Every secret is a file, mounted read-only, and only into the service that reads it. Hermes is the one that cannot take a file: it wants the MCP bearer token, the Telegram token and the three webhook secrets as environment values, so `sb init` renders them into `/etc/hermes/.env`, the managed env scope Hermes pins and the agent cannot edit. Same source secrets, mounted rather than passed on the command line, so none of them shows up in `docker inspect`.
+# Every secret is a file, mounted read-only, and only into the service that reads it. Hermes is the one that cannot take a file: it wants the MCP bearer token, the Telegram token and the webhook secrets as environment values, so `sb init` renders them into `/etc/hermes/.env`, the managed env scope Hermes pins and the agent cannot edit. Same source secrets, mounted rather than passed on the command line, so none of them shows up in `docker inspect`.
 secrets:
   model_api_key:
     file: ./secrets/model_api_key
@@ -63,6 +63,10 @@ secrets:
     file: ./secrets/webhook_research
   webhook_idea:
     file: ./secrets/webhook_idea
+  webhook_schedule:
+    file: ./secrets/webhook_schedule
+  outbox_secret:
+    file: ./secrets/outbox_secret
 
 services:
   hermes:
@@ -104,7 +108,7 @@ services:
     volumes:
       # The managed config scope: Hermes deep-merges it on top of the user config and wins at every leaf. Read-only, and the agent cannot save into it.
       - ./config/hermes/config.yaml:/etc/hermes/config.yaml:ro
-      # The managed env scope: TOOLS_TOKEN, TELEGRAM_BOT_TOKEN and the three WEBHOOK_SECRET_* the config above references by name. Read-only, and pinned against the agent like the config.
+      # The managed env scope: TOOLS_TOKEN, TELEGRAM_BOT_TOKEN and the WEBHOOK_SECRET_* the config above references by name. Read-only, and pinned against the agent like the config.
       - ./secrets/hermes.env:/etc/hermes/.env:ro
       - ./config/hermes/SOUL.md:/opt/data/SOUL.md:ro
       - ./config/hermes/USER.md:/opt/data/USER.md:ro
@@ -167,7 +171,7 @@ services:
       - data:/data
       # Media Hermes wrote, read-only: a reply may point at a file, and that is all.
       - {{ media_dir }}:{{ media_dir }}:ro
-    secrets: [tools_token, calendar_token]
+    secrets: [tools_token, calendar_token, outbox_secret]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',8765),3)"]
       interval: 30s
@@ -230,9 +234,11 @@ services:
     networks: [internal]
     environment:
       VAULT_DIR: /vault
+      SIDECARS_CONFIG: /etc/second-brain/sidecars.yaml
       HOME: /tmp
     volumes:
       - {{ vault_dir }}:/vault:ro
+      - ./config/sidecars.yaml:/etc/second-brain/sidecars.yaml:ro
     secrets: [webhook_ingest]
     healthcheck: *sidecar-health
     mem_limit: 256m
@@ -245,9 +251,11 @@ services:
     networks: [internal]
     environment:
       VAULT_DIR: /vault
+      SIDECARS_CONFIG: /etc/second-brain/sidecars.yaml
       HOME: /tmp
     volumes:
       - {{ vault_dir }}:/vault:ro
+      - ./config/sidecars.yaml:/etc/second-brain/sidecars.yaml:ro
     secrets: [webhook_ingest]
     healthcheck: *sidecar-health
     mem_limit: 256m
@@ -260,15 +268,37 @@ services:
     networks: [internal]
     environment:
       VAULT_DIR: /vault
+      SIDECARS_CONFIG: /etc/second-brain/sidecars.yaml
       HOME: /tmp
     volumes:
       - {{ vault_dir }}:/vault:ro
+      - ./config/sidecars.yaml:/etc/second-brain/sidecars.yaml:ro
       # The queue is brain_tools' file: it writes a job, the runner takes it.
       - data:/data
     secrets: [webhook_research, webhook_idea]
     healthcheck: *sidecar-health
     mem_limit: 256m
     pids_limit: 128
+
+  # Hermes' own cron is off, so this fires the digest, the lint and the brief at their local
+  # times: a signed webhook per task, and nothing else. No vault mount: the task is a skill.
+  scheduler:
+    <<: *brain
+    container_name: {{ instance_name }}-scheduler
+    command: ["python", "-m", "second_brain.sidecars.scheduler"]
+    networks: [internal]
+    environment:
+      SIDECARS_CONFIG: /etc/second-brain/sidecars.yaml
+      HOME: /tmp
+    volumes:
+      - ./config/sidecars.yaml:/etc/second-brain/sidecars.yaml:ro
+      # The state file remembers the last due moment that succeeded, so a restart does not
+      # repeat a task.
+      - data:/data
+    secrets: [webhook_schedule]
+    healthcheck: *sidecar-health
+    mem_limit: 128m
+    pids_limit: 64
 
   egress:
     <<: *hardening

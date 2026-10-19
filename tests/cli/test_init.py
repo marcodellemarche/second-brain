@@ -16,6 +16,7 @@ from second_brain.cli.answers import Answers, AnswersError
 from second_brain.cli.init import InitError, init
 from second_brain.cli.main import main
 from second_brain.guard.config import GuardConfig
+from second_brain.sidecars.config import SidecarsConfig
 from second_brain.tools.config import ToolsConfig
 
 SAMPLE = Path(__file__).with_name("answers.sample.yaml")
@@ -24,6 +25,7 @@ GENERATED = (
     "webhook_ingest",
     "webhook_research",
     "webhook_idea",
+    "webhook_schedule",
     "outbox_secret",
     "searxng_key",
 )
@@ -67,6 +69,7 @@ def test_every_config_file_is_created(instance: Path) -> None:
         "config/hermes/USER.md",
         "config/brain-tools.yaml",
         "config/brain-guard.yaml",
+        "config/sidecars.yaml",
         "config/squid.conf",
         "config/searxng/settings.yml",
         "secrets/README.md",
@@ -295,3 +298,101 @@ def test_the_command_exits_non_zero_on_a_refusal(tmp_path: Path, answers_file: P
     (instance / "keep.txt").write_text("keep", encoding="utf-8")
     assert main(["init", str(instance), "--answers", str(answers_file)]) == 1
     assert "--force" in capsys.readouterr().err
+
+
+def _sidecars(instance: Path) -> SidecarsConfig:
+    return SidecarsConfig.model_validate(yaml.safe_load((instance / "config" / "sidecars.yaml").read_text()))
+
+
+def _minimal_answers(tmp_path: Path, answers_file: Path, **changes) -> Answers:
+    """The sample answers with the tools turned down, written next to the instance."""
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["tools"] = {"weather": False}
+    raw["job_kinds"] = {}
+    del raw["archive_dir"]
+    raw.update(changes)
+    path = tmp_path / "minimal.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return Answers.from_yaml(path)
+
+
+def test_the_sidecars_config_is_rendered_and_loads(instance: Path) -> None:
+    sidecars = _sidecars(instance)
+    assert sidecars.vault_dir == Path("/vault")
+    assert sidecars.webhook_base_url == "http://hermes:8644/webhooks"
+    assert sidecars.vault_watcher is not None
+    assert sidecars.call_router is not None
+    assert sidecars.scheduler is not None
+
+
+def test_every_route_the_sidecars_use_has_a_secret_file(instance: Path) -> None:
+    sidecars = _sidecars(instance)
+    used = {entry.route for entry in sidecars.scheduler.schedule.entries}
+    used |= {sidecars.vault_watcher.route, sidecars.call_router.route}
+    used |= {kind.route for kind in sidecars.job_runner.jobs.kinds.values()}
+    assert used <= set(sidecars.route_secrets)
+    for route, path in sidecars.route_secrets.items():
+        assert path.parent == Path("/run/secrets"), route
+
+
+def test_the_scheduler_has_the_default_times(instance: Path) -> None:
+    entries = _sidecars(instance).scheduler.schedule.entries
+    by_route = {}
+    for entry in entries:
+        by_route.setdefault(entry.route, []).append(entry.at)
+    assert len(by_route["scheduled-digest"]) == 2
+    assert by_route["scheduled-lint"] == ["03:30"]
+    assert len(by_route["scheduled-brief"]) == 2
+    assert _sidecars(instance).scheduler.state_file == Path("/data/scheduler.json")
+
+
+def test_the_vault_watcher_ignores_the_capture_folder(instance: Path) -> None:
+    sidecars = _sidecars(instance)
+    assert sidecars.call_router.watch_dir == "inbox/calls"
+    assert "inbox/calls" in sidecars.vault_watcher.ignore
+
+
+def test_the_team_domains_are_empty_by_default(instance: Path) -> None:
+    assert _sidecars(instance).call_router.rules.team_domains == []
+
+
+def test_the_tools_config_has_an_outbox_with_a_non_web_followup(instance: Path) -> None:
+    tools = ToolsConfig.from_yaml(instance / "config" / "brain-tools.yaml")
+    assert tools.outbox is not None
+    assert tools.outbox.dir == Path("/data/outbox")
+    assert tools.outbox.secret_file == Path("/run/secrets/outbox_secret")
+    assert tools.outbox.research_followup_kind == "idea"
+    assert tools.jobs.kinds["idea"].web is False
+
+
+def test_a_brain_without_jobs_has_no_job_runner_and_no_outbox(tmp_path: Path, answers_file: Path) -> None:
+    minimal = _minimal_answers(tmp_path, answers_file)
+    instance = tmp_path / "minimal-instance"
+    init(minimal, instance)
+    assert _sidecars(instance).job_runner is None
+    assert ToolsConfig.from_yaml(instance / "config" / "brain-tools.yaml").outbox is None
+
+
+def test_the_schedule_secret_is_generated_and_exported(instance: Path) -> None:
+    env = (instance / "secrets" / "hermes.env").read_text(encoding="utf-8")
+    secret = (instance / "secrets" / "webhook_schedule").read_text(encoding="utf-8").strip()
+    assert secret
+    assert f"WEBHOOK_SECRET_SCHEDULE={secret}" in env
+
+
+def test_jobs_with_only_web_kinds_are_refused(tmp_path: Path, answers_file: Path) -> None:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    del raw["job_kinds"]["idea"]
+    path = tmp_path / "web-only.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(AnswersError):
+        Answers.from_yaml(path)
+
+
+def test_a_bad_schedule_time_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["schedule"] = {"digest": ["8:00", "20:00"]}
+    path = tmp_path / "bad-time.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(AnswersError):
+        Answers.from_yaml(path)

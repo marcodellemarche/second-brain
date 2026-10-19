@@ -40,3 +40,16 @@ job_kinds:
     route: background-idea
     description: Develop an idea from what the vault already knows.
     web: false
+
+# Local times the scheduler fires at, on every weekday. HH:MM, 24 hours.
+schedule:
+  digest: ["08:00", "20:00"]
+  lint: "03:30"
+  brief: ["07:00", "13:00"]
+
+calls:
+  # Vault-relative folder the call router watches. Left out it is <inbox>/calls.
+  # capture_dir: inbox/calls
+  # Stays empty until there is a team brain: it widens what counts as a team call.
+  team_domains: []
+  personal_markers: []

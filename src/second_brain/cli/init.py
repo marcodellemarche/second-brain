@@ -25,6 +25,7 @@ from second_brain.cli.config import (
     guard_config,
     render_deploy,
     render_hermes,
+    sidecars_config,
     tools_config,
 )
 from second_brain.cli.secrets import SECRETS_DIR, plan, write_secrets
@@ -63,6 +64,7 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
         **render_deploy(answers, registry, generated),
         "config/brain-tools.yaml": _yaml(config.model_dump(mode="json", exclude_none=True)),
         "config/brain-guard.yaml": _yaml(_guard_dict(guard_config(answers, registry))),
+        "config/sidecars.yaml": _yaml(sidecars_config(answers).model_dump(mode="json", exclude_none=True)),
         "README.md": _readme(answers, instance),
     }
     for relative, content in files.items():

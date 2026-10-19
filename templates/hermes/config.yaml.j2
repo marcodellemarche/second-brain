@@ -209,7 +209,8 @@ platforms:
       # The route's reply stays at the default `deliver: log`: a job writes its result note through
       # brain_tools, so nothing is pushed to a chat from here. A route prompt is rendered from the
       # JSON body the sidecar signs (`{kind}` and `{path}` for vault events, `{title}` and
-      # `{question}` for a job), so it never needs the whole payload.
+      # `{question}` for a job, `{task}`, `{due}` and `{weekday}` for a scheduled task), so it never
+      # needs the whole payload.
       routes:
         # Vault events: a note moved, a transcript landed, a call note to route. No web.
         ingest:
@@ -228,6 +229,28 @@ platforms:
           secret: "${WEBHOOK_SECRET_IDEA}"
           prompt: "Background job. {title}\n\n{question}"
           toolsets: [file, skills, brain]
+        # The scheduler fires these at their local times, because Hermes cron is off. Each one
+        # keeps `mirror_to_session` off: a mirrored delivery is written into the chat as a user
+        # turn, and the digest quotes other people's words. Only the digest is delivered: it is
+        # the message to the owner. The lint and the brief write their note through brain_tools
+        # (the brief messages the owner with the `notify` tool, which keeps the daily budget), so
+        # their reply stays at the default `log`.
+        scheduled-digest:
+          secret: "${WEBHOOK_SECRET_SCHEDULE}"
+          prompt: "Scheduled task: {task}. Due {due} ({weekday})."
+          toolsets: [file, skills, brain]
+          skills: [digest]
+          deliver: "{{ deliver_platform }}"
+        scheduled-lint:
+          secret: "${WEBHOOK_SECRET_SCHEDULE}"
+          prompt: "Scheduled task: {task}. Due {due} ({weekday})."
+          toolsets: [file, skills, brain]
+          skills: [lint, open-questions]
+        scheduled-brief:
+          secret: "${WEBHOOK_SECRET_SCHEDULE}"
+          prompt: "Scheduled task: {task}. Due {due} ({weekday})."
+          toolsets: [file, skills, brain]
+          skills: [brief]
 
 # Slack Socket Mode, for a team brain. No public URL either: SLACK_BOT_TOKEN (xoxb-) and
 # SLACK_APP_TOKEN (xapp-) live in the env, and the home channel is set from the start because the

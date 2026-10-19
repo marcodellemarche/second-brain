@@ -10,8 +10,9 @@ vault scaffold would land in a directory the owner never named.
 
 from __future__ import annotations
 
+import re
 import urllib.parse
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -72,6 +73,53 @@ class LinksAnswers(BaseModel):
     archive_folder: str = "Archive"
 
 
+class ScheduleAnswers(BaseModel):
+    """The local times the scheduler fires the recurring tasks at, on every weekday."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    digest: list[str] = Field(default_factory=lambda: ["08:00", "20:00"])
+    lint: str = "03:30"
+    brief: list[str] = Field(default_factory=lambda: ["07:00", "13:00"])
+
+    @field_validator("lint")
+    @classmethod
+    def _check_time(cls, value: str) -> str:
+        return _clock_time(value)
+
+    @field_validator("digest", "brief")
+    @classmethod
+    def _check_times(cls, value: list[str]) -> list[str]:
+        return [_clock_time(item) for item in value]
+
+
+class CallsAnswers(BaseModel):
+    """Where the call notes land and who counts as the team in a call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    capture_dir: str | None = Field(
+        default=None,
+        description="Vault-relative folder the call router watches; the inbox calls folder by default.",
+    )
+    team_domains: list[str] = Field(default_factory=list)
+    personal_markers: list[str] = Field(default_factory=list)
+
+    @field_validator("capture_dir")
+    @classmethod
+    def _check_capture_dir(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        path = PurePosixPath(value.strip())
+        if not value.strip():
+            raise ValueError("capture_dir must not be empty")
+        if path.is_absolute():
+            raise ValueError(f"capture_dir must be relative to the vault: {value!r}")
+        if ".." in path.parts:
+            raise ValueError(f"capture_dir must not leave the vault: {value!r}")
+        return str(path)
+
+
 class ToolsAnswers(BaseModel):
     """Which optional tool groups this brain has. A group left out is not built at all."""
 
@@ -110,6 +158,8 @@ class Answers(BaseModel):
     model_context_length: int = Field(default=131072, ge=1024)
     tools: ToolsAnswers = Field(default_factory=ToolsAnswers)
     job_kinds: dict[str, JobKindAnswers] = Field(default_factory=dict)
+    schedule: ScheduleAnswers = Field(default_factory=ScheduleAnswers)
+    calls: CallsAnswers = Field(default_factory=CallsAnswers)
 
     @field_validator("vault_dir", "media_dir", "archive_dir")
     @classmethod
@@ -145,6 +195,11 @@ class Answers(BaseModel):
             raise ValueError("tools.jobs needs at least one job kind")
         if self.job_kinds and not self.tools.jobs:
             raise ValueError("job_kinds are set but tools.jobs is false")
+        if self.tools.jobs and all(kind.web for kind in self.job_kinds.values()):
+            raise ValueError(
+                "the research follow-up needs a job kind with web: false to write its note; "
+                "every kind here can reach the web"
+            )
         for name in self.job_kinds:
             if not name or name != name.strip() or len(name) > 64:
                 raise ValueError(f"not a job kind name: {name!r}")
@@ -219,6 +274,14 @@ class Answers(BaseModel):
             default_daily=section.default_daily,
             timezone=self.timezone,
         )
+
+
+def _clock_time(value: str) -> str:
+    """A local time of day as HH:MM, the only shape the scheduler accepts."""
+    text = value.strip()
+    if not re.fullmatch(r"([01][0-9]|2[0-3]):[0-5][0-9]", text):
+        raise ValueError(f"not a local time of day in HH:MM: {value!r}")
+    return text
 
 
 def _absolute_path(value: Path) -> Path:

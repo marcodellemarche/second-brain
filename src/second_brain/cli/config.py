@@ -19,9 +19,28 @@ from typing import Any
 
 from second_brain.cli.answers import Answers
 from second_brain.cli.render import render_template
-from second_brain.cli.secrets import SEARXNG_KEY, TOOLS_TOKEN
+from second_brain.cli.secrets import (
+    OUTBOX_SECRET,
+    SEARXNG_KEY,
+    TOOLS_TOKEN,
+    WEBHOOK_IDEA,
+    WEBHOOK_INGEST,
+    WEBHOOK_RESEARCH,
+    WEBHOOK_SCHEDULE,
+)
 from second_brain.core.schema import VaultSchema, load_schema
+from second_brain.core.types import Zone
 from second_brain.guard.config import GuardConfig
+from second_brain.sidecars.call_router import RouterConfig
+from second_brain.sidecars.config import (
+    CallRouterSection,
+    JobRunnerSection,
+    SchedulerSection,
+    SidecarsConfig,
+    VaultWatcherSection,
+)
+from second_brain.sidecars.scheduler import ScheduleConfig, ScheduleEntry
+from second_brain.sidecars.vault_watcher import DEFAULT_IGNORE
 from second_brain.tools.config import (
     CalendarToolsConfig,
     JobsConfig,
@@ -31,6 +50,7 @@ from second_brain.tools.config import (
 )
 from second_brain.tools.export import export_guard_classes
 from second_brain.tools.jobs import JobKind
+from second_brain.tools.outbox import OutboxConfig
 from second_brain.tools.registry import Registry
 from second_brain.tools.vault import VaultConfig
 
@@ -38,6 +58,15 @@ VAULT_IN_CONTAINER = Path("/vault")
 DATA_IN_CONTAINER = Path("/data")
 SECRETS_IN_CONTAINER = Path("/run/secrets")
 TEMPLATES = Path(__file__).resolve().parents[3] / "templates"
+HERMES_WEBHOOK_BASE_URL = "http://hermes:8644/webhooks"
+SCHEDULE_STATE_FILE = DATA_IN_CONTAINER / "scheduler.json"
+
+SCHEDULE_ROUTES: dict[str, str] = {
+    "digest": "scheduled-digest",
+    "lint": "scheduled-lint",
+    "brief": "scheduled-brief",
+}
+INGEST_ROUTE = "ingest"
 
 TELEGRAM_HOSTS: tuple[str, ...] = ("api.telegram.org",)
 SLACK_HOSTS: tuple[str, ...] = ("slack.com", "wss-primary.slack.com")
@@ -58,6 +87,37 @@ def vault_schema(language: str) -> VaultSchema:
     return load_schema(TEMPLATES / "vault" / language)
 
 
+def jobs_config(answers: Answers) -> JobsConfig | None:
+    """The job kinds this brain can queue, or None when jobs are off."""
+    if not answers.tools.jobs:
+        return None
+    return JobsConfig(
+        store_path=DATA_IN_CONTAINER / "jobs.sqlite3",
+        kinds={
+            name: JobKind(route=kind.route, description=kind.description, web=kind.web)
+            for name, kind in answers.job_kinds.items()
+        },
+    )
+
+
+def outbox_config(answers: Answers) -> OutboxConfig | None:
+    """Where a research run's reply lands, and the vault kind that writes the final note.
+
+    A web run cannot write its result anywhere, so a brain whose kinds can all reach the web has
+    nothing to hand it back to: `Answers` refuses that case, and there is no outbox here.
+    """
+    if not answers.tools.jobs:
+        return None
+    followup = next((name for name in sorted(answers.job_kinds) if not answers.job_kinds[name].web), None)
+    if followup is None:
+        return None
+    return OutboxConfig(
+        dir=DATA_IN_CONTAINER / "outbox",
+        secret_file=SECRETS_IN_CONTAINER / OUTBOX_SECRET,
+        research_followup_kind=followup,
+    )
+
+
 def tools_config(answers: Answers) -> ToolsConfig:
     """The tools config this instance runs with. Secrets are paths, never values."""
     tools = answers.tools
@@ -69,15 +129,6 @@ def tools_config(answers: Answers) -> ToolsConfig:
             timezone=answers.timezone,
             token_file=SECRETS_IN_CONTAINER / "calendar_token",
         )
-    jobs = None
-    if tools.jobs:
-        jobs = JobsConfig(
-            store_path=DATA_IN_CONTAINER / "jobs.sqlite3",
-            kinds={
-                name: JobKind(route=kind.route, description=kind.description, web=kind.web)
-                for name, kind in answers.job_kinds.items()
-            },
-        )
     return ToolsConfig(
         vault=VaultConfig(root=VAULT_IN_CONTAINER),
         token_file=SECRETS_IN_CONTAINER / TOOLS_TOKEN,
@@ -85,8 +136,9 @@ def tools_config(answers: Answers) -> ToolsConfig:
         weather=WeatherConfig(enabled=True) if tools.weather else None,
         links=answers.link_config(),
         archive=answers.archive_config,
-        jobs=jobs,
+        jobs=jobs_config(answers),
         notify=answers.notify_config(DATA_IN_CONTAINER),
+        outbox=outbox_config(answers),
     )
 
 
@@ -145,6 +197,66 @@ def guard_config(answers: Answers, registry: Registry) -> GuardConfig:
     )
 
 
+def capture_dir(answers: Answers) -> str:
+    """The vault-relative folder the call router watches: the inbox calls folder unless set."""
+    if answers.calls.capture_dir is not None:
+        return answers.calls.capture_dir
+    return f"{vault_schema(answers.language).folder(Zone.INBOX)}/{Zone.CALLS.value}"
+
+
+def sidecars_config(answers: Answers) -> SidecarsConfig:
+    """The sidecars config: what each sidecar watches, and the secret file of every route it posts to.
+
+    A call note lands in the capture folder and the call router is the only sidecar allowed to
+    report it, so the vault watcher ignores that folder: one call, one event.
+    """
+    route_secrets: dict[str, Path] = {INGEST_ROUTE: SECRETS_IN_CONTAINER / WEBHOOK_INGEST}
+    for kind in answers.job_kinds.values():
+        secret = WEBHOOK_RESEARCH if kind.web else WEBHOOK_IDEA
+        route_secrets[kind.route] = SECRETS_IN_CONTAINER / secret
+    for route in SCHEDULE_ROUTES.values():
+        route_secrets[route] = SECRETS_IN_CONTAINER / WEBHOOK_SCHEDULE
+
+    calls = answers.calls
+    jobs = jobs_config(answers)
+    return SidecarsConfig(
+        vault_dir=VAULT_IN_CONTAINER,
+        webhook_base_url=HERMES_WEBHOOK_BASE_URL,
+        route_secrets=route_secrets,
+        vault_watcher=VaultWatcherSection(ignore=[*DEFAULT_IGNORE, capture_dir(answers)]),
+        call_router=CallRouterSection(
+            watch_dir=capture_dir(answers),
+            rules=RouterConfig(
+                team_domains=calls.team_domains,
+                personal_markers=calls.personal_markers,
+            ),
+        ),
+        job_runner=JobRunnerSection(jobs=jobs) if jobs is not None else None,
+        scheduler=SchedulerSection(
+            schedule=ScheduleConfig(
+                timezone=answers.timezone,
+                entries=_schedule_entries(answers),
+            ),
+            state_file=SCHEDULE_STATE_FILE,
+        ),
+    )
+
+
+def _schedule_entries(answers: Answers) -> list[ScheduleEntry]:
+    """The recurring tasks: one entry per local time, numbered because names cannot repeat."""
+    schedule = answers.schedule
+    entries = [
+        ScheduleEntry(name=f"digest-{index}", route=SCHEDULE_ROUTES["digest"], at=at)
+        for index, at in enumerate(schedule.digest, start=1)
+    ]
+    entries.append(ScheduleEntry(name="lint", route=SCHEDULE_ROUTES["lint"], at=schedule.lint))
+    entries += [
+        ScheduleEntry(name=f"brief-{index}", route=SCHEDULE_ROUTES["brief"], at=at)
+        for index, at in enumerate(schedule.brief, start=1)
+    ]
+    return entries
+
+
 def egress_hosts(answers: Answers, registry: Registry) -> list[str]:
     """Every host the egress proxy allows: the model, the chat API, and the enabled tools."""
     hosts: list[str] = [answers.endpoint_host]
@@ -187,6 +299,7 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "language": answers.language_name,
         "languages": answers.languages,
         "channel": answers.channel,
+        "deliver_platform": answers.channel.lower(),
         "example_note_path": f"{schema.folder('knowledge')}/example.md",
         "egress_hosts": egress_hosts(answers, registry),
         "searxng_upstream_hosts": " ".join(SEARXNG_UPSTREAM_HOSTS),
