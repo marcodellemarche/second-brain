@@ -209,9 +209,7 @@ def test_config_forbids_extra_keys() -> None:
 # --- list ----------------------------------------------------------------------------------
 
 
-def test_list_reads_both_calendars_by_default(
-    tools: dict[str, Tool], backend: FakeBackend
-) -> None:
+def test_list_reads_both_calendars_by_default(tools: dict[str, Tool], backend: FakeBackend) -> None:
     _seed(backend, ASSISTANT, "on assistant")
     _seed(backend, MAIN, "on main")
     result = _call(tools, "calendar_list", {"date_from": "2026-01-01", "date_to": "2026-01-31"})
@@ -256,9 +254,7 @@ def test_list_refuses_a_backwards_range() -> None:
 # --- create --------------------------------------------------------------------------------
 
 
-def test_create_goes_to_the_assistant_calendar_only(
-    tools: dict[str, Tool], backend: FakeBackend
-) -> None:
+def test_create_goes_to_the_assistant_calendar_only(tools: dict[str, Tool], backend: FakeBackend) -> None:
     result = _call(
         tools,
         "calendar_create",
@@ -306,9 +302,7 @@ def test_update_changes_an_assistant_event(tools: dict[str, Tool], backend: Fake
     assert backend.events[ASSISTANT][event_id].title == "renamed"
 
 
-def test_update_refuses_an_event_of_the_main_calendar(
-    tools: dict[str, Tool], backend: FakeBackend
-) -> None:
+def test_update_refuses_an_event_of_the_main_calendar(tools: dict[str, Tool], backend: FakeBackend) -> None:
     event_id = _seed(backend, MAIN)
     result = _call(
         tools,
@@ -333,9 +327,7 @@ def test_delete_removes_an_assistant_event(tools: dict[str, Tool], backend: Fake
     assert backend.events[ASSISTANT] == {}
 
 
-def test_delete_refuses_an_event_of_the_main_calendar(
-    tools: dict[str, Tool], backend: FakeBackend
-) -> None:
+def test_delete_refuses_an_event_of_the_main_calendar(tools: dict[str, Tool], backend: FakeBackend) -> None:
     event_id = _seed(backend, MAIN)
     result = _call(tools, "calendar_delete", {"event_id": event_id})
     assert result["ok"] is False
@@ -344,9 +336,7 @@ def test_delete_refuses_an_event_of_the_main_calendar(
     assert event_id in backend.events[MAIN]
 
 
-def test_update_and_delete_refuse_an_unknown_event(
-    tools: dict[str, Tool], backend: FakeBackend
-) -> None:
+def test_update_and_delete_refuse_an_unknown_event(tools: dict[str, Tool], backend: FakeBackend) -> None:
     update = _call(
         tools,
         "calendar_update",
@@ -465,9 +455,7 @@ def test_invite_adds_attendees_with_approval(tools: dict[str, Tool], backend: Fa
     assert result["event"]["attendees"] == 1
 
 
-def test_invite_always_uses_send_updates_none(
-    tools: dict[str, Tool], backend: FakeBackend
-) -> None:
+def test_invite_always_uses_send_updates_none(tools: dict[str, Tool], backend: FakeBackend) -> None:
     event_id = _seed(backend, ASSISTANT)
     _call(
         tools,
@@ -481,9 +469,7 @@ def test_invite_always_uses_send_updates_none(
 def test_invite_refuses_more_than_ten_attendees(tools: dict[str, Tool]) -> None:
     attendees = [f"person{index}@example.test" for index in range(11)]
     with pytest.raises(ValidationError):
-        InviteParams.model_validate(
-            {"event_id": "evt-1", "calendar": "assistant", "attendees": attendees}
-        )
+        InviteParams.model_validate({"event_id": "evt-1", "calendar": "assistant", "attendees": attendees})
 
 
 def test_invite_accepts_ten_attendees(tools: dict[str, Tool]) -> None:
@@ -500,9 +486,7 @@ def test_invite_accepts_ten_attendees(tools: dict[str, Tool]) -> None:
 )
 def test_invite_validates_the_email_addresses(address: str) -> None:
     with pytest.raises(ValidationError):
-        InviteParams.model_validate(
-            {"event_id": "evt-1", "calendar": "assistant", "attendees": [address]}
-        )
+        InviteParams.model_validate({"event_id": "evt-1", "calendar": "assistant", "attendees": [address]})
 
 
 def test_invite_refuses_an_empty_attendee_list() -> None:

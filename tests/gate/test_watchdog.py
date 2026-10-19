@@ -112,9 +112,7 @@ def test_stale_heartbeat_after_a_fresh_one_still_stops(tmp_path: Path) -> None:
     stop = FakeStop()
     path = _beat(tmp_path / "heartbeat.json", 1000.0)
     clock = FakeClock(1010.0)
-    watchdog = Watchdog(
-        path, max_age=MAX_AGE, stop_action=stop, grace=GRACE, clock=clock, started_at=900.0
-    )
+    watchdog = Watchdog(path, max_age=MAX_AGE, stop_action=stop, grace=GRACE, clock=clock, started_at=900.0)
     assert watchdog.tick() is True
 
     clock.now = 1000.0 + MAX_AGE + 1

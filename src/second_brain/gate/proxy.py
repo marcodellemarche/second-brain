@@ -246,9 +246,7 @@ class _GateHandler(http.server.BaseHTTPRequestHandler):
             return
 
         scheme, host, port, _ = _split_upstream(self.config.upstream)
-        connection_class = (
-            http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
-        )
+        connection_class = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
         connection = connection_class(host, port, timeout=self.config.upstream_timeout)
         started = False
         try:

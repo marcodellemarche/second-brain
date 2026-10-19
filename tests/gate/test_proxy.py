@@ -219,9 +219,7 @@ def test_forward_replaces_the_client_key(gate: Gate, upstream: FakeUpstream) -> 
     assert "client-key-should-be-dropped" not in str(sent["headers"])
 
 
-def test_forward_without_client_key_still_adds_the_real_one(
-    gate: Gate, upstream: FakeUpstream
-) -> None:
+def test_forward_without_client_key_still_adds_the_real_one(gate: Gate, upstream: FakeUpstream) -> None:
     gate.post()
     assert upstream.requests[0]["headers"]["authorization"] == REAL_KEY
 
@@ -249,6 +247,7 @@ def test_oversized_body_is_refused(gate: Gate, upstream: FakeUpstream) -> None:
     assert status == 400
     assert json.loads(body) == {"error": "unsupported request body framing"}
     assert upstream.requests == []
+
 
 def test_non_v1_path_is_404(gate: Gate, upstream: FakeUpstream) -> None:
     status, body = gate.post(path="/admin/containers")

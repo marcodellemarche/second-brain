@@ -47,9 +47,7 @@ AUDIT_FILE = "audit.jsonl"
 URL_TOOLS = frozenset({"web_extract", "browser_navigate"})
 ARGS_PREVIEW_CHARS = 200
 MAX_PENDING_VERDICTS = 256
-NO_VERDICT_MESSAGE = (
-    "brain_guard made no decision for this call, so it was not run. Try the call again."
-)
+NO_VERDICT_MESSAGE = "brain_guard made no decision for this call, so it was not run. Try the call again."
 
 URL_RE = re.compile(r"https?://[^\s\"'<>)\]}\\]+")
 VAULT_PATH_RE = re.compile(r"[^\s\"'<>:|,]+\.(?:md|txt|ya?ml|json|csv)\b")

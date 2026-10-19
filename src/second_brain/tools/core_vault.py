@@ -71,9 +71,7 @@ def vault_tools(vault: Vault) -> list[Tool]:
     def write(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
         assert isinstance(params, WriteParams)
         return _guarded(
-            lambda: {
-                "commit": vault.write(params.path, params.content, provenance, params.expected_sha256)
-            }
+            lambda: {"commit": vault.write(params.path, params.content, provenance, params.expected_sha256)}
         )
 
     def move(params: BaseModel, provenance: Provenance) -> dict[str, Any]:

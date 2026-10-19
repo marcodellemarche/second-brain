@@ -139,9 +139,7 @@ class DiscardParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     path: str = Field(min_length=1, description="Archive-relative path of the file, as stored.")
-    reason: str = Field(
-        min_length=1, max_length=200, description="Why the file is discarded, in one line."
-    )
+    reason: str = Field(min_length=1, max_length=200, description="Why the file is discarded, in one line.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,9 +370,7 @@ def archive_tools(config: ArchiveConfig) -> list[Tool]:
 
     def discard(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
         assert isinstance(params, DiscardParams)
-        return _guarded(
-            lambda: {"path": archive.discard(params.path), "reason": params.reason}
-        )
+        return _guarded(lambda: {"path": archive.discard(params.path), "reason": params.reason})
 
     return [
         Tool(

@@ -123,9 +123,7 @@ def build_url(config: LinkConfig, target: LinkTarget, path: str) -> dict[str, An
     segments = _relative(path)
     folder = "/".join([config.folder(target), *segments[:-1]])
     name = segments[-1]
-    query = urllib.parse.urlencode(
-        {"dir": folder, "scrollto": name}, quote_via=urllib.parse.quote, safe=""
-    )
+    query = urllib.parse.urlencode({"dir": folder, "scrollto": name}, quote_via=urllib.parse.quote, safe="")
     return {
         "url": f"{config.base_url}/apps/files/?{query}",
         "target": target,

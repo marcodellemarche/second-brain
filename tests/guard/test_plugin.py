@@ -219,7 +219,7 @@ def test_transform_tool_result_ignores_trust_mention_outside_frontmatter(guard: 
 
 
 def test_transform_tool_result_does_not_wrap_twice(guard: plugin.Guard) -> None:
-    already = f'{plugin.UNTRUSTED_OPEN.format("web_search")}text{plugin.UNTRUSTED_CLOSE}'
+    already = f"{plugin.UNTRUSTED_OPEN.format('web_search')}text{plugin.UNTRUSTED_CLOSE}"
     assert guard.transform_tool_result(tool_name="web_search", result=already, session_id="s1") is None
 
 
@@ -228,9 +228,7 @@ def test_transform_tool_result_notes_search_results(guard: plugin.Guard) -> None
     assert guard.store.empty_searches("s1") == 1
     guard.transform_tool_result(tool_name="web_search", result="", session_id="s1")
     assert guard.store.empty_searches("s1") == 2
-    guard.transform_tool_result(
-        tool_name="web_search", result="see https://example.com/hit", session_id="s1"
-    )
+    guard.transform_tool_result(tool_name="web_search", result="see https://example.com/hit", session_id="s1")
     assert guard.store.empty_searches("s1") == 0
 
 
@@ -298,9 +296,10 @@ def test_external_tool_allowed_for_a_url_the_user_typed(guard: plugin.Guard) -> 
     guard.pre_llm_call(session_id="s1", sender_id="user-1", user_message="read https://example.com/a")
     guard.store.mark_untrusted("s1")
     guard.store.mark_private("s1")
-    assert guard.pre_tool_call(
-        tool_name="web_extract", args={"url": "https://example.com/a"}, session_id="s1"
-    ) is None
+    assert (
+        guard.pre_tool_call(tool_name="web_extract", args={"url": "https://example.com/a"}, session_id="s1")
+        is None
+    )
     decision = guard.pre_tool_call(
         tool_name="web_extract", args={"url": "https://example.com/other"}, session_id="s1"
     )
@@ -328,9 +327,10 @@ def test_visible_tool_asks_when_the_session_read_untrusted_content(guard: plugin
 
 
 def test_policy_tightens_a_tool(guard: plugin.Guard) -> None:
-    assert guard.pre_tool_call(
-        tool_name="mcp__brain__vault_write", args={"path": "inbox/a.md"}, session_id="s1"
-    ) is None
+    assert (
+        guard.pre_tool_call(tool_name="mcp__brain__vault_write", args={"path": "inbox/a.md"}, session_id="s1")
+        is None
+    )
     guard.config.policy.tools["vault_write"] = ToolPolicy(autonomy=Autonomy.ASK)
     decision = guard.pre_tool_call(
         tool_name="mcp__brain__vault_write", args={"path": "inbox/a.md"}, session_id="s1"
@@ -363,9 +363,7 @@ def test_ask_directive_is_bound_to_the_call(guard: plugin.Guard) -> None:
 def test_approval_text_truncates_the_arguments(guard: plugin.Guard) -> None:
     guard.store.mark_untrusted("s1")
     guard.store.mark_private("s1")
-    decision = guard.pre_tool_call(
-        tool_name="web_search", args={"query": "x" * 500}, session_id="s1"
-    )
+    decision = guard.pre_tool_call(tool_name="web_search", args={"query": "x" * 500}, session_id="s1")
     assert decision is not None
     assert "..." in decision["message"]
     assert len(decision["message"]) < 400
@@ -400,9 +398,10 @@ def test_pre_tool_call_blocks_a_remote_script(guard: plugin.Guard) -> None:
 
 
 def test_pre_tool_call_allows_an_ordinary_terminal_command(guard: plugin.Guard) -> None:
-    assert guard.pre_tool_call(
-        tool_name="terminal", args={"command": "ls -la && git status"}, session_id="s1"
-    ) is None
+    assert (
+        guard.pre_tool_call(tool_name="terminal", args={"command": "ls -la && git status"}, session_id="s1")
+        is None
+    )
 
 
 def test_terminal_block_is_audited_with_its_reason(guard: plugin.Guard) -> None:
@@ -498,9 +497,7 @@ def test_stamp_guard_reflects_the_chain_integrity(guard: plugin.Guard) -> None:
     guard.subagent_start(parent_session_id="parent", child_session_id="child")
     guard.store.mark_untrusted("parent")
     args = {"path": "inbox/a.md"}
-    guard.pre_tool_call(
-        tool_name="mcp__brain__vault_write", args=args, session_id="child", tool_call_id="c1"
-    )
+    guard.pre_tool_call(tool_name="mcp__brain__vault_write", args=args, session_id="child", tool_call_id="c1")
     directive = guard.stamp_guard(
         tool_name="mcp__brain__vault_write", args=args, session_id="child", tool_call_id="c1"
     )
@@ -538,9 +535,10 @@ def test_stamp_guard_blocks_after_a_block_decision(guard: plugin.Guard) -> None:
         tool_name="mcp__brain__unknown_tool", args=args, session_id="s1", tool_call_id="c1"
     )
     assert decision is not None and decision["action"] == "block"
-    assert guard.stamp_guard(
-        tool_name="mcp__brain__unknown_tool", args=args, session_id="s1", tool_call_id="c1"
-    ) is None
+    assert (
+        guard.stamp_guard(tool_name="mcp__brain__unknown_tool", args=args, session_id="s1", tool_call_id="c1")
+        is None
+    )
 
 
 def test_stamp_guard_names_a_scheduled_run(guard: plugin.Guard) -> None:
@@ -565,9 +563,7 @@ def test_stamp_guard_names_a_scheduled_run(guard: plugin.Guard) -> None:
 
 def test_stamp_guard_falls_back_to_the_session(guard: plugin.Guard) -> None:
     args = {"path": "inbox/a.md"}
-    guard.pre_tool_call(
-        tool_name="mcp__brain__vault_write", args=args, session_id="s1", tool_call_id="c1"
-    )
+    guard.pre_tool_call(tool_name="mcp__brain__vault_write", args=args, session_id="s1", tool_call_id="c1")
     directive = guard.stamp_guard(
         tool_name="mcp__brain__vault_write", args=args, session_id="s1", tool_call_id="c1"
     )
@@ -641,9 +637,7 @@ def test_register_refuses_unreadable_hermes_config(
         plugin.register(FakeCtx())
 
 
-def test_register_accepts_manual_approvals(
-    monkeypatch: pytest.MonkeyPatch, config_path: Path
-) -> None:
+def test_register_accepts_manual_approvals(monkeypatch: pytest.MonkeyPatch, config_path: Path) -> None:
     monkeypatch.setenv("BRAIN_GUARD_CONFIG", str(config_path))
     ctx = FakeCtx()
     plugin.register(ctx)

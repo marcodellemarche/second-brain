@@ -93,9 +93,7 @@ def test_module_docstring_says_nothing_is_deleted_or_overwritten() -> None:
 
 def test_config_forbids_extra_keys(root: Path, media: Path) -> None:
     with pytest.raises(ValidationError):
-        ArchiveConfig.model_validate(
-            {"root": root, "inbox_media_dir": media, "trash_dir": "elsewhere"}
-        )
+        ArchiveConfig.model_validate({"root": root, "inbox_media_dir": media, "trash_dir": "elsewhere"})
 
 
 def test_config_rejects_a_discard_dir_that_is_a_path(root: Path, media: Path) -> None:
@@ -199,9 +197,7 @@ def test_store_refuses_an_unknown_category(tools: dict[str, Tool], root: Path) -
 
 
 def test_store_refuses_a_disallowed_extension(tools: dict[str, Tool], root: Path) -> None:
-    result = _call(
-        tools, "archive_store", {"source": "notes.txt", "category_code": "11", "name": "Notes"}
-    )
+    result = _call(tools, "archive_store", {"source": "notes.txt", "category_code": "11", "name": "Notes"})
     assert result["ok"] is False
     assert result["code"] == "bad_extension"
     assert not list((root / "10-19 Home/11 House").glob("11.02*"))
@@ -209,13 +205,11 @@ def test_store_refuses_a_disallowed_extension(tools: dict[str, Tool], root: Path
 
 @pytest.mark.parametrize(
     "name",
-    ["..", "a/b", "a\\b", " leading", "trailing ", ".hidden", "with..dots", "quo\"te", "a" * 81],
+    ["..", "a/b", "a\\b", " leading", "trailing ", ".hidden", "with..dots", 'quo"te', "a" * 81],
 )
 def test_store_refuses_a_bad_name(tools: dict[str, Tool], name: str) -> None:
     with pytest.raises(ValidationError):
-        StoreParams.model_validate(
-            {"source": "attachment.pdf", "category_code": "11", "name": name}
-        )
+        StoreParams.model_validate({"source": "attachment.pdf", "category_code": "11", "name": name})
 
 
 @pytest.mark.parametrize("code", ["1", "111", "11.1", "11.111", "aa", "11/12", ""])
@@ -235,17 +229,13 @@ def test_store_refuses_a_source_outside_the_media_folder(
 ) -> None:
     (media / "escape.pdf").symlink_to(tmp_path / "elsewhere.pdf")
     (tmp_path / "elsewhere.pdf").write_bytes(b"outside\n")
-    result = _call(
-        tools, "archive_store", {"source": "escape.pdf", "category_code": "11", "name": "Escape"}
-    )
+    result = _call(tools, "archive_store", {"source": "escape.pdf", "category_code": "11", "name": "Escape"})
     assert result["ok"] is False
     assert result["code"] == "outside_archive"
 
 
 def test_store_refuses_a_missing_source(tools: dict[str, Tool]) -> None:
-    result = _call(
-        tools, "archive_store", {"source": "gone.pdf", "category_code": "11", "name": "Lease"}
-    )
+    result = _call(tools, "archive_store", {"source": "gone.pdf", "category_code": "11", "name": "Lease"})
     assert result["ok"] is False
     assert result["code"] == "not_found"
 
@@ -260,9 +250,7 @@ def test_store_leaves_the_source_untouched(tools: dict[str, Tool], media: Path) 
 # --- discard -------------------------------------------------------------------------------
 
 
-def test_discard_moves_the_file_into_the_discard_folder(
-    tools: dict[str, Tool], root: Path
-) -> None:
+def test_discard_moves_the_file_into_the_discard_folder(tools: dict[str, Tool], root: Path) -> None:
     result = _call(
         tools,
         "archive_discard",
@@ -279,12 +267,11 @@ def test_discard_moves_the_file_into_the_discard_folder(
     assert len(stamp) >= 15 and stamp[:8].isdigit() and "T" in stamp
 
 
-def test_discard_uses_a_configured_discard_dir(
-    root: Path, media: Path, tools: dict[str, Tool]
-) -> None:
-    custom = {tool.spec.name: tool for tool in archive_tools(
-        ArchiveConfig(root=root, inbox_media_dir=media, discard_dir="_trash")
-    )}
+def test_discard_uses_a_configured_discard_dir(root: Path, media: Path, tools: dict[str, Tool]) -> None:
+    custom = {
+        tool.spec.name: tool
+        for tool in archive_tools(ArchiveConfig(root=root, inbox_media_dir=media, discard_dir="_trash"))
+    }
     result = _call(
         custom,
         "archive_discard",
@@ -332,9 +319,7 @@ def test_discard_refuses_a_file_already_discarded(tools: dict[str, Tool]) -> Non
         {"path": "10-19 Home/11 House/11.01 Old lease.pdf", "reason": "duplicate"},
         approval="user-1",
     )
-    second = _call(
-        tools, "archive_discard", {"path": first["path"], "reason": "again"}, approval="user-1"
-    )
+    second = _call(tools, "archive_discard", {"path": first["path"], "reason": "again"}, approval="user-1")
     assert second["ok"] is False
     assert second["code"] == "already_discarded"
 
@@ -374,9 +359,7 @@ def test_archive_refuses_a_missing_root(tmp_path: Path, media: Path) -> None:
 
 
 def test_archive_store_writes_a_readable_file(tools: dict[str, Tool], root: Path) -> None:
-    result = _call(
-        tools, "archive_store", {"source": "photo.jpg", "category_code": "21", "name": "Receipt"}
-    )
+    result = _call(tools, "archive_store", {"source": "photo.jpg", "category_code": "21", "name": "Receipt"})
     stored = root / result["path"]
     assert os.stat(stored).st_mode & 0o777 == 0o644
     assert stored.read_bytes() == b"jpeg bytes\n"

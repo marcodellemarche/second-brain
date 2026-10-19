@@ -150,9 +150,7 @@ def _payload(fetch: Fetch, url: str) -> dict[str, Any]:
 
 
 def _geocode(fetch: Fetch, place: str) -> Location:
-    query = urllib.parse.urlencode(
-        {"name": place, "count": "1", "language": "it", "format": "json"}
-    )
+    query = urllib.parse.urlencode({"name": place, "count": "1", "language": "it", "format": "json"})
     payload = _payload(fetch, f"{_WEATHER_GEOCODING}?{query}")
     results = payload.get("results")
     if not results or not isinstance(results, list):

@@ -242,9 +242,7 @@ class GoogleCalendarBackend:
         )
         return _event(payload)
 
-    def delete_event(
-        self, calendar_id: str, event_id: str, *, send_updates: SendUpdates = "none"
-    ) -> None:
+    def delete_event(self, calendar_id: str, event_id: str, *, send_updates: SendUpdates = "none") -> None:
         self._request(
             "DELETE",
             self._event_path(calendar_id, event_id),

@@ -201,18 +201,14 @@ def test_forecast_failure_is_a_backend_error() -> None:
 
 @pytest.mark.parametrize("forecast", [{}, {"daily": {}}, {"daily": {"time": []}}, "not json"])
 def test_a_broken_forecast_answer_is_a_backend_error(forecast: Any) -> None:
-    result = _tool(FakeFetch(forecast=forecast)).handler(
-        WeatherParams(place="Bologna"), _provenance()
-    )
+    result = _tool(FakeFetch(forecast=forecast)).handler(WeatherParams(place="Bologna"), _provenance())
     assert result["ok"] is False
     assert result["code"] == "backend_error"
 
 
 def test_geocoding_without_coordinates_is_a_backend_error() -> None:
     broken = {"results": [{"name": "Bologna", "country": "Italia"}]}
-    result = _tool(FakeFetch(geocoding=broken)).handler(
-        WeatherParams(place="Bologna"), _provenance()
-    )
+    result = _tool(FakeFetch(geocoding=broken)).handler(WeatherParams(place="Bologna"), _provenance())
     assert result["code"] == "backend_error"
 
 
