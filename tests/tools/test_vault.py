@@ -355,7 +355,7 @@ def test_undo_of_a_conflicting_commit_leaves_the_tree_clean(root: Path) -> None:
     with pytest.raises(VaultError) as error:
         vault.undo(first, _provenance())
 
-    assert error.value.code == "git_failed"
+    assert error.value.code == "conflict"
     assert not (root / ".git/REVERT_HEAD").exists()
     assert _git(root, "status", "--porcelain") == ""
     assert (root / "note.md").read_text() == "three\n"

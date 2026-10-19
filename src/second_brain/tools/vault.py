@@ -13,7 +13,8 @@ credential is left out of that commit and stays in the working tree until the se
 the brain then refuses to touch it.
 
 Error codes: `outside_vault`, `zone_denied`, `quiet_window`, `hash_mismatch`, `secret_detected`,
-`not_found`, `exists`, and `git_failed` when git itself refuses the operation.
+`not_found`, `exists`, `conflict` when a later change makes an undo impossible to apply cleanly,
+and `git_failed` when git itself refuses the operation.
 """
 
 from __future__ import annotations
@@ -229,8 +230,14 @@ class Vault:
             try:
                 self._git("revert", "--no-edit", commit)
             except VaultError as exc:
+                conflicted = (self._root / ".git" / "REVERT_HEAD").exists()
                 # A conflicted revert would block every later operation, so put the tree back.
                 self._abort_revert()
+                if conflicted:
+                    raise VaultError(
+                        "conflict",
+                        f"{commit_sha} cannot be undone cleanly: a later change touched the same lines",
+                    ) from exc
                 raise exc
             body = self._git("log", "-1", "--format=%B").rstrip()
             self._git("commit", "--amend", "-q", "-m", f"{body}\n\n{self._trailers(provenance)}")
