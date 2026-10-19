@@ -8,7 +8,9 @@ the disk.
 
 The user also edits the vault in an editor, and file sync drops those changes in on its own. They
 are committed separately, authored by `human`, before the brain touches anything, so a brain
-commit only ever contains the paths the brain changed.
+commit only ever contains the paths the brain changed. A user file that looks like it holds a
+credential is left out of that commit and stays in the working tree until the secret is gone, and
+the brain then refuses to touch it.
 
 Error codes: `outside_vault`, `zone_denied`, `quiet_window`, `hash_mismatch`, `secret_detected`,
 `not_found`, `exists`, and `git_failed` when git itself refuses the operation.
@@ -36,6 +38,7 @@ from second_brain.tools.secrets import scan
 
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 _PATH_SEPARATORS = re.compile(r"[\\/]+")
+_BINARY_SNIFF_BYTES = 8000
 
 
 class VaultError(Exception):
@@ -58,6 +61,35 @@ class Provenance:
     def __post_init__(self) -> None:
         if self.source_integrity not in ("trusted", "untrusted"):
             raise ValueError(f"source_integrity must be trusted or untrusted, got {self.source_integrity!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class HeldBack:
+    """A user file left uncommitted because it looks like it holds a credential."""
+
+    path: str
+    rules: tuple[tuple[str, int], ...]
+
+    def describe(self) -> str:
+        found = ", ".join(f"{rule} at line {line}" for rule, line in self.rules)
+        return f"{self.path} contains what looks like a secret ({found})"
+
+
+@dataclass(frozen=True, slots=True)
+class HumanCommit:
+    """What one commit of the user's own edits did, and what it had to leave out."""
+
+    sha: str | None
+    held_back: list[HeldBack]
+
+
+@dataclass(frozen=True, slots=True)
+class _Change:
+    """One path with an uncommitted change, plus the source path of a rename or a copy."""
+
+    code: str
+    path: str
+    origin: str | None = None
 
 
 class VaultConfig(BaseModel):
@@ -104,6 +136,11 @@ def _segments(path: str) -> list[str]:
     return [part for part in _PATH_SEPARATORS.split(path.strip()) if part not in ("", ".")]
 
 
+def _change_paths(change: _Change) -> tuple[str, ...]:
+    """Both sides of a rename or a copy, so the index sees the change the way git status does."""
+    return (change.origin, change.path) if change.origin else (change.path,)
+
+
 class Vault:
     """Read and write one vault. All writes are serialized and committed one per operation."""
 
@@ -139,9 +176,10 @@ class Vault:
         expected_sha256: str | None = None,
     ) -> str:
         with self._lock:
-            self._commit_human_changes_locked()
+            held = self._commit_human_changes_locked().held_back
             rel, target = self._resolve(path)
             self._check_zone(rel, provenance)
+            self._check_held_back(rel, held)
             if target.exists() and not target.is_file():
                 raise VaultError("exists", f"{rel} is not a regular file")
             self._check_concurrency(rel, target, expected_sha256)
@@ -151,11 +189,13 @@ class Vault:
 
     def move(self, src: str, dst: str, provenance: Provenance) -> str:
         with self._lock:
-            self._commit_human_changes_locked()
+            held = self._commit_human_changes_locked().held_back
             src_rel, src_path = self._resolve(src)
             dst_rel, dst_path = self._resolve(dst)
             self._check_zone(src_rel, provenance)
             self._check_zone(dst_rel, provenance)
+            self._check_held_back(src_rel, held)
+            self._check_held_back(dst_rel, held)
             if not src_path.is_file():
                 raise VaultError("not_found", f"{src_rel} does not exist")
             if dst_path.exists():
@@ -166,9 +206,10 @@ class Vault:
 
     def delete(self, path: str, provenance: Provenance) -> str:
         with self._lock:
-            self._commit_human_changes_locked()
+            held = self._commit_human_changes_locked().held_back
             rel, target = self._resolve(path)
             self._check_zone(rel, provenance)
+            self._check_held_back(rel, held)
             if not target.is_file():
                 raise VaultError("not_found", f"{rel} does not exist")
             stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
@@ -179,12 +220,12 @@ class Vault:
 
     def undo(self, commit_sha: str, provenance: Provenance) -> str:
         with self._lock:
-            self._commit_human_changes_locked()
+            held = self._commit_human_changes_locked().held_back
             try:
                 commit = self._git("rev-parse", "--verify", "--quiet", f"{commit_sha}^{{commit}}")
             except VaultError as exc:
                 raise VaultError("not_found", f"unknown commit: {commit_sha}") from exc
-            self._check_undo(commit, provenance)
+            self._check_undo(commit, provenance, held)
             try:
                 self._git("revert", "--no-edit", commit)
             except VaultError as exc:
@@ -195,39 +236,114 @@ class Vault:
             self._git("commit", "--amend", "-q", "-m", f"{body}\n\n{self._trailers(provenance)}")
             return self._git("rev-parse", "HEAD")
 
-    def commit_human_changes(self) -> str | None:
-        """Commit what the user changed in the vault, as `human`. None when the tree is clean."""
+    def commit_human_changes(self) -> HumanCommit:
+        """Commit what the user changed in the vault, as `human`, minus the files that hold a secret."""
         with self._lock:
             return self._commit_human_changes_locked()
 
-    def _commit_human_changes_locked(self) -> str | None:
-        """The commit holds everything, so a brain commit after it cannot carry a user edit."""
-        if not self._git("status", "--porcelain"):
-            return None
-        self._git("add", "-A")
-        staged = self._git("diff", "--cached", "--name-only", "-z", strip=False)
-        files = len([path for path in staged.split("\0") if path])
-        if files == 0:
-            return None
+    def held_back(self) -> list[HeldBack]:
+        """The user files a commit would leave out right now, because they look like a credential."""
+        with self._lock:
+            return self._scan_changes(self._status_changes())
+
+    def _commit_human_changes_locked(self) -> HumanCommit:
+        """The commit holds everything it safely can, so a brain commit after it cannot carry a user edit."""
+        changes = self._status_changes()
+        held = self._scan_changes(changes)
+        held_paths = {entry.path for entry in held}
+        files = [change for change in changes if change.path not in held_paths]
+        if held_paths:
+            # A file the user staged before pasting a secret into it must not sit in the index either,
+            # and a half-staged rename of it must not leave a bare deletion behind.
+            withheld = [
+                path for change in changes if change.path in held_paths for path in _change_paths(change)
+            ]
+            self._git("reset", "-q", "--", *sorted(set(withheld)))
+        if not files:
+            return HumanCommit(sha=None, held_back=held)
+        paths = [path for change in files for path in _change_paths(change)]
+        self._git("add", "-A", "--", *paths)
         self._git(
             "commit",
             "-q",
             "-m",
-            f"human: {files} files",
+            f"human: {len(files)} files",
             "-m",
             "Requested-By: human",
             author=(self._config.human_name, self._config.human_email),
         )
-        return self._git("rev-parse", "HEAD")
+        return HumanCommit(sha=self._git("rev-parse", "HEAD"), held_back=held)
 
-    def _check_undo(self, commit: str, provenance: Provenance) -> None:
-        """Undoing a commit writes its paths back, so it needs the same zone checks as a write."""
+    def _status_changes(self) -> list[_Change]:
+        """Every path with an uncommitted change, untracked files listed one by one."""
+        raw = self._git("status", "--porcelain", "-z", "-uall", strip=False)
+        fields = [field for field in raw.split("\0") if field]
+        changes: list[_Change] = []
+        index = 0
+        while index < len(fields):
+            code, path = fields[index][:2], fields[index][3:]
+            index += 1
+            origin = None
+            if code[:1] in ("R", "C"):
+                origin = fields[index]
+                index += 1
+            changes.append(_Change(code=code, path=path, origin=origin))
+        return changes
+
+    def _scan_changes(self, changes: Iterable[_Change]) -> list[HeldBack]:
+        held: list[HeldBack] = []
+        for change in changes:
+            if "D" in change.code:
+                continue
+            content = self._read_text(self._root / change.path)
+            if content is None:
+                continue
+            findings = scan(content)
+            if findings:
+                held.append(
+                    HeldBack(
+                        path=change.path,
+                        rules=tuple((finding.rule, finding.line) for finding in findings),
+                    )
+                )
+        return held
+
+    @staticmethod
+    def _read_text(target: Path) -> str | None:
+        """The file as text, or None when it is binary or unreadable, where a text secret cannot hide."""
+        if not target.is_file():
+            return None
+        try:
+            payload = target.read_bytes()
+        except OSError:
+            return None
+        if b"\0" in payload[:_BINARY_SNIFF_BYTES]:
+            return None
+        try:
+            return payload.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+
+    @staticmethod
+    def _check_held_back(rel: str, held: Iterable[HeldBack]) -> None:
+        """A path the user left dirty with a secret is theirs to clean, so the brain keeps out of it."""
+        for entry in held:
+            if entry.path == rel:
+                raise VaultError(
+                    "secret_detected",
+                    f"refusing to write {rel}: it already holds what looks like a secret "
+                    f"({', '.join(f'{rule} at line {line}' for rule, line in entry.rules)}), remove it first",
+                )
+
+    def _check_undo(self, commit: str, provenance: Provenance, held: Iterable[HeldBack]) -> None:
+        """Undoing a commit writes its paths back, so it needs the same zone and secret checks as a write."""
         if self._git("log", "-1", "--format=%ae", commit) != self._config.author_email:
             raise VaultError("zone_denied", f"only commits authored by the brain can be undone: {commit}")
         if len(self._git("rev-list", "--parents", "-n", "1", commit).split()) > 2:
             raise VaultError("zone_denied", f"{commit} is a merge commit, which cannot be undone")
         for path in self._commit_paths(commit):
             self._check_zone(path, provenance)
+            self._check_held_back(path, held)
 
     def _commit_paths(self, commit: str) -> list[str]:
         """Every path the commit touches, both sides of a rename, since a revert writes both."""

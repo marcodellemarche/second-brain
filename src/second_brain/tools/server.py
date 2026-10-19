@@ -230,10 +230,13 @@ def main() -> None:
 def commit_human_changes_once(vault: Vault) -> str | None:
     """One tick of the timer. A failure is logged, never raised: the server keeps serving."""
     try:
-        return vault.commit_human_changes()
+        result = vault.commit_human_changes()
     except VaultError:
         log.exception("could not commit the changes made in the vault by hand")
         return None
+    for entry in result.held_back:
+        log.warning("not committing %s until the secret is removed", entry.path)
+    return result.sha
 
 
 def start_human_commit_timer(vault: Vault, seconds: float) -> threading.Thread:

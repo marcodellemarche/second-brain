@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from second_brain.tools.vault import Provenance, Vault, VaultConfig, VaultError
+from second_brain.tools.vault import HumanCommit, Provenance, Vault, VaultConfig, VaultError
 
 
 def _provenance(**overrides: object) -> Provenance:
@@ -538,14 +538,18 @@ def test_a_human_edit_before_an_undo_is_its_own_commit(root: Path) -> None:
     assert _git(root, "status", "--porcelain") == ""
 
 
+def _fake_aws_key() -> str:
+    return "AKIA" + "Q" * 16
+
+
 def test_commit_human_changes_counts_the_paths_it_commits(root: Path) -> None:
     vault = _vault(root)
     (root / "one.md").write_text("one\n")
     (root / "two.md").write_text("two\n")
 
-    sha = vault.commit_human_changes()
+    result = vault.commit_human_changes()
 
-    assert sha == _git(root, "rev-parse", "HEAD")
+    assert result == HumanCommit(sha=_git(root, "rev-parse", "HEAD"), held_back=[])
     assert _message(root).splitlines() == ["human: 2 files", "", "Requested-By: human"]
     assert _git(root, "status", "--porcelain") == ""
 
@@ -554,7 +558,7 @@ def test_commit_human_changes_is_a_noop_on_a_clean_tree(root: Path) -> None:
     vault = _vault(root)
     head = _git(root, "rev-parse", "HEAD")
 
-    assert vault.commit_human_changes() is None
+    assert vault.commit_human_changes() == HumanCommit(sha=None, held_back=[])
     assert _git(root, "rev-parse", "HEAD") == head
 
 
@@ -576,7 +580,7 @@ def test_commit_human_changes_keeps_the_trash_out_when_it_is_gitignored(root: Pa
 def test_undo_of_a_human_commit_is_refused(root: Path) -> None:
     vault = _vault(root)
     (root / "note.md").write_text("edited by hand\n")
-    human = vault.commit_human_changes()
+    human = vault.commit_human_changes().sha
     assert human is not None
 
     with pytest.raises(VaultError) as error:
@@ -586,6 +590,170 @@ def test_undo_of_a_human_commit_is_refused(root: Path) -> None:
     assert "only commits authored by the brain" in error.value.message
     assert _git(root, "rev-parse", "HEAD") == human
     assert (root / "note.md").read_text() == "edited by hand\n"
+
+
+def test_a_note_with_a_secret_is_held_back_and_never_committed(root: Path) -> None:
+    vault = _vault(root)
+    head = _git(root, "rev-parse", "HEAD")
+    (root / "note.md").write_text("my key\n\n" + _fake_aws_key() + "\n")
+
+    result = vault.commit_human_changes()
+
+    assert result.sha is None
+    assert [entry.path for entry in result.held_back] == ["note.md"]
+    assert _git(root, "rev-parse", "HEAD") == head
+    assert _git(root, "status", "--porcelain") == "?? note.md"
+    assert _git(root, "log", "--all", "--format=%H", "-S", _fake_aws_key()) == ""
+
+
+def test_the_held_back_entry_reports_the_rule_and_the_line(root: Path) -> None:
+    vault = _vault(root)
+    (root / "note.md").write_text("first line\nsecond line\n" + _fake_aws_key() + "\n")
+
+    held = vault.held_back()
+
+    assert len(held) == 1
+    assert held[0].path == "note.md"
+    assert held[0].rules == (("aws_access_key_id", 3),)
+    assert _fake_aws_key() not in held[0].describe()
+    assert "aws_access_key_id at line 3" in held[0].describe()
+
+
+def test_the_files_without_a_secret_in_the_same_tick_are_committed(root: Path) -> None:
+    vault = _vault(root)
+    (root / "note.md").write_text("my key\n" + _fake_aws_key() + "\n")
+    (root / "clean.md").write_text("nothing to see\n")
+
+    result = vault.commit_human_changes()
+
+    assert result.sha is not None
+    assert [entry.path for entry in result.held_back] == ["note.md"]
+    assert _git(root, "show", "--name-only", "--format=", result.sha).split() == ["clean.md"]
+    assert _git(root, "status", "--porcelain") == "?? note.md"
+    assert _git(root, "log", "--all", "--format=%H", "-S", _fake_aws_key()) == ""
+
+
+def test_the_next_tick_commits_the_note_once_the_secret_is_gone(root: Path) -> None:
+    vault = _vault(root)
+    (root / "note.md").write_text("my key\n" + _fake_aws_key() + "\n")
+    assert vault.commit_human_changes().sha is None
+
+    (root / "note.md").write_text("my key\n")
+    result = vault.commit_human_changes()
+
+    assert result.sha is not None
+    assert result.held_back == []
+    assert vault.held_back() == []
+    assert _git(root, "show", "--name-only", "--format=", result.sha).split() == ["note.md"]
+    assert _git(root, "status", "--porcelain") == ""
+
+
+def test_a_secret_added_to_a_committed_file_is_held_back_and_unstaged(root: Path) -> None:
+    vault = _vault(root)
+    vault.write("note.md", "hello\n", _provenance())
+    (root / "note.md").write_text("hello\n" + _fake_aws_key() + "\n")
+    _git(root, "add", "note.md")
+
+    result = vault.commit_human_changes()
+
+    assert result.sha is None
+    assert [entry.path for entry in result.held_back] == ["note.md"]
+    assert _git(root, "diff", "--cached", "--name-only") == ""
+    assert _git(root, "diff", "--name-only") == "note.md"
+    assert _git(root, "log", "--all", "--format=%H", "-S", _fake_aws_key()) == ""
+
+
+def test_a_binary_file_is_not_scanned_and_gets_committed(root: Path) -> None:
+    vault = _vault(root)
+    (root / "drawing.bin").write_bytes(b"\x00\x01" + _fake_aws_key().encode())
+
+    result = vault.commit_human_changes()
+
+    assert result.sha is not None
+    assert result.held_back == []
+    assert _git(root, "show", "--name-only", "--format=", result.sha).split() == ["drawing.bin"]
+
+
+def test_a_half_staged_rename_of_a_held_back_file_is_unstaged(root: Path) -> None:
+    vault = _vault(root)
+    vault.write("note.md", "hello\n", _provenance())
+    head = _git(root, "rev-parse", "HEAD")
+    _git(root, "mv", "note.md", "renamed.md")
+    (root / "renamed.md").write_text(_fake_aws_key() + "\n")
+
+    result = vault.commit_human_changes()
+
+    assert result.sha is None
+    assert [entry.path for entry in result.held_back] == ["renamed.md"]
+    assert _git(root, "diff", "--cached", "--name-only") == ""
+    assert _git(root, "rev-parse", "HEAD") == head
+    assert _git(root, "log", "--all", "--format=%H", "-S", _fake_aws_key()) == ""
+
+
+def test_undo_does_not_write_over_a_held_back_path(root: Path) -> None:
+    vault = _vault(root, quiet_seconds=0)
+    written = vault.write("note.md", "one\n", _provenance())
+    (root / "note.md").write_text("one\n" + _fake_aws_key() + "\n")
+
+    with pytest.raises(VaultError) as error:
+        vault.undo(written, _provenance())
+
+    assert error.value.code == "secret_detected"
+    assert _git(root, "rev-parse", "HEAD") == written
+    assert _fake_aws_key() in (root / "note.md").read_text()
+
+
+def test_a_brain_write_to_a_held_back_path_is_refused(root: Path) -> None:
+    vault = _vault(root)
+    (root / "note.md").write_text("my key\n" + _fake_aws_key() + "\n")
+
+    with pytest.raises(VaultError) as error:
+        vault.write("note.md", "clean now\n", _provenance())
+
+    assert error.value.code == "secret_detected"
+    assert "aws_access_key_id at line 2" in error.value.message
+    assert _fake_aws_key() not in error.value.message
+    assert _fake_aws_key() in (root / "note.md").read_text()
+    assert _git(root, "status", "--porcelain") == "?? note.md"
+
+
+def test_a_brain_move_or_delete_of_a_held_back_path_is_refused(root: Path) -> None:
+    vault = _vault(root)
+    (root / "note.md").write_text(_fake_aws_key() + "\n")
+
+    with pytest.raises(VaultError) as error:
+        vault.move("note.md", "topics/note.md", _provenance())
+    assert error.value.code == "secret_detected"
+
+    with pytest.raises(VaultError) as error:
+        vault.delete("note.md", _provenance())
+    assert error.value.code == "secret_detected"
+    assert (root / "note.md").exists()
+
+
+def test_a_held_back_file_does_not_block_a_brain_write_to_another_path(root: Path) -> None:
+    vault = _vault(root)
+    (root / "note.md").write_text("my key\n" + _fake_aws_key() + "\n")
+
+    sha = vault.write("topics/other.md", "written by the brain\n", _provenance())
+
+    assert sha == _git(root, "rev-parse", "HEAD")
+    assert _git(root, "show", "--name-only", "--format=", sha).split() == ["topics/other.md"]
+    assert _git(root, "status", "--porcelain") == "?? note.md"
+    assert [entry.path for entry in vault.held_back()] == ["note.md"]
+    assert _git(root, "log", "--all", "--format=%H", "-S", _fake_aws_key()) == ""
+
+
+def test_a_human_commit_with_only_a_held_back_file_leaves_the_tree_dirty(root: Path) -> None:
+    vault = _vault(root)
+    (root / "note.md").write_text(_fake_aws_key() + "\n")
+    head = _git(root, "rev-parse", "HEAD")
+
+    result = vault.commit_human_changes()
+
+    assert result.sha is None
+    assert _git(root, "rev-parse", "HEAD") == head
+    assert vault.held_back() == [result.held_back[0]]
 
 
 def test_human_author_cannot_be_the_brain_author(root: Path) -> None:
