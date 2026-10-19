@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from second_brain.core.types import Zone
 
@@ -15,6 +15,7 @@ SCHEMA_FILE = Path("_meta") / "SCHEMA.md"
 
 _FENCED_YAML = re.compile(r"^```ya?ml[ \t]*\r?\n(.*?)^```[ \t]*$", re.DOTALL | re.MULTILINE)
 _PATH_SEPARATORS = re.compile(r"[\\/]+")
+_PAGE_NAME = re.compile(r"^[a-z_]+$")
 
 
 class SchemaError(Exception):
@@ -29,6 +30,21 @@ class VaultSchema(BaseModel):
     types: dict[str, str] = Field(min_length=1)
     tags: tuple[str, ...] = ()
     untrusted_zones: frozenset[Zone] = frozenset()
+    brain_pages: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("brain_pages")
+    @classmethod
+    def _check_brain_pages(cls, value: dict[str, str]) -> dict[str, str]:
+        for name, stem in value.items():
+            if not _PAGE_NAME.fullmatch(name):
+                raise ValueError(f"brain page name {name!r} must be lowercase letters and underscores")
+            if not stem or any(mark in stem for mark in ("\\", "/", ".")):
+                raise ValueError(f"brain page {name} maps to an invalid file stem: {stem!r}")
+        stems = list(value.values())
+        shared = sorted({stem for stem in stems if stems.count(stem) > 1})
+        if shared:
+            raise ValueError(f"two brain pages share a file stem: {', '.join(shared)}")
+        return value
 
     @model_validator(mode="after")
     def _complete_and_flat(self) -> VaultSchema:
@@ -53,6 +69,13 @@ class VaultSchema(BaseModel):
         if folder is None:
             raise SchemaError(f"zone {zone} is not mapped")
         return folder
+
+    def page(self, name: str) -> str:
+        """The vault-relative path of a `_brain` page, by its logical name."""
+        stem = self.brain_pages.get(name)
+        if stem is None:
+            raise SchemaError(f"this schema names no brain page {name!r}")
+        return f"{self.folder(Zone.BRAIN)}/{stem}.md"
 
     def zone_of(self, path: str | Path) -> Zone | None:
         """The zone a vault-relative path belongs to, or None when it belongs to none."""

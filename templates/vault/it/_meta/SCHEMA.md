@@ -8,6 +8,8 @@ Il frontmatter è sempre in inglese, anche quando il vault è in italiano: `type
 
 `types` e `tags` sono tassonomie chiuse: se serve un valore nuovo si aggiunge qui, con una modifica che passa da una conferma. Le pagine in `archivio/` portano `index: false` e restano fuori dal richiamo automatico e dal lint.
 
+Le pagine che l'agente tiene su di sé in `_brain/` sono nominate in `brain_pages`: il codice e le skill usano i nomi logici (`commitments`, `initiative`, ...), quindi rinominare una pagina è una modifica solo qui.
+
 ```yaml
 language: it
 zones:
@@ -55,4 +57,12 @@ tags:
   - persone
 untrusted_zones:
   - raw
+brain_pages:
+  commitments: impegni
+  initiative: iniziativa
+  policy: policy
+  positions: posizioni
+  preferences: preferenze
+  profile: profilo
+  lint: lint
 ```

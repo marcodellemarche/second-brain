@@ -235,3 +235,87 @@ def test_no_frontmatter_key_outside_the_known_set(template: Path) -> None:
 
 def test_the_block_maps_every_zone_by_its_logical_name(template: Path) -> None:
     assert set(schema_block(template)["zones"]) == {zone.value for zone in Zone}
+
+
+BRAIN_STEMS = {
+    "en": {
+        "commitments": "commitments",
+        "initiative": "initiative",
+        "policy": "policy",
+        "positions": "positions",
+        "preferences": "preferences",
+        "profile": "profile",
+        "lint": "lint",
+    },
+    "it": {
+        "commitments": "impegni",
+        "initiative": "iniziativa",
+        "policy": "policy",
+        "positions": "posizioni",
+        "preferences": "preferenze",
+        "profile": "profilo",
+        "lint": "lint",
+    },
+}
+
+
+def test_both_templates_name_the_brain_pages(language: str) -> None:
+    assert load_schema(TEMPLATES / language).brain_pages == BRAIN_STEMS[language]
+
+
+def test_a_brain_page_resolves_through_the_brain_folder(language: str) -> None:
+    schema = load_schema(TEMPLATES / language)
+    assert schema.page("commitments") == f"_brain/{BRAIN_STEMS[language]['commitments']}.md"
+    assert schema.page("initiative") == f"_brain/{BRAIN_STEMS[language]['initiative']}.md"
+    assert schema.page("lint") == "_brain/lint.md"
+
+
+def test_every_named_brain_page_exists_in_the_template(template: Path) -> None:
+    schema = load_schema(template)
+    for name in schema.brain_pages:
+        path = schema.page(name)
+        if name == "lint":
+            continue
+        assert (template / path).is_file(), f"{name}: no {path}"
+
+
+def test_an_unknown_brain_page_is_refused(vault: Path) -> None:
+    with pytest.raises(SchemaError, match="nowhere"):
+        load_schema(vault).page("nowhere")
+
+
+@pytest.mark.parametrize("stem", ["", ".", "..", "a/b", "a\\b", "initiative.md", ".hidden"])
+def test_an_invalid_brain_page_stem_is_rejected(stem: str) -> None:
+    zones = {zone: zone.value for zone in Zone}
+    with pytest.raises(ValueError):
+        VaultSchema(language="en", zones=zones, types={"note": "a note"}, brain_pages={"initiative": stem})
+
+
+@pytest.mark.parametrize(
+    "name", ["", "Commitments", "commit-ments", "commitments2", "commitments/initiative"]
+)
+def test_a_brain_page_name_is_a_logical_name(name: str) -> None:
+    zones = {zone: zone.value for zone in Zone}
+    with pytest.raises(ValueError):
+        VaultSchema(language="en", zones=zones, types={"note": "a note"}, brain_pages={name: "initiative"})
+
+
+def test_two_brain_pages_cannot_share_a_stem() -> None:
+    zones = {zone: zone.value for zone in Zone}
+    with pytest.raises(ValueError, match="initiative"):
+        VaultSchema(
+            language="en",
+            zones=zones,
+            types={"note": "a note"},
+            brain_pages={"initiative": "initiative", "policy": "initiative"},
+        )
+
+
+def test_a_schema_without_brain_pages_still_loads(vault: Path) -> None:
+    block = schema_block(vault)
+    del block["brain_pages"]
+    write_schema(vault, block)
+    schema = load_schema(vault)
+    assert schema.brain_pages == {}
+    with pytest.raises(SchemaError):
+        schema.page("initiative")

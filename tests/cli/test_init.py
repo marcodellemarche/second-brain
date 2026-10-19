@@ -396,3 +396,31 @@ def test_a_bad_schedule_time_is_refused(tmp_path: Path, answers_file: Path) -> N
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(AnswersError):
         Answers.from_yaml(path)
+
+
+def test_an_italian_brain_points_notify_at_its_own_initiative_page(
+    tmp_path: Path, answers_file: Path
+) -> None:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["language"] = "it"
+    raw["tools"]["notify"] = {"default_daily": 4}
+    path = tmp_path / "italian.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    italian = Answers.from_yaml(path)
+    init(italian, tmp_path / "italian-instance")
+    tools = ToolsConfig.from_yaml(tmp_path / "italian-instance" / "config" / "brain-tools.yaml")
+    assert tools.notify is not None
+    assert tools.notify.initiative_path == "_brain/iniziativa.md"
+
+
+def test_an_explicit_initiative_path_wins_over_the_schema(tmp_path: Path, answers_file: Path) -> None:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["language"] = "it"
+    raw["tools"]["notify"] = {"initiative_path": "_brain/mia-iniziativa.md", "default_daily": 4}
+    path = tmp_path / "explicit.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    explicit = Answers.from_yaml(path)
+    init(explicit, tmp_path / "explicit-instance")
+    tools = ToolsConfig.from_yaml(tmp_path / "explicit-instance" / "config" / "brain-tools.yaml")
+    assert tools.notify is not None
+    assert tools.notify.initiative_path == "_brain/mia-iniziativa.md"

@@ -19,12 +19,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from second_brain.core.schema import SchemaError, load_schema
 from second_brain.tools.archive import ArchiveConfig
 from second_brain.tools.links import LinkConfig
 from second_brain.tools.notify import NotifyConfig
 
 Language = Literal["it", "en"]
 LANGUAGE_NAMES: dict[str, str] = {"it": "Italian", "en": "English"}
+TEMPLATES = Path(__file__).resolve().parents[3] / "templates"
 
 
 class AnswersError(RuntimeError):
@@ -61,7 +63,7 @@ class ArchiveAnswers(BaseModel):
 class NotifyAnswers(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    initiative_path: str = "_brain/initiative.md"
+    initiative_path: str | None = None
     default_daily: int = Field(default=6, ge=0)
 
 
@@ -270,10 +272,17 @@ class Answers(BaseModel):
         section = self.tools.notify
         return NotifyConfig(
             store_path=data_dir / "notifications.sqlite3",
-            initiative_path=section.initiative_path,
+            initiative_path=section.initiative_path or self._brain_page("initiative"),
             default_daily=section.default_daily,
             timezone=self.timezone,
         )
+
+    def _brain_page(self, name: str) -> str:
+        """A `_brain` page named by the schema of this brain's language."""
+        try:
+            return load_schema(TEMPLATES / "vault" / self.language).page(name)
+        except SchemaError as exc:
+            raise AnswersError(f"cannot resolve the brain page {name!r}: {exc}") from exc
 
 
 def _clock_time(value: str) -> str:

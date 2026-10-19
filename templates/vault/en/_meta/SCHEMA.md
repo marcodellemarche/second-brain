@@ -8,6 +8,8 @@ Frontmatter is always in English: `type`, `created`, `updated`, `tags`, `domain`
 
 `types` and `tags` are closed taxonomies: a new value is added here, with a change that goes through an approval. Pages under `archive/` carry `index: false` and stay out of automatic recall and out of the lint.
 
+The pages the agent keeps about itself in `_brain/` are named in `brain_pages`: code and skills use the logical names (`commitments`, `initiative`, ...), so renaming a page is a change here alone.
+
 ```yaml
 language: en
 zones:
@@ -55,4 +57,12 @@ tags:
   - people
 untrusted_zones:
   - raw
+brain_pages:
+  commitments: commitments
+  initiative: initiative
+  policy: policy
+  positions: positions
+  preferences: preferences
+  profile: profile
+  lint: lint
 ```
