@@ -80,7 +80,8 @@ memory:
 # written only through brain_tools.
 skills:
   inline_shell: false
-  external_dirs: []
+  # The product skills ship in the Hermes image, read-only.
+  external_dirs: [/opt/second-brain/skills]
   write_approval: true
   create_dir: "{{ skills_dir }}"
 
@@ -162,6 +163,10 @@ mcp_servers:
       enabled: false
     elicitation:
       enabled: false
+    # brain_tools has no prompts or resources, and the wrappers would be tools the guard must block.
+    tools:
+      prompts: false
+      resources: false
 
 platforms:
   api_server:
@@ -245,7 +250,7 @@ platforms:
           secret: "${WEBHOOK_SECRET_SCHEDULE}"
           prompt: "Scheduled task: {task}. Due {due} ({weekday})."
           toolsets: [file, skills, brain]
-          skills: [lint, open-questions]
+          skills: [lint]
         scheduled-brief:
           secret: "${WEBHOOK_SECRET_SCHEDULE}"
           prompt: "Scheduled task: {task}. Due {due} ({weekday})."

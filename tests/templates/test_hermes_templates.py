@@ -234,6 +234,11 @@ def test_the_brain_mcp_server_takes_its_token_from_the_env(config: dict[str, Any
     assert brain["headers"]["Authorization"] == "Bearer ${TOOLS_TOKEN}"
     assert brain["sampling"]["enabled"] is False
     assert brain["elicitation"]["enabled"] is False
+    assert brain["tools"] == {"prompts": False, "resources": False}
+
+
+def test_the_product_skills_load_from_the_image(config: dict[str, Any]) -> None:
+    assert config["skills"]["external_dirs"] == ["/opt/second-brain/skills"]
 
 
 def test_slack_is_commented_out_for_a_team_brain(config: dict[str, Any]) -> None:
@@ -290,7 +295,8 @@ def test_only_the_digest_of_the_scheduled_routes_is_delivered(config: dict[str, 
     assert routes["scheduled-digest"]["deliver"] == "telegram"
     assert routes["scheduled-digest"]["skills"] == ["digest"]
     # The lint writes its questions into the vault, the brief notifies through brain_tools.
-    assert routes["scheduled-lint"]["skills"] == ["lint", "open-questions"]
+    # Hermes injects only the first skill of a route, so each route names exactly one.
+    assert routes["scheduled-lint"]["skills"] == ["lint"]
     assert routes["scheduled-brief"]["skills"] == ["brief"]
     for name in ("scheduled-lint", "scheduled-brief"):
         assert "deliver" not in routes[name], name
