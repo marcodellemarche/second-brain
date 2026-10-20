@@ -276,11 +276,14 @@ def _copy_instance_skills(source: Path, instance: Path, result: InitResult) -> N
         skill = folder / "SKILL.md"
         if not skill.is_file():
             raise InitError(f"{folder.name} has no SKILL.md")
-        target = instance / SKILLS_DIR / folder.name
-        if target.exists():
+        if (TEMPLATES.parent / SKILLS_DIR / folder.name).is_dir():
             raise InitError(
                 f"the instance skill {folder.name} would replace the product skill of the same name"
             )
+        target = instance / SKILLS_DIR / folder.name
+        # An earlier run's copy has to go, or a file deleted from the instance skill would stay.
+        if target.exists():
+            shutil.rmtree(target)
         target.mkdir(parents=True)
         for path in sorted(folder.rglob("*")):
             if path.is_file() and "__pycache__" not in path.parts:

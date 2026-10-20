@@ -1153,6 +1153,37 @@ def test_an_instance_skill_lands_next_to_the_product_ones(tmp_path: Path, answer
     assert (instance / "skills" / "digest" / "SKILL.md").is_file()
 
 
+def test_a_rerun_refreshes_an_instance_skill(tmp_path: Path, answers_file: Path) -> None:
+    source = tmp_path / "own-skills"
+    folder = _skill(source, "mail")
+    answers = _with_skills(tmp_path, answers_file, source)
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    (folder / "SKILL.md").write_text(
+        "---\nname: mail\ndescription: changed\n---\n\nNew text.\n", encoding="utf-8"
+    )
+    init(answers, instance, force=True)
+
+    assert "New text." in (instance / "skills" / "mail" / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_a_rerun_drops_a_file_removed_from_an_instance_skill(tmp_path: Path, answers_file: Path) -> None:
+    source = tmp_path / "own-skills"
+    folder = _skill(source, "mail")
+    (folder / "extra.md").write_text("Gone next time.\n", encoding="utf-8")
+    answers = _with_skills(tmp_path, answers_file, source)
+    instance = tmp_path / "instance"
+    init(answers, instance)
+    assert (instance / "skills" / "mail" / "extra.md").is_file()
+
+    (folder / "extra.md").unlink()
+    init(answers, instance, force=True)
+
+    assert not (instance / "skills" / "mail" / "extra.md").exists()
+    assert (instance / "skills" / "mail" / "SKILL.md").is_file()
+
+
 def test_an_instance_skill_cannot_replace_a_product_one(tmp_path: Path, answers_file: Path) -> None:
     source = tmp_path / "own-skills"
     _skill(source, "digest")
