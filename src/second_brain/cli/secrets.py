@@ -43,6 +43,9 @@ TERMINAL_HOST_PUBKEY = "terminal_host_key.pub"
 # Names of the values that come from a service.
 MODEL_API_KEY = "model_api_key"
 CALENDAR_TOKEN = "calendar_token"
+# The Gmail app password and the address it belongs to: only the mail sidecar reads them.
+MAIL_USER = "mail_user"
+MAIL_APP_PASSWORD = "mail_app_password"
 
 # The generated values, in the order the README lists them.
 GENERATED = (
@@ -66,6 +69,16 @@ EXTERNAL: tuple[tuple[str, str], ...] = (
         "The Google credential for the calendars: the service-account JSON key when the calendar "
         "section says `service_account: true`, otherwise an OAuth access token, which expires "
         "after an hour and has to be replaced by hand.",
+    ),
+    (
+        MAIL_USER,
+        "The Gmail address the mail sidecar reads, whole (`someone@example.com`). Only for a brain "
+        "with a `tools.mail` section.",
+    ),
+    (
+        MAIL_APP_PASSWORD,
+        "A Google app password for that address, not the account password. Create one at "
+        "myaccount.google.com/apppasswords; revoke it there when it is no longer needed.",
     ),
     (
         TERMINAL_SSH_KEY,
@@ -100,7 +113,11 @@ class SecretsPlan:
 
 
 def plan(
-    *, channel: str, calendar: bool, instance_credentials: Mapping[str, str] | None = None
+    *,
+    channel: str,
+    calendar: bool,
+    mail: bool = False,
+    instance_credentials: Mapping[str, str] | None = None,
 ) -> SecretsPlan:
     """Every secret this instance needs. A Slack brain has no Telegram token and the other way round.
 
@@ -116,6 +133,8 @@ def plan(
         external.append("slack_app_token")
     if calendar:
         external.append(CALENDAR_TOKEN)
+    if mail:
+        external += [MAIL_USER, MAIL_APP_PASSWORD]
     instance_tools = dict(instance_credentials or {})
     # One file per name: two instance tools sharing a service share its key, a name that is
     # already a secret of this brain is that same file, and a generated one is already there.

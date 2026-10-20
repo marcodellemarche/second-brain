@@ -19,6 +19,11 @@ coredump_dir /tmp
 shutdown_lifetime 3 seconds
 
 acl SSL_ports port 443
+{% if has_mail %}
+# IMAP is 993, not 443, so a brain with a mail sidecar opens one more port to one host: the tunnel
+# is still a CONNECT through this proxy, and `allowed_egress` still decides which host.
+acl SSL_ports port 993
+{% endif %}
 acl CONNECT method CONNECT
 # No plain HTTP at all: everything allowed here is an HTTPS endpoint.
 http_access deny !CONNECT

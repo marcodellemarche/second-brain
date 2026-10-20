@@ -44,6 +44,11 @@ VALUES: dict[str, Any] = {
     "brain_tools_secrets": ["tools_token", "outbox_secret", "calendar_token"],
     # Empty by default: a vault only needs a shared group when a second service writes it.
     "vault_group_gids": [],
+    # The two optional services of an instance: off unless the answers ask for them.
+    "has_tts": False,
+    "tts_image": "second_brain/tts:0.1.0",
+    "has_mail": False,
+    "mail_rules_mount": [],
 }
 
 
@@ -494,3 +499,60 @@ def test_the_brain_services_join_the_vault_group_when_one_is_set() -> None:
         answers.model_copy(update={"vault_group_gid": None}), Registry(), {SEARXNG_KEY: "x"}
     )
     assert render_text(block, without).count("group_add") == 0
+
+
+# --- the two instance services --------------------------------------------------------------
+
+
+TTS = {
+    "has_tts": True,
+    "tts_image": "ghcr.io/example/second-brain/tts:0.1.0",
+    "has_mail": True,
+    "mail_rules_mount": ["/srv/brain/mail-rules.json:/data/mail/rules.json:ro"],
+}
+
+
+def test_the_instance_services_are_absent_by_default(services: dict[str, Any]) -> None:
+    assert "tts-worker" not in services
+    assert "mail" not in services
+
+
+def test_the_audio_worker_has_no_way_out_and_sees_the_queue() -> None:
+    worker = rendered_services(**TTS)["tts-worker"]
+    assert worker["networks"] == ["internal"]
+    assert "data:/data" in _mounts(worker)
+    assert any(mount.endswith(f"{MEDIA}:{MEDIA}") for mount in _mounts(worker))
+    assert "healthcheck" in worker
+    # The synthesis peaks around 4 GB with the checkpoint in mmap.
+    assert worker["mem_limit"] == "5g"
+
+
+def test_the_mail_sidecar_goes_out_through_the_proxy_only() -> None:
+    mail = rendered_services(**TTS)["mail"]
+    assert "egress-net" in mail["networks"]
+    assert mail["environment"]["HTTPS_PROXY"] == "http://egress:3128"
+    assert mail["secrets"] == ["mail_user", "mail_app_password", "webhook_ingest"]
+    assert "/srv/brain/mail-rules.json:/data/mail/rules.json:ro" in mail["volumes"]
+
+
+def test_the_mail_sidecar_without_a_rules_file_mounts_none() -> None:
+    mail = rendered_services(**{**TTS, "mail_rules_mount": []})["mail"]
+    assert not any("rules.json" in volume for volume in mail["volumes"])
+
+
+def test_the_two_services_get_their_secret_entries_only_when_on() -> None:
+    plain = yaml.safe_load(render(DEPLOY / "compose.yaml.j2", VALUES))
+    assert "mail_user" not in plain["secrets"]
+    with_mail = yaml.safe_load(render(DEPLOY / "compose.yaml.j2", {**VALUES, **TTS}))
+    assert with_mail["secrets"]["mail_user"] == {"file": "./secrets/mail_user"}
+    assert with_mail["secrets"]["mail_app_password"] == {"file": "./secrets/mail_app_password"}
+
+
+def test_the_proxy_opens_imap_only_for_a_brain_with_mail() -> None:
+    assert "port 993" not in render(DEPLOY / "squid.conf.j2", VALUES)
+    with_mail = render(DEPLOY / "squid.conf.j2", {**VALUES, **TTS})
+    assert "acl SSL_ports port 993" in with_mail
+    # The allowlist still decides which host, and the deny for everything else is still last.
+    allowed = with_mail.index("http_access allow CONNECT allowed_egress")
+    assert with_mail.index("acl SSL_ports port 993") < allowed
+    assert with_mail.strip().endswith("http_access deny all")

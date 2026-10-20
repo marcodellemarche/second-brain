@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from second_brain.cli.answers import Answers, AnswersError
+from second_brain.cli.answers import MAIL_RULES_IN_CONTAINER, Answers, AnswersError
 from second_brain.cli.render import render_template
 from second_brain.cli.secrets import (
     CALENDAR_TOKEN,
@@ -66,6 +66,7 @@ HERMES_WEBHOOK_BASE_URL = "http://hermes:8644/webhooks"
 SCHEDULE_STATE_FILE = DATA_IN_CONTAINER / "scheduler.json"
 DOCKER_SOCKET = Path("/var/run/docker.sock")
 SEARXNG_IMAGE = "searxng/searxng:2026.10.19-81371861f"
+TTS_IMAGE = "second-brain/tts:0.1.0"
 
 SCHEDULE_ROUTES: dict[str, str] = {
     "digest": "scheduled-digest",
@@ -170,8 +171,28 @@ def tools_config(answers: Answers) -> ToolsConfig:
         notify=answers.notify_config(DATA_IN_CONTAINER),
         outbox=outbox_config(answers),
         staging=staging_config(answers),
-        extensions=tools.extensions,
+        extensions={**tools.extensions, **instance_sections(answers)},
     )
+
+
+def instance_sections(answers: Answers) -> dict[str, dict[str, Any]]:
+    """The `extensions.personal` blocks the core knows how to fill, merged under the answers.
+
+    The tts and mail blocks are not free-form like the rest of `extensions`: their paths are the
+    ones the containers actually have, so a typo in the answers file cannot point a tool at a
+    folder nobody mounted. A brain without the block gets no tool.
+    """
+    sections: dict[str, dict[str, Any]] = {}
+    personal: dict[str, Any] = {}
+    tts = answers.tts_config()
+    if tts is not None:
+        personal["tts"] = tts
+    mail = answers.mail_config()
+    if mail is not None:
+        personal["mail"] = mail
+    if personal:
+        sections["personal"] = {**personal, **answers.tools.extensions.get("personal", {})}
+    return sections
 
 
 def export_registry(config: ToolsConfig) -> Registry:
@@ -297,6 +318,10 @@ def egress_hosts(answers: Answers, registry: Registry) -> list[str]:
     """Every host the egress proxy allows: the model, the chat API, and the enabled tools."""
     hosts: list[str] = [answers.endpoint_host]
     hosts += list(SLACK_HOSTS if answers.slack is not None else TELEGRAM_HOSTS)
+    # The mail sidecar reads IMAP through the proxy, so its host has to be on the allowlist even
+    # though no tool declares it: the sidecar is not a tool.
+    if answers.tools.mail is not None:
+        hosts.append(answers.tools.mail.imap_host)
     for spec in registry.specs():
         hosts += list(spec.hosts)
     ordered: dict[str, None] = {}
@@ -365,6 +390,26 @@ def instance_credentials(registry: Registry) -> dict[str, str]:
     return credentials
 
 
+def mail_rules_mount(answers: Answers) -> list[str]:
+    """The host filter file, mounted where the sidecar expects it, or nothing."""
+    path = mail_rules_path(answers)
+    return [f"{path}:{MAIL_RULES_IN_CONTAINER}:ro"] if path is not None else []
+
+
+def tts_image(answers: Answers) -> str:
+    """The image that synthesises the audio: the one the answers name, else the product default."""
+    if answers.tools.tts is not None and answers.tools.tts.image:
+        return answers.tools.tts.image
+    return TTS_IMAGE
+
+
+def mail_rules_path(answers: Answers) -> Path | None:
+    """The filter the mail sidecar reads, or None when this brain has no mail section."""
+    if answers.tools.mail is None:
+        return None
+    return answers.tools.mail.rules_file
+
+
 def optional_secrets(answers: Answers) -> list[str]:
     """The secret files that exist only when their tool group is on."""
     return [CALENDAR_TOKEN] if answers.tools.calendar is not None else []
@@ -429,6 +474,14 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "channel": answers.channel,
         # A template decides between the Telegram block and the Slack one with this flag.
         "is_slack": answers.slack is not None,
+        # The long-audio worker and the mail sidecar are services of their own, so the compose file
+        # decides whether to render them and the images they run.
+        "has_tts": answers.tools.tts is not None,
+        "tts_image": tts_image(answers),
+        "has_mail": answers.tools.mail is not None,
+        # The filter file, when the answers name one: a list with zero or one entry, because the
+        # renderer has no nested conditional block.
+        "mail_rules_mount": mail_rules_mount(answers),
         "deliver_platform": answers.channel.lower(),
         "example_note_path": f"{schema.folder('knowledge')}/example.md",
         "egress_hosts": egress_hosts(answers, registry),

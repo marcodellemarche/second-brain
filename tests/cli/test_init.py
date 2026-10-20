@@ -6,6 +6,7 @@ instance directory that already has something in it, and a vault that already ha
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
@@ -1018,3 +1019,83 @@ def test_owners_sh_leaves_a_shared_vault_with_its_service(tmp_path: Path, answer
     script = (instance / "owners.sh").read_text(encoding="utf-8")
     assert "chgrp -R 1003" in script
     assert f"chown -R 23002:23002 '{data['vault_dir']}'" not in script
+
+
+# --- the audio worker and the mail sidecar ---------------------------------------------------
+
+
+def _with_services(tmp_path: Path, answers_file: Path, **tools: object) -> Answers:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["tools"].update(tools)
+    path = tmp_path / "services.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return Answers.from_yaml(path)
+
+
+def test_a_brain_without_the_two_services_renders_neither(tmp_path: Path, answers: Answers) -> None:
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert "tts-worker" not in compose["services"]
+    assert "mail" not in compose["services"]
+    assert not (instance / "config" / "tts-worker.json").exists()
+    assert not (instance / "config" / "mail.json").exists()
+
+
+def test_the_audio_worker_gets_its_config_from_the_answers(tmp_path: Path, answers_file: Path) -> None:
+    answers = _with_services(tmp_path, answers_file, tts={"max_chars": 42_000})
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert "tts-worker" in compose["services"]
+    worker = json.loads((instance / "config" / "tts-worker.json").read_text(encoding="utf-8"))
+    assert worker["queue_dir"] == "/data/tts/queue"
+    assert worker["output_dir"] == f"{answers.media_dir}/tts"
+    tools = yaml.safe_load((instance / "config" / "brain-tools.yaml").read_text(encoding="utf-8"))
+    assert tools["extensions"]["personal"]["tts"]["max_chars"] == 42_000
+    assert tools["extensions"]["personal"]["tts"]["vault_dir"] == "/vault"
+
+
+def test_the_mail_sidecar_gets_its_config_and_its_secrets(tmp_path: Path, answers_file: Path) -> None:
+    answers = _with_services(
+        tmp_path, answers_file, mail={"quiet_hours": "22:00-07:30", "imap_host": "imap.example.test"}
+    )
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert compose["services"]["mail"]["secrets"] == ["mail_user", "mail_app_password", "webhook_ingest"]
+    config = json.loads((instance / "config" / "mail.json").read_text(encoding="utf-8"))
+    assert config["staging_dir"] == "/data/mail/inbox"
+    assert config["imap_host"] == "imap.example.test"
+    assert config["quiet_hours"] == "22:00-07:30"
+    # The HMAC secret is a path, never a value.
+    assert config["webhook_secret_file"] == "/run/secrets/webhook_ingest"
+    assert (instance / "secrets" / "mail_user").is_file()
+    assert (instance / "secrets" / "mail_app_password").is_file()
+    readme = (instance / "secrets" / "README.md").read_text(encoding="utf-8")
+    assert "mail_app_password" in readme
+    squid = (instance / "config" / "squid.conf").read_text(encoding="utf-8")
+    assert "dstdomain imap.example.test" in squid
+    assert "acl SSL_ports port 993" in squid
+
+
+def test_the_mail_tools_read_the_same_staging_folder_the_sidecar_writes(
+    tmp_path: Path, answers_file: Path
+) -> None:
+    answers = _with_services(tmp_path, answers_file, mail={})
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    tools = yaml.safe_load((instance / "config" / "brain-tools.yaml").read_text(encoding="utf-8"))
+    sidecar = json.loads((instance / "config" / "mail.json").read_text(encoding="utf-8"))
+    assert tools["extensions"]["personal"]["mail"]["staging_dir"] == sidecar["staging_dir"]
+
+
+def test_a_mail_section_with_a_bad_host_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError):
+        _with_services(tmp_path, answers_file, mail={"imap_host": "not a host"})
+    with pytest.raises(AnswersError):
+        _with_services(tmp_path, answers_file, mail={"quiet_hours": "22:00"})

@@ -339,6 +339,13 @@ def _files_check(ctx: _Instance) -> CheckResult:
     expected += [f"{SECRETS_DIR}/{secret}" for secret in GENERATED]
     expected += [f"{SECRETS_DIR}/{secret}" for secret in to_fill]
     expected += [f"{SECRETS_DIR}/README.md", f"{SECRETS_DIR}/hermes.env"]
+    # The settings of the two services an instance adds, when compose declares them: a brain
+    # without the audio worker or the mail sidecar has neither file.
+    services = _declared_services(ctx.root)
+    if "tts-worker" in services:
+        expected.append("config/tts-worker.json")
+    if "mail" in services:
+        expected.append("config/mail.json")
     missing = [relative for relative in expected if not (ctx.root / relative).is_file()]
     if readme_error is not None:
         return _fail(name, readme_error)

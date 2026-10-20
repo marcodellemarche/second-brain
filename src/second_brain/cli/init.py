@@ -13,6 +13,7 @@ every run, `--force` or not: they are product code, and compose mounts them read
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -23,6 +24,7 @@ import yaml
 
 from second_brain.cli.answers import Answers
 from second_brain.cli.config import (
+    SECRETS_IN_CONTAINER,
     TEMPLATES,
     capture_dir,
     export_registry,
@@ -100,6 +102,7 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
             plan(
                 channel=answers.channel,
                 calendar=answers.tools.calendar is not None,
+                mail=answers.tools.mail is not None,
                 instance_credentials=credentials,
             ),
         )
@@ -114,6 +117,7 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
         "config/brain-tools.yaml": _yaml(config.model_dump(mode="json", exclude_none=True)),
         "config/brain-guard.yaml": _yaml(_guard_dict(guard_config(answers, registry))),
         "config/sidecars.yaml": _yaml(sidecars_config(answers).model_dump(mode="json", exclude_none=True)),
+        **_instance_configs(answers),
         OWNERS_SCRIPT: _owners_script(answers, credentials),
         "README.md": _readme(answers, instance),
     }
@@ -131,6 +135,25 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
     if not result.vault_skipped:
         _copy_vault(answers, result)
     return result
+
+
+def _instance_configs(answers: Answers) -> dict[str, str]:
+    """The settings files of the services an instance adds: the audio worker and the mail sidecar.
+
+    Only the ones this brain has. The paths in them are the containers' own, so they are rendered
+    from the answers and never typed by hand.
+    """
+    files: dict[str, str] = {}
+    worker = answers.tts_worker_config()
+    if worker is not None:
+        files["config/tts-worker.json"] = _json(worker)
+    if answers.tools.mail is not None:
+        files["config/mail.json"] = _json(answers.mail_sidecar_config(SECRETS_IN_CONTAINER / WEBHOOK_INGEST))
+    return files
+
+
+def _json(values: dict[str, object]) -> str:
+    return json.dumps(values, indent=2, ensure_ascii=False) + "\n"
 
 
 def _ensure_host_dirs(answers: Answers) -> None:

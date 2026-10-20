@@ -29,6 +29,19 @@ Language = Literal["it", "en"]
 LANGUAGE_NAMES: dict[str, str] = {"it": "Italian", "en": "English"}
 TEMPLATES = Path(__file__).resolve().parents[3] / "templates"
 RESERVED_CONTAINER_PATHS: tuple[Path, ...] = (Path("/vault"), Path("/data"), Path("/run/secrets"))
+VAULT_IN_CONTAINER = Path("/vault")
+DATA_IN_CONTAINER = Path("/data")
+HERMES_WEBHOOK_BASE_URL = "http://hermes:8644/webhooks"
+# The long-audio queue and work folders: under the data volume, which brain_tools and the audio
+# worker share, so the tool writes a request and the worker picks it up without a host folder.
+TTS_QUEUE_IN_CONTAINER = DATA_IN_CONTAINER / "tts" / "queue"
+TTS_WORK_IN_CONTAINER = DATA_IN_CONTAINER / "tts" / "work"
+TTS_OUTPUT_FOLDER = "tts"
+# The mail sidecar stages under the data volume and reads its filter from there.
+MAIL_DIR_IN_CONTAINER = DATA_IN_CONTAINER / "mail"
+MAIL_STAGING_IN_CONTAINER = MAIL_DIR_IN_CONTAINER / "inbox"
+MAIL_STATE_IN_CONTAINER = MAIL_DIR_IN_CONTAINER / "state.json"
+MAIL_RULES_IN_CONTAINER = MAIL_DIR_IN_CONTAINER / "rules.json"
 
 
 class AnswersError(RuntimeError):
@@ -81,6 +94,93 @@ class LinksAnswers(BaseModel):
     base_url: str = Field(description="Nextcloud base URL, https only.")
     vault_folder: str = "Vault"
     archive_folder: str = "Archive"
+
+
+class TtsAnswers(BaseModel):
+    """The long-audio section: where the queue and the finished files live, inside the brain."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    image: str | None = Field(
+        default=None,
+        description="Image that synthesises the audio, when it is not the default second-brain one.",
+    )
+    voices: list[str] = Field(
+        default_factory=lambda: ["claribel", "damien"],
+        description="The voices the tool accepts, by name. Must match the ones the image knows.",
+    )
+    max_chars: int = Field(default=150_000, ge=1_000)
+
+    @field_validator("image")
+    @classmethod
+    def _image_reference(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text or any(character.isspace() for character in text):
+            raise ValueError(f"not an image reference: {value!r}")
+        return text
+
+    @field_validator("voices")
+    @classmethod
+    def _voice_names(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value if item.strip()]
+        if not cleaned:
+            raise ValueError("at least one voice is needed")
+        for name in cleaned:
+            if not re.fullmatch(r"[a-z][a-z0-9_]*", name):
+                raise ValueError(f"not a voice name: {name!r}")
+        return cleaned
+
+
+class MailAnswers(BaseModel):
+    """The Gmail sidecar: it stages the filtered mail, the brain writes the notes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    imap_host: str = Field(
+        default="imap.gmail.com",
+        description="The IMAP server the sidecar reads. It is also the one host the egress "
+        "allowlist opens port 993 to.",
+    )
+    rules_file: Path | None = Field(
+        default=None,
+        description="The filter, as a JSON file on the host. Left out, `mail-rules.json` next to "
+        "the answers file is used when it is there.",
+    )
+    interval_seconds: float = Field(default=900.0, gt=0)
+    quiet_hours: str = Field(
+        default="",
+        description='A range like "22:00-07:30" where the sidecar does not run, empty for always.',
+    )
+    body_max: int = Field(default=8000, ge=1_000)
+
+    @field_validator("imap_host")
+    @classmethod
+    def _imap_host(cls, value: str) -> str:
+        host = value.strip().lower()
+        if not re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+", host):
+            raise ValueError(f"not a host name: {value!r}")
+        return host
+
+    @field_validator("rules_file")
+    @classmethod
+    def _rules_path(cls, value: Path | None) -> Path | None:
+        return None if value is None else _absolute_path(value)
+
+    @field_validator("quiet_hours")
+    @classmethod
+    def _quiet_range(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            return text
+        try:
+            start, _, end = text.partition("-")
+            _clock_time(start)
+            _clock_time(end)
+        except ValueError as exc:
+            raise ValueError(f"quiet_hours must be HH:MM-HH:MM, got {value!r}: {exc}") from None
+        return text
 
 
 class ScheduleAnswers(BaseModel):
@@ -160,6 +260,8 @@ class ToolsAnswers(BaseModel):
     archive: ArchiveAnswers | None = None
     jobs: bool = False
     notify: NotifyAnswers | None = None
+    tts: TtsAnswers | None = None
+    mail: MailAnswers | None = None
     # Entry point name to that instance package's settings. Free-form, but the same rule as the
     # tools config applies: a secret is a file, never a value in here.
     extensions: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -379,6 +481,61 @@ class Answers(BaseModel):
             default_daily=section.default_daily,
             timezone=self.timezone,
         )
+
+    def tts_config(self) -> dict[str, Any] | None:
+        """The `tts` block the instance tools read: the queue the tool writes and the vault to read.
+
+        The queue lives under the brain's own data volume, the output under the media folder, so
+        the audio lands where the chat can attach it and nothing has to be shared with the host.
+        """
+        if self.tools.tts is None:
+            return None
+        section = self.tools.tts
+        return {
+            "queue_dir": str(TTS_QUEUE_IN_CONTAINER),
+            "vault_dir": str(VAULT_IN_CONTAINER),
+            "max_chars": section.max_chars,
+            "voices": section.voices,
+            "timezone": self.timezone,
+        }
+
+    def mail_config(self) -> dict[str, Any] | None:
+        """The `mail` block the instance tools read: where the sidecar stages and archives."""
+        if self.tools.mail is None:
+            return None
+        return {
+            "staging_dir": str(MAIL_STAGING_IN_CONTAINER),
+            "list_limit": 20,
+        }
+
+    def mail_sidecar_config(self, secret_file: Path) -> dict[str, Any]:
+        """The sidecar's own settings file, rendered into the instance: no secret value in here."""
+        assert self.tools.mail is not None
+        section = self.tools.mail
+        return {
+            "staging_dir": str(MAIL_STAGING_IN_CONTAINER),
+            "state_file": str(MAIL_STATE_IN_CONTAINER),
+            "imap_host": section.imap_host,
+            "rules_file": str(MAIL_RULES_IN_CONTAINER),
+            "interval_seconds": section.interval_seconds,
+            "quiet_hours": section.quiet_hours,
+            "timezone": self.timezone,
+            "webhook_url": HERMES_WEBHOOK_BASE_URL,
+            "webhook_secret_file": str(secret_file),
+        }
+
+    def tts_worker_config(self) -> dict[str, Any] | None:
+        """The audio worker's settings: the same queue, the work folders under data, the media out."""
+        if self.tools.tts is None:
+            return None
+        return {
+            "queue_dir": str(TTS_QUEUE_IN_CONTAINER),
+            "work_dir": str(TTS_WORK_IN_CONTAINER),
+            "output_dir": str(self.media_dir / TTS_OUTPUT_FOLDER),
+            "max_jobs": 1,
+            "keep_days": 14,
+            "timezone": self.timezone,
+        }
 
     def _brain_page(self, name: str) -> str:
         """A `_brain` page named by the schema of this brain's language."""
