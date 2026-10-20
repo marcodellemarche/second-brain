@@ -23,6 +23,7 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `tools` | all off | Which optional tool groups exist. See below. |
 | `job_kinds` | none | Background job kinds the model may queue. See below. |
 | `brain_tools_mounts` | `[]` | `host` and `container` of a folder an instance tool reads. Both absolute, no `..`, always mounted read-only, and not `/vault`, `/data`, `/run/secrets` or a path inside them. |
+| `staging` | none | `host_dir`, an absolute host folder, and `poll_seconds` (`60`). Where the owner moves candidates from another brain: brain_tools imports each text note into the inbox as `type: capture` with `trust: untrusted`, refuses anything that looks like a secret, and moves the file to `done/` or `failed/`. Mounted read-write at `/staging`, only into brain-tools. |
 | `schedule.digest` | `["08:00", "20:00"]` | Local times of the digest, one entry per time. |
 | `schedule.lint` | `"03:30"` | Local time of the nightly lint. |
 | `schedule.brief` | `["07:00", "13:00"]` | Local times of the brief before a call. |
@@ -188,6 +189,7 @@ No file in `secrets/` is written twice, not by a second `sb init` and not with `
 - `jobs`: `store_path` of the queue file and `kinds`, each with `route`, `description` and `web`.
 - `notify`: `store_path`, `initiative_path`, `default_daily`, `timezone`.
 - `outbox`: `dir`, `secret_file` and `research_followup_kind`, rendered only when there is a kind without web access.
+- `staging`: `dir` and `poll_seconds`, rendered only when the answers have a `staging` section.
 
 A field whose name is one of `token`, `access_token`, `refresh_token`, `client_secret`, `secret`, `password`, `api_key` is refused anywhere in the file. The way to give a tool a secret is a `*_file` field pointing at the file under `/run/secrets`.
 

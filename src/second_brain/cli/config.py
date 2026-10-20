@@ -54,11 +54,13 @@ from second_brain.tools.export import export_guard_classes
 from second_brain.tools.jobs import JobKind
 from second_brain.tools.outbox import OutboxConfig
 from second_brain.tools.registry import Registry
+from second_brain.tools.staging import StagingConfig
 from second_brain.tools.vault import VaultConfig
 
 VAULT_IN_CONTAINER = Path("/vault")
 DATA_IN_CONTAINER = Path("/data")
 SECRETS_IN_CONTAINER = Path("/run/secrets")
+STAGING_IN_CONTAINER = Path("/staging")
 TEMPLATES = Path(__file__).resolve().parents[3] / "templates"
 HERMES_WEBHOOK_BASE_URL = "http://hermes:8644/webhooks"
 SCHEDULE_STATE_FILE = DATA_IN_CONTAINER / "scheduler.json"
@@ -122,6 +124,13 @@ def outbox_config(answers: Answers) -> OutboxConfig | None:
     )
 
 
+def staging_config(answers: Answers) -> StagingConfig | None:
+    """Where candidates from another brain land, or None when this brain takes none."""
+    if answers.staging is None:
+        return None
+    return StagingConfig(dir=STAGING_IN_CONTAINER, poll_seconds=answers.staging.poll_seconds)
+
+
 def tools_config(answers: Answers) -> ToolsConfig:
     """The tools config this instance runs with. Secrets are paths, never values."""
     tools = answers.tools
@@ -154,6 +163,7 @@ def tools_config(answers: Answers) -> ToolsConfig:
         jobs=jobs_config(answers),
         notify=answers.notify_config(DATA_IN_CONTAINER),
         outbox=outbox_config(answers),
+        staging=staging_config(answers),
         extensions=tools.extensions,
     )
 
@@ -331,6 +341,9 @@ def brain_tools_extra_volumes(answers: Answers) -> list[str]:
     if archive is not None:
         volumes.append(f"{archive.root}:{archive.root}")
     volumes.extend(f"{mount.host}:{mount.container}:ro" for mount in answers.brain_tools_mounts)
+    if answers.staging is not None:
+        # Read-write: a file that was imported is moved to done/, a refused one to failed/.
+        volumes.append(f"{answers.staging.host_dir}:{STAGING_IN_CONTAINER}")
     return volumes
 
 

@@ -915,6 +915,32 @@ def test_an_instance_mount_lands_on_brain_tools_read_only(tmp_path: Path, answer
     assert "/srv/cinema:/srv/cinema:ro" in compose["services"]["brain-tools"]["volumes"]
 
 
+def test_a_staging_folder_lands_on_brain_tools_read_write(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(
+        tmp_path,
+        answers_file,
+        staging={"host_dir": "/srv/brain/staging"},
+    )
+    instance = tmp_path / "instance"
+    init(answers, instance)
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    volumes = compose["services"]["brain-tools"]["volumes"]
+    # Read-write, because the importer moves each file to done/ or failed/ once it is read.
+    assert "/srv/brain/staging:/staging" in volumes
+    tools = yaml.safe_load((instance / "config/brain-tools.yaml").read_text(encoding="utf-8"))
+    assert tools["staging"] == {"dir": "/staging", "poll_seconds": 60.0}
+
+
+def test_a_brain_without_a_staging_folder_has_no_importer(instance: Path) -> None:
+    tools = yaml.safe_load((instance / "config/brain-tools.yaml").read_text(encoding="utf-8"))
+    assert "staging" not in tools
+
+
+def test_a_relative_staging_folder_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError, match="absolute"):
+        _answers_with(tmp_path, answers_file, staging={"host_dir": "staging"})
+
+
 def test_a_relative_mount_path_is_refused(tmp_path: Path, answers_file: Path) -> None:
     with pytest.raises(AnswersError, match="absolute"):
         _answers_with(

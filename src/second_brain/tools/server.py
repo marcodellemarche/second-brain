@@ -36,6 +36,7 @@ from second_brain.tools.outbox import (
     Receipt,
 )
 from second_brain.tools.registry import Registry
+from second_brain.tools.staging import StagingImporter
 from second_brain.tools.vault import Provenance, Vault, VaultError
 
 log = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ log = logging.getLogger(__name__)
 INTEGRITY_VALUES: tuple[str, ...] = ("trusted", "untrusted")
 
 OUTBOX_IMPORT_SECONDS = 30.0
+STAGING_IMPORT_SECONDS = 60.0
 
 ASGIApp = Callable[..., Awaitable[None]]
 
@@ -313,6 +315,9 @@ def main() -> None:
         start_outbox_timer(importer, OUTBOX_IMPORT_SECONDS)
     elif config.outbox is not None:
         log.warning("outbox configured without a job queue: results cannot be checked, not serving it")
+    if config.staging is not None:
+        importer = config.staging.importer(vault, load_schema(vault.root))
+        start_staging_timer(importer, config.staging.poll_seconds or STAGING_IMPORT_SECONDS)
     log.info("brain_tools serving %d tools on %s:%d", len(registry.specs()), host, port)
     uvicorn.run(build_app(registry, token, outbox), host=host, port=port, log_level="info")
 
@@ -357,6 +362,36 @@ def import_outbox_once(importer: OutboxImporter) -> int:
         else:
             log.warning("did not import %s for job %s: %s", result.source, result.job_id, result.error)
     return imported
+
+
+def import_staging_once(importer: StagingImporter) -> int:
+    """One tick of the staging importer. A failure is logged, never raised."""
+    try:
+        results = importer.sweep()
+    except Exception:
+        log.exception("could not sweep the staging folder")
+        return 0
+    imported = 0
+    for result in results:
+        if result.ok:
+            imported += 1
+            log.info("imported %s as %s", result.source, result.note)
+        else:
+            log.warning("did not import %s: %s", result.source, result.error)
+    return imported
+
+
+def start_staging_timer(importer: StagingImporter, seconds: float) -> threading.Thread:
+    """Import the candidates in the background: brain_tools is the only writer of the vault."""
+
+    def loop() -> None:
+        while True:
+            time.sleep(seconds)
+            import_staging_once(importer)
+
+    thread = threading.Thread(target=loop, name="brain_tools-staging-import", daemon=True)
+    thread.start()
+    return thread
 
 
 def start_outbox_timer(importer: OutboxImporter, seconds: float) -> threading.Thread:
