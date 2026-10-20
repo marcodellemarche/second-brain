@@ -755,8 +755,12 @@ def _team_domains_check(ctx: _Instance) -> CheckResult:
     domains = list(router.rules.team_domains) if router is not None else []
     if not domains:
         return _pass(name, "no team domain is set, so every call stays personal")
-    # There is no team brain to route a call to yet, so a domain here loses the call instead of
-    # sending it anywhere.
+    if ctx.guard is None:
+        return _fail(name, ctx.guard_error or "the guard config is not readable")
+    if ctx.guard.shape == "team":
+        # This brain is the team brain: a call it recognises as a team call is written here, so the
+        # domains are how it tells its own meetings from a 1:1.
+        return _pass(name, f"{', '.join(domains)} is the team, and this is the team brain")
     return _fail(
         name,
         "team_domains is set but this brain has no team brain to route to: team calls would be lost"

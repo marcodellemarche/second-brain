@@ -247,6 +247,7 @@ def guard_config(answers: Answers, registry: Registry) -> GuardConfig:
         hermes_config_path="/etc/hermes/config.yaml",
         private_prefixes=(schema.folder("_brain"), schema.folder("documents")),
         untrusted_prefixes=(schema.folder("raw"),),
+        shape=answers.shape,
         media_dir=str(answers.media_dir),
         mcp_tools=export_guard_classes(registry),
         admin_senders=(answers.owner_id,),

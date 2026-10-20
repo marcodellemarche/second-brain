@@ -49,6 +49,9 @@ class GuardConfig(BaseModel):
     policy: PolicyConfig = Field(default_factory=PolicyConfig)
     private_prefixes: tuple[str, ...] = ()
     untrusted_prefixes: tuple[str, ...] = ()
+    # Which vault this guard watches. A team brain is the destination of its own team calls, so the
+    # call router's team_domains mean something there and nothing in a personal brain.
+    shape: Literal["personal", "team"] = "personal"
     media_dir: str | None = None
     mcp_tools: dict[str, McpToolPolicy] = Field(default_factory=dict)
     admin_senders: tuple[str, ...] = ()

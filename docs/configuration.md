@@ -28,7 +28,7 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `schedule.lint` | `"03:30"` | Local time of the nightly lint. |
 | `schedule.brief` | `["07:00", "13:00"]` | Local times of the brief before a call. |
 | `calls.capture_dir` | the inbox calls folder | Vault-relative folder the call router watches. |
-| `calls.team_domains` | `[]` | Email domains that make a call a team call. |
+| `calls.team_domains` | `[]` | Email domains that make a call a team call. `sb check` refuses them in a `personal` brain, where there is nowhere to route them, and expects them in a `team` one, which is where those calls land. |
 | `calls.personal_markers` | `[]` | Strings in the event or the domain that keep a call personal. |
 
 Every time in `schedule` is `HH:MM`, 24 hours, and is validated before anything is written.

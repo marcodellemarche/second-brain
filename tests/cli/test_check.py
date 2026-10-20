@@ -553,6 +553,24 @@ def test_a_team_domain_fails(instance: Path) -> None:
     assert "team calls would be lost" in reason
 
 
+def test_a_team_brain_may_name_its_own_team_domains(tmp_path: Path) -> None:
+    """A team brain is where its team calls go, so the domains are how it tells them from a 1:1."""
+    data = yaml.safe_load(SAMPLE.read_text(encoding="utf-8"))
+    data["vault_dir"] = str(tmp_path / "vault")
+    data["media_dir"] = str(tmp_path / "media")
+    data["archive_dir"] = str(tmp_path / "archive")
+    data["shape"] = "team"
+    data["instance_name"] = "brain-team"
+    data["calls"] = {"team_domains": ["example.com"]}
+    path = tmp_path / "team.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    directory = tmp_path / "team-instance"
+    init(Answers.from_yaml(path), directory)
+    status, reason = _status(directory, "team_domains")
+    assert status == PASS, reason
+    assert "example.com" in reason
+
+
 def test_a_scheduled_route_that_reaches_the_web_fails(instance: Path) -> None:
     _edit_yaml(
         instance / "config/hermes/config.yaml",
