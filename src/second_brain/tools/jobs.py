@@ -20,7 +20,7 @@ between the claim and the send) is reclaimed and counted as a used attempt. Enqu
 kind with the same canonical payload while a job is still queued, running or dispatched returns
 that job's id, so a model that asks twice does not start two runs.
 
-Error codes of the tools: `unknown_kind` and `wrong_tool`.
+Error codes of the tools: `unknown_kind`, `wrong_tool` and `bad_note_path`.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -174,8 +174,8 @@ class JobEnqueueParams(BaseModel):
     )
     note_path: str | None = Field(
         default=None,
-        description="Vault-relative path of the note the result goes into, for example "
-        "'ideas/foo.md'. Omit to let the run choose.",
+        description="Vault-relative path of the note the result goes into: a note inside a vault "
+        "zone, e.g. 'knowledge/x.md'. Omit to let the run choose.",
     )
 
 
@@ -426,11 +426,23 @@ def _refused(exc: JobError) -> dict[str, Any]:
     return {"ok": False, "code": exc.code, "message": exc.message}
 
 
+def _check_note_folder(note_path: str, note_folders: Sequence[str]) -> None:
+    """Refuse a note path whose first segment is no zone of this vault.
+
+    The job runner finishes a job when its note path exists, so a path in a folder nothing writes
+    to leaves the job hanging instead of failing it.
+    """
+    head = note_path.split("/", 1)[0]
+    if head not in note_folders:
+        raise JobError("bad_note_path", f"note_path must be inside one of: {', '.join(note_folders)}")
+
+
 def _enqueue(
     store: JobStore,
     accepted: Mapping[str, JobKind],
     kinds: Mapping[str, JobKind],
     tool_name: str,
+    note_folders: Sequence[str] | None = None,
 ) -> Callable[[BaseModel, Provenance], dict[str, Any]]:
     """The handler of one enqueue tool, accepting only the kinds of its own effect class."""
 
@@ -449,6 +461,8 @@ def _enqueue(
                 known = ", ".join(sorted(accepted)) or "none"
                 raise JobError("unknown_kind", f"no job kind {kind!r}, configured: {known}")
             payload = JobPayload(title=params.title, question=params.question, note_path=params.note_path)
+            if note_folders is not None and payload.note_path is not None:
+                _check_note_folder(payload.note_path, note_folders)
             job_id = store.enqueue(kind, payload, provenance.requested_by, provenance.session)
             return {"job_id": job_id, "kind": kind, "status": "queued"}
 
@@ -460,11 +474,18 @@ def _enqueue(
     return handler
 
 
-def job_tools(store: JobStore, kinds: Mapping[str, JobKind]) -> list[Tool]:
+def job_tools(
+    store: JobStore,
+    kinds: Mapping[str, JobKind],
+    note_folders: Sequence[str] | None = None,
+) -> list[Tool]:
     """The enqueue tools this brain needs, one per effect class.
 
     A kind whose route can reach the web gets its own external tool, so the guard's rule of two
     sees the call. A brain with no web kind does not get the research tool at all.
+
+    `note_folders` are the vault folders a result note may live in. None skips the check, which is
+    what a caller with no schema gets.
     """
     web_kinds = {name: kind for name, kind in kinds.items() if kind.web}
     local_kinds = {name: kind for name, kind in kinds.items() if not kind.web}
@@ -488,7 +509,7 @@ def job_tools(store: JobStore, kinds: Mapping[str, JobKind]) -> list[Tool]:
                     hosts=JOB_HOSTS,
                     credentials=JOB_CREDENTIALS,
                 ),
-                handler=_enqueue(store, web_kinds, kinds, "research_enqueue"),
+                handler=_enqueue(store, web_kinds, kinds, "research_enqueue", note_folders),
             )
         )
     if local_kinds:
@@ -509,7 +530,7 @@ def job_tools(store: JobStore, kinds: Mapping[str, JobKind]) -> list[Tool]:
                     hosts=JOB_HOSTS,
                     credentials=JOB_CREDENTIALS,
                 ),
-                handler=_enqueue(store, local_kinds, kinds, "job_enqueue"),
+                handler=_enqueue(store, local_kinds, kinds, "job_enqueue", note_folders),
             )
         )
     return tools

@@ -699,3 +699,52 @@ def test_a_note_path_outside_the_vault_is_refused(tools: dict[str, Tool]) -> Non
 def test_a_note_path_inside_the_vault_is_kept(tools: dict[str, Tool], store: JobStore) -> None:
     _call(tools, "job_enqueue", {"kind": "develop_idea", **_payload(note_path="ideas/heat-pumps.md")})
     assert store.list()[0].payload.note_path == "ideas/heat-pumps.md"
+
+
+# --- the note_path folder check ------------------------------------------------------------
+
+NOTE_FOLDERS = ("answers", "ideas", "knowledge", "projects")
+
+
+def _tools_with_folders(store: JobStore, folders: list[str] | None) -> dict[str, Tool]:
+    return {tool.spec.name: tool for tool in job_tools(store, KINDS, folders)}
+
+
+@pytest.mark.parametrize(
+    "tool_name,kind", [("research_enqueue", "research"), ("job_enqueue", "develop_idea")]
+)
+def test_a_note_path_in_an_allowed_folder_is_queued(store: JobStore, tool_name: str, kind: str) -> None:
+    tools = _tools_with_folders(store, list(NOTE_FOLDERS))
+    result = _call(tools, tool_name, {"kind": kind, **_payload(note_path="knowledge/heat-pumps.md")})
+    assert result["ok"] is True
+    assert store.list()[0].payload.note_path == "knowledge/heat-pumps.md"
+
+
+def test_a_note_path_in_an_unknown_folder_is_refused(store: JobStore) -> None:
+    tools = _tools_with_folders(store, list(NOTE_FOLDERS))
+    result = _call(tools, "research_enqueue", {"kind": "research", **_payload(note_path="ricerche/x.md")})
+    assert result["ok"] is False
+    assert result["code"] == "bad_note_path"
+    assert "knowledge" in result["message"]
+    assert store.list() == []
+
+
+def test_a_note_path_in_raw_is_refused(store: JobStore) -> None:
+    tools = _tools_with_folders(store, list(NOTE_FOLDERS))
+    result = _call(tools, "job_enqueue", {"kind": "develop_idea", **_payload(note_path="raw/x.md")})
+    assert (result["ok"], result["code"]) == (False, "bad_note_path")
+    assert store.list() == []
+
+
+def test_no_note_path_is_still_accepted_with_the_folder_check(store: JobStore) -> None:
+    tools = _tools_with_folders(store, list(NOTE_FOLDERS))
+    result = _call(tools, "research_enqueue", {"kind": "research", **_payload()})
+    assert result["ok"] is True
+    assert store.list()[0].payload.note_path is None
+
+
+def test_without_folders_any_note_path_is_accepted(store: JobStore) -> None:
+    tools = _tools_with_folders(store, None)
+    result = _call(tools, "research_enqueue", {"kind": "research", **_payload(note_path="ricerche/x.md")})
+    assert result["ok"] is True
+    assert store.list()[0].payload.note_path == "ricerche/x.md"

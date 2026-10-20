@@ -8,6 +8,7 @@ starting, because a silently missing section would look like a tool that is simp
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -16,6 +17,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from second_brain.core.schema import SchemaError, load_schema
+from second_brain.core.types import Zone
 from second_brain.tools.archive import ArchiveConfig, archive_tools
 from second_brain.tools.calendar import (
     CalendarBackend,
@@ -32,7 +35,13 @@ from second_brain.tools.registry import Registry, Tool
 from second_brain.tools.vault import Vault, VaultConfig
 from second_brain.tools.weather import weather_tools
 
+log = logging.getLogger(__name__)
+
 CONFIG_ENV = "BRAIN_TOOLS_CONFIG"
+
+# Zones a result note never goes into: raw is someone else's words verbatim, the other three are
+# ours or out of the way.
+_NOTE_EXCLUDED_ZONES = (Zone.RAW, Zone.BRAIN, Zone.META, Zone.ARCHIVE)
 
 # A field whose name is one of these holds a secret value, so it may only be a path to a file.
 _SECRET_NAMES = frozenset(
@@ -219,10 +228,20 @@ def _optional_tools(config: ToolsConfig, backend: CalendarBackend | None) -> lis
     if config.archive is not None:
         tools.extend(archive_tools(config.archive))
     if config.jobs is not None:
-        tools.extend(job_tools(config.jobs.store(), config.jobs.kinds))
+        tools.extend(job_tools(config.jobs.store(), config.jobs.kinds, _note_folders(config.vault.root)))
     if config.notify is not None:
         tools.extend(notify_tools(config.notify, config.vault.root))
     return tools
+
+
+def _note_folders(root: Path) -> list[str] | None:
+    """The vault folders a job result note may live in, or None when the schema does not load."""
+    try:
+        schema = load_schema(root)
+    except SchemaError as exc:
+        log.warning("no vault schema, job note_path is not checked against the zones: %s", exc)
+        return None
+    return sorted(schema.folder(zone) for zone in Zone if zone not in _NOTE_EXCLUDED_ZONES)
 
 
 def _calendar_backend(config: ToolsConfig) -> CalendarBackend:
