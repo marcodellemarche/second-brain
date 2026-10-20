@@ -692,9 +692,7 @@ def _last_decision(guard: plugin.Guard) -> dict[str, Any]:
 def test_parallel_searches_count_before_their_results(guard: plugin.Guard) -> None:
     guard.pre_llm_call(session_id="s1", sender_id="user-1")
     verdicts = [
-        guard.pre_tool_call(
-            tool_name="search_files", args={"pattern": f"nothing-{index}"}, session_id="s1"
-        )
+        guard.pre_tool_call(tool_name="search_files", args={"pattern": f"nothing-{index}"}, session_id="s1")
         for index in range(6)
     ]
     blocked = [verdict for verdict in verdicts if verdict is not None and verdict["action"] == "block"]
