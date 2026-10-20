@@ -311,12 +311,17 @@ def _owners_script(answers: Answers, credentials: dict[str, str]) -> str:
             "# The archive tool moves files in and out of here.",
             f"chown -R {BRAIN_UID}:{BRAIN_UID} '{answers.archive_dir}'",
         ]
+    # The vault and the archive are deliberately left out: they belong to the brain, and a blanket
+    # `chown` over the instance directory would hand them back to the operator, which is exactly the
+    # state git refuses to work in ("dubious ownership").
+    keep_owned = ["secrets", answers.vault_dir.name, (answers.archive_dir or answers.vault_dir).name]
+    skip = " || ".join(f'[ "$entry" = "{name}" ]' for name in keep_owned)
     lines += [
         "",
         "# A `sudo sb init --force` leaves root-owned files the operator still has to edit.",
         "owner=$(stat -c %u:%g .)",
         "for entry in *; do",
-        '    if [ "$entry" = "secrets" ]; then continue; fi',
+        f"    if {skip}; then continue; fi",
         '    chown -R "$owner" "$entry"',
         "done",
     ]

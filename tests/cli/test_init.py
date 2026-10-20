@@ -693,7 +693,7 @@ def test_owners_sh_gives_the_instance_back_to_the_operator(instance: Path) -> No
     text = (instance / "owners.sh").read_text(encoding="utf-8")
     assert "owner=$(stat -c %u:%g .)" in text
     assert "for entry in *; do" in text
-    assert 'if [ "$entry" = "secrets" ]; then continue; fi' in text
+    assert 'if [ "$entry" = "secrets" ] ||' in text
     assert 'chown -R "$owner" "$entry"' in text
     # The operator line comes last, after the secrets went to the container uids.
     assert text.index('chown -R "$owner" "$entry"') > text.index('chown 23002:23002 "secrets/tools_token"')
@@ -940,3 +940,13 @@ def test_a_mount_over_a_brain_path_is_refused(tmp_path: Path, answers_file: Path
             answers_file,
             brain_tools_mounts=[{"host": "/srv/notes", "container": "/vault/notes"}],
         )
+
+
+def test_owners_sh_does_not_hand_the_vault_back_to_the_operator(instance: Path, answers: Answers) -> None:
+    # A blanket chown over the instance directory would undo the line above it, and git refuses to
+    # work in a repository owned by another user ("dubious ownership").
+    text = (instance / "owners.sh").read_text(encoding="utf-8")
+    loop = text[text.index("for entry in *") :]
+    assert answers.vault_dir.name in loop.split("\n")[1]
+    assert answers.archive_dir.name in loop.split("\n")[1]
+    assert '"secrets"' in loop.split("\n")[1]
