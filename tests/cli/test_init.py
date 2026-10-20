@@ -133,6 +133,7 @@ def test_guard_config_has_every_enabled_tool(instance: Path) -> None:
     tools = ToolsConfig.from_yaml(instance / "config/brain-tools.yaml")
     expected = {
         "vault_read",
+        "vault_log",
         "vault_write",
         "vault_move",
         "vault_delete",
@@ -168,7 +169,14 @@ def test_a_disabled_group_is_not_in_the_guard_table(tmp_path: Path, answers_file
     minimal = Answers.from_yaml(path)
     init(minimal, tmp_path / "minimal-instance")
     guard = GuardConfig.from_yaml(tmp_path / "minimal-instance" / "config/brain-guard.yaml")
-    assert set(guard.mcp_tools) == {"vault_read", "vault_write", "vault_move", "vault_delete", "vault_undo"}
+    assert set(guard.mcp_tools) == {
+        "vault_read",
+        "vault_log",
+        "vault_write",
+        "vault_move",
+        "vault_delete",
+        "vault_undo",
+    }
 
 
 def test_squid_allows_the_tool_hosts_and_the_model(instance: Path) -> None:
@@ -676,3 +684,45 @@ def test_an_unreadable_secret_on_a_rerun_gives_a_clear_error(tmp_path: Path, ans
     assert "tools_token" in message
     assert "owners.sh" in message
     assert "--force" in message
+
+
+def test_owners_sh_gives_the_instance_back_to_the_operator(instance: Path) -> None:
+    text = (instance / "owners.sh").read_text(encoding="utf-8")
+    assert "owner=$(stat -c %u:%g .)" in text
+    assert "for entry in *; do" in text
+    assert 'if [ "$entry" = "secrets" ]; then continue; fi' in text
+    assert 'chown -R "$owner" "$entry"' in text
+    # The operator line comes last, after the secrets went to the container uids.
+    assert text.index('chown -R "$owner" "$entry"') > text.index('chown 23002:23002 "secrets/tools_token"')
+
+
+def test_no_keypair_warning_when_ssh_keygen_ran(tmp_path: Path, answers: Answers) -> None:
+    if shutil.which("ssh-keygen") is None:
+        pytest.skip("ssh-keygen is not on PATH")
+    assert init(answers, tmp_path / "instance").warnings == []
+
+
+def test_a_missing_ssh_keygen_warns_once_per_keypair(
+    tmp_path: Path, answers: Answers, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("second_brain.cli.secrets.shutil.which", lambda _name: None)
+    directory = tmp_path / "instance"
+    result = init(answers, directory)
+
+    assert len(result.warnings) == 2
+    for name in KEYPAIRS:
+        key = directory / "secrets" / name
+        assert key.read_text(encoding="utf-8") == ""
+        warning = next(item for item in result.warnings if name in item)
+        assert f"ssh-keygen -t ed25519 -N '' -f {key}" in warning
+        assert "owners.sh" in warning
+
+
+def test_the_command_prints_the_keypair_warnings(
+    tmp_path: Path, answers_file: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    monkeypatch.setattr("second_brain.cli.secrets.shutil.which", lambda _name: None)
+    assert main(["init", str(tmp_path / "instance"), "--answers", str(answers_file)]) == 0
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "terminal_host_key" in out

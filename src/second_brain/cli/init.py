@@ -77,6 +77,7 @@ class InitResult:
     kept: list[str] = field(default_factory=list)
     vault_created: bool = False
     vault_skipped: bool = False
+    warnings: list[str] = field(default_factory=list)
 
 
 def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitResult:
@@ -93,6 +94,7 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
     except SecretUnreadable as exc:
         raise InitError(_unreadable_secret_message(exc.name, instance)) from exc
     result.created += [f"{SECRETS_DIR}/{name}" for name in secrets_created]
+    result.warnings += _keypair_warnings(instance)
 
     config = tools_config(answers)
     registry = export_registry(config)
@@ -142,6 +144,20 @@ def _unreadable_secret_message(name: str, instance: Path) -> str:
         f"cannot read {SECRETS_DIR}/{name}: the secrets belong to the containers since owners.sh "
         f"ran, so run `sudo sb init {instance} --force`, then `sudo sh {OWNERS_SCRIPT}` again"
     )
+
+
+def _keypair_warnings(instance: Path) -> list[str]:
+    """An empty private key means ssh-keygen was missing: the terminal would come up without it."""
+    warnings: list[str] = []
+    for name in (TERMINAL_SSH_KEY, TERMINAL_HOST_KEY):
+        path = instance / SECRETS_DIR / name
+        if not path.exists() or path.stat().st_size:
+            continue
+        warnings.append(
+            f"{SECRETS_DIR}/{name} is empty, so the terminal has no key: run "
+            f"`rm {path} && ssh-keygen -t ed25519 -N '' -f {path}` before `sudo sh {OWNERS_SCRIPT}`"
+        )
+    return warnings
 
 
 def _vault_is_free(vault: Path) -> bool:
@@ -283,6 +299,15 @@ def _owners_script(answers: Answers) -> str:
             "# The archive tool moves files in and out of here.",
             f"chown -R {BRAIN_UID}:{BRAIN_UID} '{answers.archive_dir}'",
         ]
+    lines += [
+        "",
+        "# A `sudo sb init --force` leaves root-owned files the operator still has to edit.",
+        "owner=$(stat -c %u:%g .)",
+        "for entry in *; do",
+        '    if [ "$entry" = "secrets" ]; then continue; fi',
+        '    chown -R "$owner" "$entry"',
+        "done",
+    ]
     lines.append("")
     return "\n".join(lines)
 

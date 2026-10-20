@@ -96,8 +96,12 @@ def _init(args: argparse.Namespace) -> int:
         print(f"vault   {answers.vault_dir} scaffolded from templates/vault/{answers.language}")
     elif result.vault_skipped:
         print(f"vault   {answers.vault_dir} is not empty, left untouched")
+    if result.warnings:
+        print("")
+        for warning in result.warnings:
+            print(f"WARNING {warning}")
     print("")
-    print("Next: fill in the empty files under secrets/, then `docker compose up -d`.")
+    print("Next: follow README.md in the instance directory (secrets, owners.sh, sb check, up).")
     return 0
 
 
