@@ -48,8 +48,24 @@ class Zone(StrEnum):
     ANSWERS = "answers"
     DRAWINGS = "drawings"
     ARCHIVE = "archive"
+    # A team vault keeps these as their own zones: a shared repository reads very differently from
+    # one person's notes, and "where is the postmortem" has to have one answer.
+    SYSTEMS = "systems"
+    INCIDENTS = "incidents"
+    DECISIONS = "decisions"
+    RUNBOOKS = "runbooks"
     BRAIN = "_brain"
     META = "_meta"
+
+
+# A personal vault does not have the four team zones: requiring them everywhere would force an
+# empty folder on every brain. A schema maps what its vault has, and nothing else is demanded.
+PERSONAL_ZONES: frozenset[Zone] = frozenset(Zone) - {
+    Zone.SYSTEMS,
+    Zone.INCIDENTS,
+    Zone.DECISIONS,
+    Zone.RUNBOOKS,
+}
 
 
 FRONTMATTER_KEYS: frozenset[str] = frozenset(

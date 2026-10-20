@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from second_brain.core.schema import SchemaError, VaultSchema, load_schema
-from second_brain.core.types import FRONTMATTER_KEYS, Zone
+from second_brain.core.types import FRONTMATTER_KEYS, PERSONAL_ZONES, Zone
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates" / "vault"
 LANGUAGES = ["en", "it"]
@@ -74,18 +74,18 @@ def test_italian_template_uses_the_planned_folders() -> None:
 
 
 def test_english_template_uses_the_logical_names() -> None:
-    assert load_schema(TEMPLATES / "en").zones == {zone: zone.value for zone in Zone}
+    assert load_schema(TEMPLATES / "en").zones == {zone: zone.value for zone in PERSONAL_ZONES}
 
 
 def test_every_zone_is_mapped(language: str) -> None:
     schema = load_schema(TEMPLATES / language)
-    assert set(schema.zones) == set(Zone)
-    assert {schema.folder(zone) for zone in Zone} == set(schema.zones.values())
+    assert set(schema.zones) == set(PERSONAL_ZONES)
+    assert {schema.folder(zone) for zone in PERSONAL_ZONES} == set(schema.zones.values())
 
 
 def test_every_zone_has_a_folder(template: Path, language: str) -> None:
     schema = load_schema(template)
-    for zone in Zone:
+    for zone in PERSONAL_ZONES:
         assert (template / schema.folder(zone)).is_dir(), f"{language}: no folder for {zone}"
 
 
@@ -108,7 +108,7 @@ def test_log_has_the_line_format(template: Path) -> None:
     assert "## [YYYY-MM-DD] <op> | <title>" in (template / "_meta" / "log.md").read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("zone", list(Zone))
+@pytest.mark.parametrize("zone", sorted(PERSONAL_ZONES))
 def test_zone_of_nested_paths(vault: Path, zone: Zone) -> None:
     schema = load_schema(vault)
     folder = schema.folder(zone)
@@ -233,8 +233,9 @@ def test_no_frontmatter_key_outside_the_known_set(template: Path) -> None:
         assert not unknown, f"{path.relative_to(template)}: {unknown}"
 
 
-def test_the_block_maps_every_zone_by_its_logical_name(template: Path) -> None:
-    assert set(schema_block(template)["zones"]) == {zone.value for zone in Zone}
+def test_the_block_maps_every_zone_a_personal_vault_has(template: Path) -> None:
+    # The four team zones are optional: a personal vault does not carry an empty `incidents/`.
+    assert set(schema_block(template)["zones"]) == {zone.value for zone in PERSONAL_ZONES}
 
 
 BRAIN_STEMS = {

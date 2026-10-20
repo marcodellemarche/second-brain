@@ -197,6 +197,9 @@ class Answers(BaseModel):
 
     instance_name: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,62}$")
     language: Language = "en"
+    # A team vault is a shared repository written through pull requests: it has the systems,
+    # incidents, decisions and runbooks zones, no agent memory of its own, and no documents.
+    shape: Literal["personal", "team"] = "personal"
     owner_name: str = Field(min_length=1)
     owner_telegram_id: str | None = None
     slack: SlackAnswers | None = None

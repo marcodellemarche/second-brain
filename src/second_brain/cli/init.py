@@ -14,6 +14,7 @@ every run, `--force` or not: they are product code, and compose mounts them read
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -178,18 +179,33 @@ def _vault_is_free(vault: Path) -> bool:
     return not any(vault.iterdir())
 
 
+# Folders a shape removes from the language template it starts from.
+_SHAPE_WITHOUT: dict[str, tuple[str, ...]] = {"team": ("_brain",)}
+
+
 def _copy_vault(answers: Answers, result: InitResult) -> None:
     source = TEMPLATES / "vault" / answers.language
+    overlay = TEMPLATES / "vault" / f"{answers.language}-{answers.shape}"
     answers.vault_dir.mkdir(parents=True, exist_ok=True)
-    for path in sorted(source.rglob("*")):
-        relative = path.relative_to(source)
-        target = answers.vault_dir / relative
-        if path.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-            continue
+    # A shape that has its own files starts from the language template and then overwrites what it
+    # changes, so the two vaults stay one template with one difference instead of two forks.
+    files: dict[Path, Path] = {}
+    for root in (source, overlay) if overlay.is_dir() else (source,):
+        for path in sorted(root.rglob("*")):
+            relative = path.relative_to(root)
+            if path.is_dir():
+                (answers.vault_dir / relative).mkdir(parents=True, exist_ok=True)
+                continue
+            files[relative] = path
+    for relative, path in files.items():
         if path.name == VAULT_GITIGNORE:
             continue
-        target.write_bytes(path.read_bytes())
+        (answers.vault_dir / relative).write_bytes(path.read_bytes())
+    # A team vault has no agent memory of its own: the overlay drops the folders it does not want.
+    for relative in _SHAPE_WITHOUT.get(answers.shape, ()):
+        target = answers.vault_dir / relative
+        if target.is_dir():
+            shutil.rmtree(target)
     git_init(answers.vault_dir)
     capture = answers.vault_dir / capture_dir(answers)
     capture.mkdir(parents=True, exist_ok=True)

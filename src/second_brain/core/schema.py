@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from second_brain.core.types import Zone
+from second_brain.core.types import PERSONAL_ZONES, Zone
 
 SCHEMA_FILE = Path("_meta") / "SCHEMA.md"
 
@@ -48,7 +48,9 @@ class VaultSchema(BaseModel):
 
     @model_validator(mode="after")
     def _complete_and_flat(self) -> VaultSchema:
-        missing = sorted(set(Zone) - set(self.zones))
+        # The common zones are required; the team-only ones are optional, so one schema shape serves
+        # both a personal vault and a shared one.
+        missing = sorted(PERSONAL_ZONES - set(self.zones))
         if missing:
             raise ValueError(f"zones is missing: {', '.join(missing)}")
         for zone, folder in self.zones.items():

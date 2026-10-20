@@ -950,3 +950,29 @@ def test_owners_sh_does_not_hand_the_vault_back_to_the_operator(instance: Path, 
     assert answers.vault_dir.name in loop.split("\n")[1]
     assert answers.archive_dir.name in loop.split("\n")[1]
     assert '"secrets"' in loop.split("\n")[1]
+
+
+def test_a_team_vault_gets_the_four_shared_zones(tmp_path: Path, answers_file: Path) -> None:
+    data = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    data["shape"] = "team"
+    data["instance_name"] = "brain-team"
+    team_answers = tmp_path / "team.yaml"
+    team_answers.write_text(yaml.safe_dump(data), encoding="utf-8")
+    instance = tmp_path / "team-instance"
+
+    init(Answers.from_yaml(team_answers), instance)
+
+    vault = data["vault_dir"]
+    assert isinstance(vault, str)
+    for zone in ("systems", "incidents", "decisions", "runbooks"):
+        assert (Path(vault) / zone / "_TEMPLATE.md").is_file(), zone
+    assert (Path(vault) / "_meta" / "CONTRIBUTING.md").is_file()
+    # The team vault has no agent memory of its own and no personal documents.
+    assert not (Path(vault) / "_brain").exists() or not any((Path(vault) / "_brain").iterdir())
+
+
+def test_a_personal_vault_has_no_team_zones(tmp_path: Path, answers: Answers) -> None:
+    instance = tmp_path / "instance"
+    init(answers, instance)
+    for zone in ("systems", "incidents", "decisions", "runbooks"):
+        assert not (answers.vault_dir / zone).exists(), zone
