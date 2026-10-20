@@ -6,6 +6,9 @@ owner_name: Sample Owner
 owner_telegram_id: "100000001"
 timezone: Europe/Rome
 
+# Group that owns /var/run/docker.sock on the host. Left out, `sb init` reads it from the socket.
+docker_gid: 999
+
 # Absolute paths on the host. The vault is scaffolded only when it is missing or empty.
 vault_dir: /srv/brain/vault
 media_dir: /srv/brain/media

@@ -120,6 +120,24 @@ if not is_fresh(path, max_age, time.time()):
     sys.exit(3)
 print(f"the heartbeat is fresh, ts={beat.get('ts')}")
 """
+# The watchdog reads the socket itself, through the group compose adds to its service: this is
+# the only probe that says whether `group_add` actually works on the host.
+WATCHDOG_DOCKER_PROBE = """
+import os, sys
+from second_brain.gate.watchdog import DockerError, docker_started_at
+
+socket_path = os.environ.get("WATCHDOG_DOCKER_SOCKET", "/var/run/docker.sock")
+container = os.environ["WATCHDOG_CONTAINER"]
+try:
+    started = docker_started_at(socket_path, container)
+except (PermissionError, OSError, DockerError) as exc:
+    print(f"the watchdog cannot reach Docker: check group_add / docker_gid: {exc}")
+    sys.exit(3)
+if started is None:
+    print("hermes is not running")
+    sys.exit(3)
+print(f"hermes started at {started}")
+"""
 
 Runner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
 
@@ -219,6 +237,7 @@ def live_checks(
             ("live.vault-read-only", partial(_live_vault_read_only, compose, run)),
             ("live.no-docker-socket", partial(_live_no_socket, compose, run)),
             ("live.heartbeat", partial(_live_heartbeat, compose, run)),
+            ("live.watchdog-docker", partial(_live_watchdog_docker, compose, run)),
             (
                 "live.gate-stale-heartbeat",
                 lambda: _skip(
@@ -307,7 +326,12 @@ def _files_check(ctx: _Instance) -> CheckResult:
 
 def _placeholders_check(ctx: _Instance) -> CheckResult:
     name = "placeholders"
+    secrets_dir = ctx.root / SECRETS_DIR
     for path in sorted(ctx.root.rglob("*")):
+        # The secrets are generated values, never templates, and after owners.sh they belong to
+        # container uids: reading them here would only fail on a deployment.
+        if secrets_dir in path.parents:
+            continue
         if not path.is_file() or path.name.endswith(".pub") or path.name == TERMINAL_SSH_KEY:
             continue
         try:
@@ -937,6 +961,17 @@ def _live_heartbeat(compose: list[str], run: Runner) -> CheckResult:
     if error is not None:
         return error
     reason = detail or "the heartbeat was not read"
+    if code == 3:
+        return _fail(name, reason)
+    return _pass(name, f"read through {WATCHDOG}: {reason}")
+
+
+def _live_watchdog_docker(compose: list[str], run: Runner) -> CheckResult:
+    name = "live.watchdog-docker"
+    code, detail, error = _compose_probe(name, compose, WATCHDOG, WATCHDOG_DOCKER_PROBE, run)
+    if error is not None:
+        return error
+    reason = detail or "the docker socket was not read"
     if code == 3:
         return _fail(name, reason)
     return _pass(name, f"read through {WATCHDOG}: {reason}")

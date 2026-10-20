@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from second_brain.cli.answers import Answers
+from second_brain.cli.answers import Answers, AnswersError
 from second_brain.cli.render import render_template
 from second_brain.cli.secrets import (
     CALENDAR_TOKEN,
@@ -275,17 +275,21 @@ def egress_hosts(answers: Answers, registry: Registry) -> list[str]:
 
 
 def docker_gid(answers: Answers) -> int:
-    """The group that owns the docker socket: the answer, else this machine's, else the root group.
+    """The group that owns the docker socket: the answer, else this machine's.
 
     The watchdog talks to the socket as the brain image's group, so compose has to give it a
-    group id the socket accepts. `sb init` runs on the host, where the socket can be looked at.
+    group id the socket accepts. `sb init` runs on the host, where the socket can be looked at;
+    run in a container with no socket, there is nothing to look at and the answer has to say it.
     """
     if answers.docker_gid is not None:
         return answers.docker_gid
     try:
         return DOCKER_SOCKET.stat().st_gid
-    except OSError:
-        return 0
+    except OSError as exc:
+        raise AnswersError(
+            "cannot find the docker socket here: set docker_gid in the answers (the group of "
+            "/var/run/docker.sock on the Docker host, `stat -c %g /var/run/docker.sock`)"
+        ) from exc
 
 
 def model_upstream(answers: Answers) -> str:
