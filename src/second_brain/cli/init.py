@@ -319,8 +319,19 @@ def _owners_script(answers: Answers, credentials: dict[str, str]) -> str:
         f'if [ -e "{host_pubkey}" ]; then chmod 644 "{host_pubkey}"; fi',
         "",
         "# brain_tools is the only writer of the vault.",
-        f"chown -R {BRAIN_UID}:{BRAIN_UID} '{answers.vault_dir}'",
     ]
+    if answers.vault_group_gid is None:
+        lines.append(f"chown -R {BRAIN_UID}:{BRAIN_UID} '{answers.vault_dir}'")
+    else:
+        # The vault belongs to another service (a Nextcloud data directory) and is written by both.
+        # Handing it to the brain would make that service stop serving it, so only the group is set,
+        # and the containers join it through `vault_group_gid`.
+        lines += [
+            "# The vault belongs to the service that serves it; the brain joins its group instead.",
+            f"chgrp -R {answers.vault_group_gid} '{answers.vault_dir}'",
+            f"chmod -R g+rwX '{answers.vault_dir}'",
+            f"find '{answers.vault_dir}' -type d -exec chmod g+s {{}} +",
+        ]
     if answers.archive_dir is not None:
         lines += [
             "",
