@@ -333,7 +333,8 @@ def test_import_creates_an_untrusted_raw_note_with_sources_and_the_job_id(
     assert len(results) == 1 and results[0].ok
     note = vault.root / str(results[0].note)
     assert note.parent == vault.root / "raw" / "web"
-    assert note.name.endswith(" Tidal energy in the North Sea.md")
+    assert note.name.endswith("-tidal-energy-in-the-north-sea.md")
+    assert " " not in note.name
     front = _frontmatter(note)
     assert front["type"] == "capture"
     assert front["trust"] == "untrusted"
@@ -452,6 +453,32 @@ def test_a_second_result_for_the_same_title_does_not_overwrite_the_first(
     texts = [note.read_text(encoding="utf-8") for note in notes]
     assert any("first reply" in text for text in texts)
     assert any("second reply" in text for text in texts)
+    assert notes[0].stem.endswith(f"-{second[:8]}")
+
+
+def test_a_title_with_accents_and_punctuation_becomes_a_slug(
+    outbox_dir: Path, secret_file: Path, store: JobStore, vault: Vault, schema: VaultSchema
+) -> None:
+    job_id = _dispatched_job(store, "Vantaggi della pacciamatura in un orto sul balcone — perché?")
+    body = _body(_delivery(job_id))
+    _receiver(outbox_dir, secret_file, store).handle(_signed(body), body)
+    result = _importer(outbox_dir, vault, schema, store).sweep()[0]
+    assert result.ok
+    assert result.note is not None
+    folder, name = result.note.rsplit("/", 1)
+    assert folder == "raw/web"
+    assert name.startswith("2026-") and name[10] == "-"
+    assert name.endswith("-vantaggi-della-pacciamatura-in-un-orto-sul-balcone-perche.md")
+
+
+def test_a_title_without_letters_falls_back_to_research(
+    outbox_dir: Path, secret_file: Path, store: JobStore, vault: Vault, schema: VaultSchema
+) -> None:
+    job_id = _dispatched_job(store, "!!! ???")
+    body = _body(_delivery(job_id))
+    _receiver(outbox_dir, secret_file, store).handle(_signed(body), body)
+    result = _importer(outbox_dir, vault, schema, store).sweep()[0]
+    assert result.note is not None and result.note.endswith("-research.md")
 
 
 def test_a_title_with_a_separator_cannot_escape_the_web_folder(
@@ -470,6 +497,32 @@ def test_sources_keeps_order_and_drops_trailing_punctuation() -> None:
     text = "See (https://a.example/x), then https://b.example/y. And https://a.example/x again."
     assert sources_in(text) == ["https://a.example/x", "https://b.example/y"]
     assert sources_in("no links here") == []
+
+
+def test_bare_domains_land_after_the_urls() -> None:
+    text = "Sources: compo-hobby.it, extension.umn.edu. See https://example.org/tidal too."
+    assert sources_in(text) == ["https://example.org/tidal", "compo-hobby.it", "extension.umn.edu"]
+
+
+def test_a_vault_file_name_is_not_a_source() -> None:
+    text = "I read note.md and report.pdf, then example.org."
+    assert sources_in(text) == ["example.org"]
+
+
+def test_a_domain_already_inside_a_url_is_not_repeated() -> None:
+    text = "See https://example.org/tidal and example.org again."
+    assert sources_in(text) == ["https://example.org/tidal"]
+    assert sources_in("https://docs.example.org/x then example.org") == ["https://docs.example.org/x"]
+    # A different host that only contains the domain is still a source.
+    assert sources_in("https://myexample.org/x then example.org") == [
+        "https://myexample.org/x",
+        "example.org",
+    ]
+
+
+def test_sources_stop_at_the_cap() -> None:
+    text = " ".join(f"site{i}.example" for i in range(40))
+    assert len(sources_in(text)) == 20
 
 
 class _Sink:

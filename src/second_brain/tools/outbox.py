@@ -44,12 +44,14 @@ import os
 import re
 import tempfile
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -77,8 +79,9 @@ _SIGNATURE_PREFIX = "sha256="
 _DELIVERY_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _JOB_PROMPT = re.compile(rf"{re.escape(JOB_PROMPT_PREFIX)}([0-9a-f]{{32}})(?![0-9a-f])")
 _URL = re.compile(r"https?://[^\s<>()\[\]\"']+")
-_UNSAFE_NAME = re.compile(r"[^A-Za-z0-9 ._-]+")
-_DOTS = re.compile(r"\.{2,}")
+_DOMAIN = re.compile(r"(?<![\w@/.-])(?:[a-z0-9-]+\.)+[a-z]{2,24}(?![\w-])(?!\.[\w])", re.IGNORECASE)
+_WORD = re.compile(r"[a-z0-9]+")
+_FILE_SUFFIXES = (".md", ".pdf", ".png", ".jpg", ".jpeg", ".txt")
 
 
 class OutboxError(RuntimeError):
@@ -244,20 +247,38 @@ class OutboxReceiver:
         return Receipt(202, "stored", f"the result of job {job.id} is stored", target)
 
 
-def _safe_name(title: str) -> str:
-    """A file name from a job title: one line, no separators, short enough to stay readable."""
-    name = _UNSAFE_NAME.sub(" ", " ".join(title.split()))
-    name = _DOTS.sub(".", " ".join(name.split())).strip(" .-_")
-    return name[:MAX_TITLE_CHARS].strip(" .-_") or "research"
+def _slug(title: str) -> str:
+    """A file name stem from a job title: lowercase ASCII words, no separator a vault would mind."""
+    ascii_only = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
+    stem = "-".join(_WORD.findall(ascii_only.lower()))
+    return stem[:MAX_TITLE_CHARS].strip("-") or "research"
+
+
+def _host(url: str) -> str:
+    try:
+        return urlparse(url).hostname or ""
+    except ValueError:
+        return ""
 
 
 def sources_in(text: str) -> list[str]:
-    """The URLs the reply mentions, in order and without the punctuation around them."""
+    """The sources the reply mentions: full URLs first, then bare domains, both in order."""
     found: list[str] = []
     for match in _URL.finditer(text):
         url = match.group(0).rstrip(".,;:!?)]}'\"")
         if url not in found:
             found.append(url)
+        if len(found) >= MAX_SOURCES:
+            return found
+    hosts = [_host(url) for url in found]
+    for match in _DOMAIN.finditer(text):
+        domain = match.group(0).lower()
+        if domain.endswith(_FILE_SUFFIXES):
+            continue
+        if any(host == domain or host.endswith(f".{domain}") for host in hosts):
+            continue
+        if domain not in found:
+            found.append(domain)
         if len(found) >= MAX_SOURCES:
             break
     return found
@@ -266,11 +287,12 @@ def sources_in(text: str) -> list[str]:
 class OutboxImporter:
     """Turn the stored deliveries into untrusted raw notes, and hand the job back to the vault.
 
-    A note lands in `raw/web/`, named after the day and the job title, with `trust: untrusted` and
-    the URLs the reply mentions. The research job is finished once its result is in the vault, and
-    a follow-up job of `followup_kind` is queued with the original question and the raw note path,
-    so a route that has the vault writes the note the job asked for. Importing the same file twice
-    cannot happen: it is moved out of the way before the follow-up is queued.
+    A note lands in `raw/web/`, named after the day and a slug of the job title, with
+    `trust: untrusted` and the sources the reply mentions. The research job is finished once its
+    result is in the vault, and a follow-up job of `followup_kind` is queued with the original
+    question and the raw note path, so a route that has the vault writes the note the job asked
+    for. Importing the same file twice cannot happen: it is moved out of the way before the
+    follow-up is queued.
     """
 
     def __init__(
@@ -335,12 +357,12 @@ class OutboxImporter:
 
     def _note_path(self, created: str, job: Job) -> str:
         folder = self._schema.folder(Zone.RAW)
-        stem = f"{created} {_safe_name(job.payload.title)}"
+        stem = f"{created}-{_slug(job.payload.title)}"
         candidate = f"{folder}/web/{stem}.md"
         if not (self._vault.root / candidate).exists():
             return candidate
         # A second run for the same title on the same day would overwrite the first result.
-        return f"{folder}/web/{stem} ({job.id[:8]}).md"
+        return f"{folder}/web/{stem}-{job.id[:8]}.md"
 
     def _render(self, job: Job, reply: str, created: str) -> str:
         frontmatter: dict[str, Any] = {
