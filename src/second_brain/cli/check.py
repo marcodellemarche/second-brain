@@ -73,6 +73,9 @@ PACKAGE_REGISTRIES: tuple[str, ...] = (
 )
 
 PLACEHOLDER_MARKERS: tuple[bytes, ...] = (b"{{", b"{%", b"{#")
+# The vault is a git repository from its first commit, and a git object or index can contain the
+# marker bytes by chance. Git metadata is not rendered from a template, so it is not scanned.
+PLACEHOLDER_SKIP_DIRS = frozenset({".git", ".obsidian", ".trash", "__pycache__"})
 
 # The routes the scheduler is allowed to post to, and the only one that may deliver its reply into
 # the chat. A scheduled run that reaches the web or mirrors its reply is how untrusted content ends
@@ -333,6 +336,8 @@ def _placeholders_check(ctx: _Instance) -> CheckResult:
         if secrets_dir in path.parents:
             continue
         if not path.is_file() or path.name.endswith(".pub") or path.name == TERMINAL_SSH_KEY:
+            continue
+        if PLACEHOLDER_SKIP_DIRS.intersection(path.relative_to(ctx.root).parts[:-1]):
             continue
         try:
             content = path.read_bytes()

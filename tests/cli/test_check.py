@@ -645,3 +645,12 @@ def test_live_watchdog_docker_fails_when_the_watchdog_cannot_reach_docker(instan
     results = live_checks(instance, runner=_fake_runner(calls, ps, codes), docker="docker")
     watchdog = next(result for result in results if result.name == "live.watchdog-docker")
     assert watchdog.status == FAIL
+
+
+def test_a_git_object_in_the_vault_is_not_a_template_placeholder(instance: Path) -> None:
+    # The vault is a git repository from its first commit, and a binary git index can hold `{%`.
+    git_dir = instance / "vault" / ".git"
+    git_dir.mkdir(parents=True, exist_ok=True)
+    (git_dir / "index").write_bytes(b"DIRC\x00\x00{%\x00binary")
+    status, reason = _status(instance, "placeholders")
+    assert status == PASS, reason
