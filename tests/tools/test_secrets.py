@@ -219,3 +219,29 @@ def test_a_password_inside_a_connection_string_is_flagged(note: str) -> None:
 )
 def test_a_connection_string_pointing_at_an_env_var_is_not_flagged(note: str) -> None:
     assert scan(note) == []
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "| **File** | [10 Identity/2024_id-card-portugal.pdf](https://cloud.example.test/f/52738) |",
+        "source: nc:20 Company/20.01 Documents/2026-01_framework-agreement-signed-by-both.pdf",
+        "| **Authentication code** | 19DF5633-FE2B-4334-8759-CC1A88B3FC0F |",
+        "Report id bf06b4e9-e802-f111-84ab-005056a2c9a7.",
+        "Wrote it in notes/2026-10-19-standup-with-the-team.md today.",
+    ],
+)
+def test_a_lowercase_slug_or_a_uuid_is_not_a_secret(note: str) -> None:
+    assert scan(note) == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Zx9Kq2Lm8Rt4Vw7Yb1Nc6Hd3Fg5Jp0Qs",
+        "ak_live_51H8xQ2eZvKYlo2C0abcdefghijklmnop",
+        "sk_live_4eC39HqLyjWDarjtT1zdp7dc",
+    ],
+)
+def test_a_mixed_case_key_is_still_a_secret(value: str) -> None:
+    assert len(scan(value)) == 1

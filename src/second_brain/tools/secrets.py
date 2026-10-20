@@ -75,6 +75,9 @@ _WIKILINK_RE = re.compile(r"\[\[[^\]]*\]\]")
 # A path is structure, like a URL: its entropy comes from long readable segments, not from a key.
 _PATH_RE = re.compile(r"(?:^|[\s`'\"(\[])(?:~?/|\.{1,2}/)[^\s`'\"()\[\]]+", re.MULTILINE)
 _RELATIVE_PATH_RE = re.compile(r"(?<![\w/])[\w.-]+(?:/[\w.-]+){2,}/?", re.MULTILINE)
+# A slug or a path: lowercase words joined by `/` or `-`. Random keys mix case or carry no separator.
+_LOWERCASE_SEGMENT = re.compile(r"[a-z0-9_.]+")
+_UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 
 def _is_placeholder(value: str) -> bool:
@@ -88,6 +91,18 @@ def _is_placeholder(value: str) -> bool:
 
 def _looks_like_digest(text: str, start: int) -> bool:
     return "sha256" in text[max(0, start - 24) : start].lower()
+
+
+def _looks_like_path(value: str) -> bool:
+    """A lowercase slug, a relative path or a UUID reads as high entropy but is structure."""
+    if _UUID_RE.fullmatch(value):
+        return True
+    if "/" not in value and "-" not in value:
+        return False
+    if "/" in value and " " not in value:
+        return True
+    segments = [segment for segment in re.split(r"[/-]", value) if segment]
+    return bool(segments) and all(_LOWERCASE_SEGMENT.fullmatch(segment) for segment in segments)
 
 
 def _in_exempt_span(spans: list[tuple[int, int]], start: int) -> bool:
@@ -121,6 +136,8 @@ def _candidates(text: str) -> Iterator[_Match]:
     spans = _exempt_spans(text)
     for match in _ENTROPY_RE.finditer(text):
         if _looks_like_digest(text, match.start()):
+            continue
+        if _looks_like_path(match.group(0)):
             continue
         if _in_exempt_span(spans, match.start()):
             continue
