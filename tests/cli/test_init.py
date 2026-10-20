@@ -999,11 +999,33 @@ def test_a_team_vault_gets_the_four_shared_zones(tmp_path: Path, answers_file: P
     assert not (Path(vault) / "_brain").exists() or not any((Path(vault) / "_brain").iterdir())
 
 
+def test_a_team_vault_has_no_documents_folder(tmp_path: Path, answers_file: Path) -> None:
+    data = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    data["shape"] = "team"
+    data["instance_name"] = "brain-team"
+    team_answers = tmp_path / "team.yaml"
+    team_answers.write_text(yaml.safe_dump(data), encoding="utf-8")
+    instance = tmp_path / "team-instance"
+
+    init(Answers.from_yaml(team_answers), instance)
+
+    vault = data["vault_dir"]
+    assert isinstance(vault, str)
+    assert not (Path(vault) / "documents").exists()
+    assert not (Path(vault) / "_brain").exists()
+
+
 def test_a_personal_vault_has_no_team_zones(tmp_path: Path, answers: Answers) -> None:
     instance = tmp_path / "instance"
     init(answers, instance)
     for zone in ("systems", "incidents", "decisions", "runbooks"):
         assert not (answers.vault_dir / zone).exists(), zone
+
+
+def test_a_personal_vault_keeps_its_documents_folder(tmp_path: Path, answers: Answers) -> None:
+    instance = tmp_path / "instance"
+    init(answers, instance)
+    assert (answers.vault_dir / "documents").is_dir()
 
 
 def test_owners_sh_leaves_a_shared_vault_with_its_service(tmp_path: Path, answers_file: Path) -> None:

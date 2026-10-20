@@ -205,7 +205,7 @@ def _vault_is_free(vault: Path) -> bool:
 
 
 # Folders a shape removes from the language template it starts from.
-_SHAPE_WITHOUT: dict[str, tuple[str, ...]] = {"team": ("_brain",)}
+_SHAPE_WITHOUT: dict[str, tuple[str, ...]] = {"team": ("_brain", "documents")}
 
 
 def _copy_vault(answers: Answers, result: InitResult) -> None:
