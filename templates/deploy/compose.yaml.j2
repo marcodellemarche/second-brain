@@ -20,6 +20,11 @@ x-brain: &brain
   image: {{ brain_image }}
   read_only: true
   tmpfs: [/tmp]
+{% for gid in vault_group_gids %}
+  # The vault is owned by a group a second service is in too (a Nextcloud data directory):
+  # joining it is what lets brain_tools write where that service also writes.
+  group_add: ["{{ gid }}"]
+{% endfor %}
 
 # The sidecars open no port, so there is nothing to probe from outside: the check reads the
 # process' own cmdline, and fails only when the interpreter it runs on is gone.

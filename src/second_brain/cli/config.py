@@ -372,6 +372,9 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
     return {
         "instance_name": answers.instance_name,
         "vault_dir": str(answers.vault_dir),
+        # The renderer knows substitution and one loop, so an optional line is a list with zero or
+        # one entry rather than a conditional block.
+        "vault_group_gids": [str(answers.vault_group_gid)] if answers.vault_group_gid else [],
         "media_dir": str(answers.media_dir),
         "terminal_cwd": "/workspace",
         "hermes_image": "second-brain/hermes:0.1.0",

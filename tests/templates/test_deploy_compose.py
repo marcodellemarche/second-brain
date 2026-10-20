@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 import yaml
 
-from second_brain.cli.render import render_template
+from second_brain.cli.render import render_template, render_text
 
 DEPLOY = Path(__file__).resolve().parents[2] / "templates" / "deploy"
 
@@ -42,6 +42,8 @@ VALUES: dict[str, Any] = {
     "optional_secrets": ["calendar_token"],
     "instance_secrets": [],
     "brain_tools_secrets": ["tools_token", "outbox_secret", "calendar_token"],
+    # Empty by default: a vault only needs a shared group when a second service writes it.
+    "vault_group_gids": [],
 }
 
 
@@ -464,3 +466,31 @@ def test_brain_tools_can_reach_the_hosts_its_tools_declare(services: dict[str, A
     no_proxy = service["environment"]["NO_PROXY"].split(",")
     assert "localhost" in no_proxy
     assert "brain-tools" in no_proxy
+
+
+def test_the_brain_services_join_the_vault_group_when_one_is_set() -> None:
+    # A vault inside a Nextcloud data directory is owned by a group www-data is in too: the brain
+    # has to join it, or brain_tools cannot write where Nextcloud writes.
+    from second_brain.cli.answers import Answers
+    from second_brain.cli.config import template_values
+    from second_brain.tools.registry import Registry
+
+    sample = Path(__file__).parent / ".." / "cli" / "answers.sample.yaml"
+    data = yaml.safe_load(sample.read_text(encoding="utf-8"))
+    data["vault_group_gid"] = 1003
+    answers = Answers.model_validate(data)
+
+    from second_brain.cli.secrets import SEARXNG_KEY
+
+    values = template_values(answers, Registry(), {SEARXNG_KEY: "x"})
+    assert values["vault_group_gids"] == ["1003"]
+
+    template = (Path(__file__).parent / ".." / ".." / "templates" / "deploy" / "compose.yaml.j2").read_text()
+    block = template[template.index("x-brain:") : template.index("x-sidecar-health:")]
+    rendered = render_text(block, values)
+    assert 'group_add: ["1003"]' in rendered
+
+    without = template_values(
+        answers.model_copy(update={"vault_group_gid": None}), Registry(), {SEARXNG_KEY: "x"}
+    )
+    assert render_text(block, without).count("group_add") == 0

@@ -224,6 +224,14 @@ class Answers(BaseModel):
     # Read-only host folders for instance tools: the vault, the data dir and the secrets are the
     # brain's own, and a tool that writes belongs in the core.
     brain_tools_mounts: list[MountAnswers] = Field(default_factory=list)
+    # When the vault lives inside a folder another service owns (a Nextcloud data directory), both
+    # writers have to be in one group: this is that group's gid on the host, and every brain-image
+    # service that touches the vault joins it.
+    vault_group_gid: int | None = Field(
+        default=None,
+        ge=0,
+        description="gid of the group that owns the vault, when a second service writes it too.",
+    )
     schedule: ScheduleAnswers = Field(default_factory=ScheduleAnswers)
     calls: CallsAnswers = Field(default_factory=CallsAnswers)
 
