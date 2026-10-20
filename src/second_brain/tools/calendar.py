@@ -36,6 +36,9 @@ from second_brain.tools.registry import Tool
 from second_brain.tools.vault import Provenance
 
 CALENDAR_HOSTS: tuple[str, ...] = ("www.googleapis.com",)
+# A service account trades its signed assertion for an access token at this host before any call
+# to the API, so a deployment with one has to be allowed to reach it too.
+SERVICE_ACCOUNT_HOSTS: tuple[str, ...] = ("oauth2.googleapis.com",)
 CALENDAR_CREDENTIALS: tuple[str, ...] = ("google_calendar_token",)
 _CALENDAR_API = "https://www.googleapis.com/calendar/v3"
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -396,8 +399,14 @@ class _Calendars:
         )
 
 
-def calendar_tools(backend: CalendarBackend, config: CalendarConfig) -> list[Tool]:
+def calendar_tools(
+    backend: CalendarBackend,
+    config: CalendarConfig,
+    *,
+    extra_hosts: tuple[str, ...] = (),
+) -> list[Tool]:
     calendars = _Calendars(backend=backend, config=config)
+    hosts = CALENDAR_HOSTS + extra_hosts
 
     def list_(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
         assert isinstance(params, ListParams)
@@ -512,7 +521,7 @@ def calendar_tools(backend: CalendarBackend, config: CalendarConfig) -> list[Too
                 params=ListParams,
                 effect=Effect.READ,
                 autonomy=Autonomy.AUTO,
-                hosts=CALENDAR_HOSTS,
+                hosts=hosts,
                 credentials=CALENDAR_CREDENTIALS,
                 taints_untrusted=True,
                 taints_private=True,
@@ -529,7 +538,7 @@ def calendar_tools(backend: CalendarBackend, config: CalendarConfig) -> list[Too
                 params=CreateParams,
                 effect=Effect.INTERNAL,
                 autonomy=Autonomy.NOTIFY,
-                hosts=CALENDAR_HOSTS,
+                hosts=hosts,
                 credentials=CALENDAR_CREDENTIALS,
             ),
             handler=create,
@@ -544,7 +553,7 @@ def calendar_tools(backend: CalendarBackend, config: CalendarConfig) -> list[Too
                 params=UpdateParams,
                 effect=Effect.INTERNAL,
                 autonomy=Autonomy.NOTIFY,
-                hosts=CALENDAR_HOSTS,
+                hosts=hosts,
                 credentials=CALENDAR_CREDENTIALS,
             ),
             handler=update,
@@ -559,7 +568,7 @@ def calendar_tools(backend: CalendarBackend, config: CalendarConfig) -> list[Too
                 params=DeleteParams,
                 effect=Effect.INTERNAL,
                 autonomy=Autonomy.NOTIFY,
-                hosts=CALENDAR_HOSTS,
+                hosts=hosts,
                 credentials=CALENDAR_CREDENTIALS,
             ),
             handler=delete,
@@ -574,7 +583,7 @@ def calendar_tools(backend: CalendarBackend, config: CalendarConfig) -> list[Too
                 params=MainWriteParams,
                 effect=Effect.VISIBLE,
                 autonomy=Autonomy.ASK,
-                hosts=CALENDAR_HOSTS,
+                hosts=hosts,
                 credentials=CALENDAR_CREDENTIALS,
             ),
             handler=main_write,
@@ -590,7 +599,7 @@ def calendar_tools(backend: CalendarBackend, config: CalendarConfig) -> list[Too
                 params=InviteParams,
                 effect=Effect.VISIBLE,
                 autonomy=Autonomy.ASK,
-                hosts=CALENDAR_HOSTS,
+                hosts=hosts,
                 credentials=CALENDAR_CREDENTIALS,
             ),
             handler=invite,

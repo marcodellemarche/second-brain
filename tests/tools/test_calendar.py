@@ -14,6 +14,8 @@ from pydantic import ValidationError
 
 from second_brain.core.types import Autonomy, Effect
 from second_brain.tools.calendar import (
+    CALENDAR_HOSTS,
+    SERVICE_ACCOUNT_HOSTS,
     CalendarConfig,
     CalendarError,
     CalendarEvent,
@@ -632,3 +634,26 @@ def test_a_key_that_cannot_be_signed_is_a_backend_error(tmp_path: Path) -> None:
 def _b64decode(value: str) -> bytes:
     padding = "=" * (-len(value) % 4)
     return base64.urlsafe_b64decode(value + padding)
+
+
+def test_a_service_account_deployment_also_reaches_the_token_host() -> None:
+    # The assertion is traded for a token at oauth2.googleapis.com before any API call, so a
+    # deployment with a service account has to be allowed to reach it.
+    assert "oauth2.googleapis.com" in SERVICE_ACCOUNT_HOSTS
+    assert "oauth2.googleapis.com" not in CALENDAR_HOSTS
+
+
+def test_extra_hosts_land_on_every_calendar_tool() -> None:
+    backend = GoogleCalendarBackend(lambda: "token-1", "Europe/Rome")
+    config = CalendarConfig(
+        assistant_calendar_id="a@example.test",
+        main_calendar_id="m@example.test",
+        timezone="Europe/Rome",
+    )
+
+    tools = calendar_tools(backend, config, extra_hosts=SERVICE_ACCOUNT_HOSTS)
+
+    assert tools
+    for tool in tools:
+        assert "oauth2.googleapis.com" in tool.spec.hosts
+        assert "www.googleapis.com" in tool.spec.hosts

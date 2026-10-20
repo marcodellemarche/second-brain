@@ -21,6 +21,7 @@ from second_brain.core.schema import SchemaError, load_schema
 from second_brain.core.types import Zone
 from second_brain.tools.archive import ArchiveConfig, archive_tools
 from second_brain.tools.calendar import (
+    SERVICE_ACCOUNT_HOSTS,
     CalendarBackend,
     CalendarConfig,
     GoogleCalendarBackend,
@@ -267,7 +268,13 @@ def _check_credentials(registry: Registry) -> None:
 def _optional_tools(config: ToolsConfig, backend: CalendarBackend | None) -> list[Tool]:
     tools: list[Tool] = []
     if config.calendar is not None:
-        tools.extend(calendar_tools(backend or _calendar_backend(config), config.calendar.calendar_config()))
+        tools.extend(
+            calendar_tools(
+                backend or _calendar_backend(config),
+                config.calendar.calendar_config(),
+                extra_hosts=SERVICE_ACCOUNT_HOSTS if config.calendar.service_account_file else (),
+            )
+        )
     if config.weather is not None and config.weather.enabled:
         tools.extend(weather_tools())
     if config.links is not None:
