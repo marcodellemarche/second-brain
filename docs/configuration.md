@@ -27,6 +27,8 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `schedule.digest` | `["08:00", "20:00"]` | Local times of the digest, one entry per time. |
 | `schedule.lint` | `"03:30"` | Local time of the nightly lint. |
 | `schedule.brief` | `["07:00", "13:00"]` | Local times of the brief before a call. |
+| `schedule.triage` | `["21:00"]` | Local times of the inbox triage. |
+| `schedule.skills` | `{}` | Skills this instance schedules by name, each with its local times, for example `{dailies: ["03:00"]}`. Each one gets a `scheduled-<skill>` route that loads only that skill and never delivers. The name cannot be `digest`, `lint`, `brief` or `triage`. |
 | `calls.capture_dir` | the inbox calls folder | Vault-relative folder the call router watches. |
 | `calls.team_domains` | `[]` | Email domains that make a call a team call. `sb check` refuses them in a `personal` brain, where there is nowhere to route them, and expects them in a `team` one, which is where those calls land. |
 | `calls.personal_markers` | `[]` | Strings in the event or the domain that keep a call personal. |
@@ -116,6 +118,8 @@ schedule:
   digest: ["08:00", "20:00"]
   lint: "03:30"
   brief: ["07:00", "13:00"]
+  triage: ["21:00"]
+  # skills: {dailies: ["03:00"]}
 
 calls:
   # Vault-relative folder the call router watches. Left out it is <inbox>/calls.

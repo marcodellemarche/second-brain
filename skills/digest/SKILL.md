@@ -7,13 +7,15 @@ description: "Morning and evening digest: what happened, what the brain did with
 
 Two runs a day, morning and evening, sent to the owner on the chat channel. The digest is not a report of everything the vault holds: it is the short list of things the owner would want to know now, in the brain's language, scannable in under a minute.
 
-Read `_meta/SCHEMA.md` first and resolve every zone through its `zones` block: `_brain`, `_meta`, `documents`, `calls`. Folders follow the vault's language, frontmatter stays in English. A `_brain/<name>` page in this skill is a logical name: the real file is the one the schema's `brain_pages` block names, for example `_brain/commitments` is `_brain/impegni.md` in an Italian vault.
+Read `_meta/SCHEMA.md` first and resolve every zone through its `zones` block: `_brain`, `_meta`, `documents`, `calls`. The `profile` page comes from the `brain_pages` block like the others. Folders follow the vault's language, frontmatter stays in English. A `_brain/<name>` page in this skill is a logical name: the real file is the one the schema's `brain_pages` block names, for example `_brain/commitments` is `_brain/impegni.md` in an Italian vault.
 
 The morning and evening messages do not count against the initiative budget, so they are not sent through the `notify` tool. Compose them and answer in the conversation.
 
 ## Sections, in this order
 
 Keep a section only when it has something in it. Skip it silently otherwise: an empty heading is noise.
+
+**Today.** The morning run (a `due` before noon) opens with one line of weather for where the owner is today: `weather` with the place from the current entry the `location` skill keeps in the profile page, or the residence written there when no entry is current. Sky, min and max, rain only when the chance is above 30% (with the hours), wind only when gusts go over 50 km/h. If the calendar shows a trip in the next three days, add half a line with the weather at the destination for that day. Then today's events from `calendar_list` on both calendars, one line each, with the time in the owner's timezone. The evening run skips the weather and lists tomorrow's events instead. This section is always there in the morning, even when nothing else is: a morning digest is at least the weather line.
 
 **Since the last digest.** One line per thing that happened, newest first, taken from the `_meta/log.md` entries written since the previous digest and from the recent vault commits the tools list (path, one-line reason, short commit id). Call `vault_log` with `since` set to the time of the previous digest, so the list starts where the last digest stopped. Group the small stuff: "4 captures, 2 call notes". Leave out the routine internals the owner does not care about.
 
@@ -25,7 +27,7 @@ Keep a section only when it has something in it. Skip it silently otherwise: an 
 
 **Held back.** Notes the owner edited that the vault left uncommitted because they look like a credential: the vault's held-back list gives the path and which rule matched. Tell the owner which file to clean, and never print the value, not even a fragment. Say that until the secret is gone the file stays outside the commits.
 
-**Waiting for you.** Open questions that need the owner's answer: a call the router could not classify (`status: pending-team-question` in a call note, with the reason it gave), a `notify_feedback` proposal waiting for a yes, anything the policy sent to `ask` and is still pending, and the memory writes staged for approval, which stay pending until the owner approves them. One line each, with what happens on yes and on no. The staged memory writes appear only when a tool lists them: if no tool does, leave that line out instead of guessing what is waiting.
+**Waiting for you.** Open questions that need the owner's answer: a call the router could not classify (`status: pending-team-question` in a call note, with the reason it gave), a capture the triage could not place (`status: pending-review` in an inbox note, with what is missing), a `notify_feedback` proposal waiting for a yes, anything the policy sent to `ask` and is still pending, and the memory writes staged for approval, which stay pending until the owner approves them. One line each, with what happens on yes and on no. The staged memory writes appear only when a tool lists them: if no tool does, leave that line out instead of guessing what is waiting.
 
 ## Tone and length
 
@@ -33,7 +35,7 @@ Keep a section only when it has something in it. Skip it silently otherwise: an 
 - Say how sure you are when a line is an inference: "probably", "looks like".
 - No emoji in the digest text. A single leading line naming the time of day is enough.
 - Answer in the brain's language, with the vault's own words for the folders when you name a path.
-- If nothing happened and nothing is due, say that in one line. Do not pad.
+- If nothing happened and nothing is due, say that in one line after the weather. Do not pad.
 
 ## Rules
 
