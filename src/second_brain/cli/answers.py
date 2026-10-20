@@ -333,6 +333,22 @@ class JobKindAnswers(BaseModel):
     web: bool = Field(description="True when the route can reach the web. There is no default.")
 
 
+class StackLimitsAnswers(BaseModel):
+    """A ceiling for every container of the instance, enforced by the kernel through a slice.
+
+    The per-service limits are what one container may use; this is what the whole stack may use,
+    for a host that runs other things. Docker puts each container under `<slice>` with
+    `cgroup_parent`, and systemd holds `MemoryMax` and `CPUQuota` on that slice, so the total is
+    the kernel's job and not a sum somebody has to keep in step with the compose file.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    slice: str = Field(pattern=r"^[a-zA-Z0-9_-]+\.slice$")
+    memory_mb: int = Field(ge=256)
+    cpus: float = Field(gt=0)
+
+
 class Answers(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -365,6 +381,7 @@ class Answers(BaseModel):
         default=None,
         description="Image for the brain services, when the instance builds its own with its tools.",
     )
+    stack_limits: StackLimitsAnswers | None = None
     tools: ToolsAnswers = Field(default_factory=ToolsAnswers)
     job_kinds: dict[str, JobKindAnswers] = Field(default_factory=dict)
     # Read-only host folders for instance tools: the vault, the data dir and the secrets are the

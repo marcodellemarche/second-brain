@@ -154,6 +154,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 120s
+    cpus: 2.0
     mem_limit: 3g
     pids_limit: 512
 
@@ -227,6 +228,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    cpus: 0.5
     mem_limit: 512m
     pids_limit: 256
 
@@ -255,6 +257,7 @@ services:
       timeout: 5s
       retries: 3
     # XTTS peaks at ~4 GB with the checkpoint in mmap, so the limit is the room it needs.
+    cpus: 1.0
     mem_limit: 5g
     pids_limit: 256
 {% endif %}
@@ -289,6 +292,7 @@ services:
       interval: 60s
       timeout: 5s
       retries: 3
+    cpus: 0.25
     mem_limit: 256m
     pids_limit: 128
 {% endif %}
@@ -312,6 +316,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    cpus: 0.25
     mem_limit: 256m
     pids_limit: 128
 
@@ -338,6 +343,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    cpus: 0.1
     mem_limit: 128m
     pids_limit: 128
 
@@ -355,6 +361,7 @@ services:
       - ./config/sidecars.yaml:/etc/second-brain/sidecars.yaml:ro
     secrets: [webhook_ingest]
     healthcheck: *sidecar-health
+    cpus: 0.1
     mem_limit: 256m
     pids_limit: 128
 
@@ -372,6 +379,7 @@ services:
       - ./config/sidecars.yaml:/etc/second-brain/sidecars.yaml:ro
     secrets: [webhook_ingest]
     healthcheck: *sidecar-health
+    cpus: 0.1
     mem_limit: 256m
     pids_limit: 128
 
@@ -391,6 +399,7 @@ services:
       - data:/data
     secrets: [webhook_research, webhook_idea]
     healthcheck: *sidecar-health
+    cpus: 0.25
     mem_limit: 256m
     pids_limit: 128
 
@@ -413,6 +422,7 @@ services:
     healthcheck: *sidecar-health
     # Its poll sleeps up to 30s, so a stop has to wait longer than Docker's 10s default.
     stop_grace_period: 40s
+    cpus: 0.1
     mem_limit: 128m
     pids_limit: 64
 
@@ -434,6 +444,7 @@ services:
       interval: 60s
       timeout: 10s
       retries: 3
+    cpus: 0.25
     mem_limit: 256m
     pids_limit: 128
 
@@ -456,5 +467,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    cpus: 0.5
     mem_limit: 512m
     pids_limit: 128

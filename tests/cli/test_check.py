@@ -726,3 +726,41 @@ def test_a_scheduled_route_without_a_hermes_block_fails(tmp_path: Path) -> None:
     status, reason = _status(directory, "scheduled_routes")
     assert status == FAIL
     assert "scheduled-foo is not one of" in reason
+
+
+# --- the stack ceiling ----------------------------------------------------------------------
+
+SLICE = "brain-team.slice"
+
+
+def _sliced_instance(tmp_path: Path, name: str = "sliced-instance") -> Path:
+    raw = yaml.safe_load(SAMPLE.read_text(encoding="utf-8"))
+    raw["vault_dir"] = str(tmp_path / "vault")
+    raw["media_dir"] = str(tmp_path / "media")
+    raw["archive_dir"] = str(tmp_path / "archive")
+    raw["stack_limits"] = {"slice": SLICE, "memory_mb": 4096, "cpus": 2}
+    answers_file = tmp_path / "answers.yaml"
+    answers_file.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    directory = tmp_path / name
+    init(Answers.from_yaml(answers_file), directory)
+    return directory
+
+
+def test_a_brain_without_a_ceiling_passes_the_slice_check(instance: Path) -> None:
+    status, reason = _status(instance, "compose.slice")
+    assert status == PASS
+    assert "no stack ceiling" in reason
+
+
+def test_a_brain_under_a_slice_passes_the_slice_check(tmp_path: Path) -> None:
+    status, reason = _status(_sliced_instance(tmp_path), "compose.slice")
+    assert status == PASS
+    assert SLICE in reason
+
+
+def test_a_service_outside_the_slice_fails(tmp_path: Path) -> None:
+    directory = _sliced_instance(tmp_path)
+    _edit_yaml(directory / "compose.yaml", lambda data: data["services"]["hermes"].pop("cgroup_parent"))
+    status, reason = _status(directory, "compose.slice")
+    assert status == FAIL
+    assert "hermes" in reason

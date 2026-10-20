@@ -231,6 +231,7 @@ def static_checks(instance: Path) -> list[CheckResult]:
             ("compose.no-published-ports", partial(_compose_ports_check, ctx)),
             ("compose.internal-network", partial(_compose_network_check, ctx)),
             ("compose.hermes-proxy", partial(_compose_proxy_check, ctx)),
+            ("compose.slice", partial(_compose_slice_check, ctx)),
             ("hermes.approvals", partial(_approvals_check, ctx)),
             ("hermes.terminal", partial(_terminal_check, ctx)),
             ("hermes.owner", partial(_owner_check, ctx)),
@@ -585,6 +586,30 @@ def _compose_proxy_check(ctx: _Instance) -> CheckResult:
     if not value:
         return _fail(name, f"{HERMES} has no HTTPS_PROXY: it would not be forced through egress")
     return _pass(name, f"{HERMES} reaches the internet only through {value}")
+
+
+def _compose_slice_check(ctx: _Instance) -> CheckResult:
+    name = "compose.slice"
+    services, error = _services(ctx)
+    if error is not None:
+        return _fail(name, error)
+    parents = {
+        service_name: (service.get("cgroup_parent") if isinstance(service, dict) else None)
+        for service_name, service in services.items()
+    }
+    declared = sorted({parent for parent in parents.values() if parent})
+    if not declared:
+        return _pass(name, "no stack ceiling")
+    if len(declared) > 1:
+        listed = "; ".join(f"{service_name}: {parent}" for service_name, parent in parents.items() if parent)
+        return _fail(name, "services disagree about the slice: " + listed)
+    slice_name = declared[0]
+    missing = [service_name for service_name, parent in parents.items() if parent != slice_name]
+    if missing:
+        return _fail(name, f"not under {slice_name}: " + ", ".join(missing))
+    if not (ctx.root / "systemd" / slice_name).is_file():
+        return _fail(name, f"systemd/{slice_name} is missing, so nothing enforces the ceiling")
+    return _pass(name, f"every container runs under {slice_name}, and systemd caps the slice")
 
 
 # --- the Hermes config ----------------------------------------------------------------------

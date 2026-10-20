@@ -17,7 +17,12 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from second_brain.cli.answers import MAIL_RULES_IN_CONTAINER, Answers, AnswersError
+from second_brain.cli.answers import (
+    MAIL_RULES_IN_CONTAINER,
+    Answers,
+    AnswersError,
+    StackLimitsAnswers,
+)
 from second_brain.cli.render import render_template
 from second_brain.cli.secrets import (
     CALENDAR_TOKEN,
@@ -519,11 +524,35 @@ def render_deploy(answers: Answers, registry: Registry, generated: Mapping[str, 
     """The deploy files, keyed by their path inside the instance directory."""
     values = template_values(answers, registry, generated)
     deploy = TEMPLATES / "deploy"
-    return {
-        "compose.yaml": render_template(deploy / "compose.yaml.j2", values),
+    compose = render_template(deploy / "compose.yaml.j2", values)
+    files = {
         "config/squid.conf": render_template(deploy / "squid.conf.j2", values),
         "config/searxng/settings.yml": render_template(deploy / "searxng" / "settings.yml.j2", values),
     }
+    limits = answers.stack_limits
+    if limits is None:
+        return {"compose.yaml": compose, **files}
+    return {
+        "compose.yaml": _under_slice(compose, limits.slice),
+        f"systemd/{limits.slice}": _slice_unit(answers.instance_name, limits),
+        **files,
+    }
+
+
+def _under_slice(compose: str, slice_name: str) -> str:
+    """Put every service under the slice, by a text insertion so the comments survive."""
+    return compose.replace("\n    mem_limit:", f"\n    cgroup_parent: {slice_name}\n    mem_limit:")
+
+
+def _slice_unit(instance_name: str, limits: StackLimitsAnswers) -> str:
+    return (
+        "[Unit]\n"
+        f"Description=Ceiling for every container of {instance_name}\n"
+        "\n"
+        "[Slice]\n"
+        f"MemoryMax={limits.memory_mb}M\n"
+        f"CPUQuota={int(limits.cpus * 100)}%\n"
+    )
 
 
 def render_hermes(answers: Answers, registry: Registry, generated: Mapping[str, str]) -> dict[str, str]:

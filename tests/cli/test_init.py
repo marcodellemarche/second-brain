@@ -1297,3 +1297,32 @@ def test_a_policy_naming_an_unknown_tool_stops_init(tmp_path: Path, answers_file
     with pytest.raises(AnswersError, match="unknown tool: no_such_tool"):
         init(answers, instance)
     assert not (instance / "config" / "brain-guard.yaml").exists()
+
+
+STACK_LIMITS = {"slice": "brain-team.slice", "memory_mb": 4096, "cpus": 2}
+
+
+def test_the_stack_limits_put_every_service_under_the_slice(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(tmp_path, answers_file, stack_limits=STACK_LIMITS)
+    directory = tmp_path / "sliced-instance"
+    init(answers, directory)
+    compose = yaml.safe_load((directory / "compose.yaml").read_text(encoding="utf-8"))
+    assert compose["services"]
+    for name, service in compose["services"].items():
+        assert service.get("cgroup_parent") == "brain-team.slice", name
+    unit = (directory / "systemd" / "brain-team.slice").read_text(encoding="utf-8")
+    assert "[Slice]" in unit
+    assert "MemoryMax=4096M" in unit
+    assert "CPUQuota=200%" in unit
+
+
+def test_without_stack_limits_nothing_is_put_under_a_slice(instance: Path) -> None:
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    for name, service in compose["services"].items():
+        assert "cgroup_parent" not in service, name
+    assert not (instance / "systemd").exists()
+
+
+def test_a_slice_name_that_is_not_a_slice_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError, match="slice"):
+        _answers_with(tmp_path, answers_file, stack_limits={**STACK_LIMITS, "slice": "brain-team"})
