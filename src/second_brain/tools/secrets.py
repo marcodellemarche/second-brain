@@ -57,16 +57,29 @@ _RULES: tuple[tuple[str, Pattern[str]], ...] = (
             r"client_secret|password|passwd|sig|signature|auth)=(?P<value>[^&#\s]{8,})"
         ),
     ),
+    # `scheme://user:password@host`, and `curl -u user:password`, carry one too.
+    (
+        "url_userinfo_password",
+        re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s/:@]+:(?P<value>[^\s/@]{6,})@"),
+    ),
+    (
+        "curl_basic_auth",
+        re.compile(r"\bcurl\b[^\n]*?\s(?:-u|--user)[ =]['\"]?[^\s:'\"]+:(?P<value>[^\s'\"]{6,})"),
+    ),
 )
 
+_VALUE_RULES = frozenset({"assignment", "url_query_secret", "url_userinfo_password", "curl_basic_auth"})
 _ENTROPY_RE = re.compile(rf"[A-Za-z0-9+/=_-]{{{ENTROPY_MIN_LENGTH},}}")
 _URL_RE = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.\-]*://\S+")
 _WIKILINK_RE = re.compile(r"\[\[[^\]]*\]\]")
+# A path is structure, like a URL: its entropy comes from long readable segments, not from a key.
+_PATH_RE = re.compile(r"(?:^|[\s`'\"(\[])(?:~?/|\.{1,2}/)[^\s`'\"()\[\]]+", re.MULTILINE)
+_RELATIVE_PATH_RE = re.compile(r"(?<![\w/])[\w.-]+(?:/[\w.-]+){2,}/?", re.MULTILINE)
 
 
 def _is_placeholder(value: str) -> bool:
     value = value.strip("\"'`").lower()
-    if not value or value.startswith("<") or value.startswith("${"):
+    if not value or value.startswith("<") or value.startswith("$"):
         return True
     if not value.strip("*x"):
         return True
@@ -82,12 +95,14 @@ def _in_exempt_span(spans: list[tuple[int, int]], start: int) -> bool:
 
 
 def _exempt_spans(text: str) -> list[tuple[int, int]]:
-    """A wikilink or a URL without credentials is structure, not a secret."""
+    """A wikilink, a URL without credentials or a filesystem path is structure, not a secret."""
     spans = [(span.start(), span.end()) for span in _WIKILINK_RE.finditer(text)]
     for span in _URL_RE.finditer(text):
         netloc = span.group(0).split("://", 1)[1].split("/", 1)[0]
         if "@" not in netloc:
             spans.append((span.start(), span.end()))
+    spans.extend((span.start(), span.end()) for span in _PATH_RE.finditer(text))
+    spans.extend((span.start(), span.end()) for span in _RELATIVE_PATH_RE.finditer(text))
     return spans
 
 
@@ -99,7 +114,7 @@ def _shannon_entropy(value: str) -> float:
 def _candidates(text: str) -> Iterator[_Match]:
     for rule, pattern in _RULES:
         for match in pattern.finditer(text):
-            if rule in ("assignment", "url_query_secret") and _is_placeholder(match.group("value")):
+            if rule in _VALUE_RULES and _is_placeholder(match.group("value")):
                 continue
             yield _Match(rule, match.start(), match.end(), match.group(0))
 

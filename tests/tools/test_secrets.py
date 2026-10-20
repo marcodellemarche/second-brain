@@ -178,3 +178,44 @@ def test_a_credential_in_a_url_query_is_flagged(url: str) -> None:
 )
 def test_an_ordinary_url_query_is_not_flagged(url: str) -> None:
     assert scan(f"See {url} for details.") == []
+
+
+def _db_password() -> str:
+    return "".join(["Qw3", "Er7", "Ty1", "Ui9", "Op5", "As2"])
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "source_audio_remote: /home/someone/recordings/call-20261019-165257-remote.wav",
+        "Photos are in raw/sources/house/35330419/video/frames, see them there.",
+        "Original: ~/documents/2026-01_contract-signed-by-both-parties.pdf",
+        "Wrote it in ./notes/2026-10-19-standup-with-the-team.md today.",
+    ],
+)
+def test_a_filesystem_path_is_not_a_secret(note: str) -> None:
+    assert scan(note) == []
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        f"postgres://reader:{_db_password()}@db.internal:5432/app",
+        f"curl -u admin:{_db_password()} https://api.internal/v1/items",
+        f"curl --user admin:{_db_password()} https://api.internal/v1/items",
+    ],
+)
+def test_a_password_inside_a_connection_string_is_flagged(note: str) -> None:
+    assert len(scan(note)) == 1
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "postgres://reader:$DB_PASSWORD@db.internal:5432/app",
+        "postgres://reader:${DB_PASSWORD}@db.internal:5432/app",
+        "curl -u admin:$API_TOKEN https://api.internal/v1/items",
+    ],
+)
+def test_a_connection_string_pointing_at_an_env_var_is_not_flagged(note: str) -> None:
+    assert scan(note) == []
