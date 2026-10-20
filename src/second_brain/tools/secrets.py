@@ -78,6 +78,12 @@ _RELATIVE_PATH_RE = re.compile(r"(?<![\w/])[\w.-]+(?:/[\w.-]+){2,}/?", re.MULTIL
 # A slug or a path: lowercase words joined by `/` or `-`. Random keys mix case or carry no separator.
 _LOWERCASE_SEGMENT = re.compile(r"[a-z0-9_.]+")
 _UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+# A file name can be long and mixed case; the extension at the end of the token gives it away.
+_FILE_NAME_RE = re.compile(
+    r"^\S+\.(?:pdf|md|markdown|txt|json|ya?ml|toml|csv|tsv|png|jpe?g|gif|webp|heic|svg|mp4|mov|wav|mp3|"
+    r"excalidraw|base|sh|py|go|rs|ts|tsx|js|jsx|html|css|sql|patch|diff|docx?|xlsx?|pptx?)$",
+    re.IGNORECASE,
+)
 
 
 def _is_placeholder(value: str) -> bool:
@@ -93,10 +99,21 @@ def _looks_like_digest(text: str, start: int) -> bool:
     return "sha256" in text[max(0, start - 24) : start].lower()
 
 
-def _looks_like_path(value: str) -> bool:
-    """A lowercase slug, a relative path or a UUID reads as high entropy but is structure."""
+def _looks_like_path(value: str, text: str = "", start: int = 0, end: int = 0) -> bool:
+    """A lowercase slug, a relative path, a UUID or a file name reads as high entropy but is structure."""
     if _UUID_RE.fullmatch(value):
         return True
+    if text:
+        # The match may be one segment of a longer file name: look at the token around it.
+        delimiters = " \t\n\r[]()|`'\"<>"
+        token_start = start
+        while token_start > 0 and text[token_start - 1] not in delimiters:
+            token_start -= 1
+        token_end = end
+        while token_end < len(text) and text[token_end] not in delimiters:
+            token_end += 1
+        if _FILE_NAME_RE.fullmatch(text[token_start:token_end]):
+            return True
     if "/" not in value and "-" not in value:
         return False
     if "/" in value and " " not in value:
@@ -137,7 +154,7 @@ def _candidates(text: str) -> Iterator[_Match]:
     for match in _ENTROPY_RE.finditer(text):
         if _looks_like_digest(text, match.start()):
             continue
-        if _looks_like_path(match.group(0)):
+        if _looks_like_path(match.group(0), text, match.start(), match.end()):
             continue
         if _in_exempt_span(spans, match.start()):
             continue

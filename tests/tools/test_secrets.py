@@ -245,3 +245,14 @@ def test_a_lowercase_slug_or_a_uuid_is_not_a_secret(note: str) -> None:
 )
 def test_a_mixed_case_key_is_still_a_secret(value: str) -> None:
     assert len(scan(value)) == 1
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "| **File** | [11 Home/Registration_Confirmation_AIRE_1742973614.2977.pdf](https://x/f/1) |",
+        "See the scan at scans/2026-01_Contract-Signed-By-Both-Parties-Final-v2.pdf today.",
+    ],
+)
+def test_a_file_name_is_not_a_secret(note: str) -> None:
+    assert scan(note) == []
