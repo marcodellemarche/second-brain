@@ -29,6 +29,7 @@ The order matters: the static checks pass before anything starts, and the live c
 | `compose.no-published-ports` | A service publishes a port on the host. |
 | `compose.internal-network` | Hermes is reachable from a network other than the internal one. |
 | `compose.hermes-proxy` | Hermes can leave the machine without going through the egress proxy. |
+| `compose.slice` | With `stack_limits`, a service lacks the shared `cgroup_parent` or the `systemd/<slice>` file is missing. |
 | `hermes.approvals` | Approvals are not manual, or cron and unattended runs are not set to deny. |
 | `hermes.terminal` | The terminal does not run in its own container over ssh. |
 | `hermes.owner` | Someone other than the owner is allowed, or the owner is not admin. |
@@ -36,8 +37,9 @@ The order matters: the static checks pass before anything starts, and the live c
 | `hermes.research-routes` | A research route has MCP or lacks web. |
 | `sidecars_config` | `config/sidecars.yaml` does not load. |
 | `sidecar_routes` | A sidecar route is missing in Hermes, or its secret file is missing. |
-| `team_domains` | Team domains are set before a team brain exists. |
+| `team_domains` | Team domains are set in a `personal` brain, where a team call has nowhere to go. |
 | `scheduled_routes` | A scheduled route has web, mirrors into chat, or something other than the digest delivers. |
+| `tools.listen` | brain-tools listens on loopback, so Hermes cannot reach it. |
 | `guard.tools` | The guard tool table and the tools registry disagree. |
 | `squid.registries` | A package registry is not blocked. |
 
@@ -49,6 +51,8 @@ The order matters: the static checks pass before anything starts, and the live c
 | `live.vault-read-only` | A write from Hermes into the vault succeeds. |
 | `live.no-docker-socket` | Hermes can see the Docker socket. |
 | `live.heartbeat` | The guard heartbeat is missing or stale. |
+| `live.watchdog-docker` | The watchdog cannot read the Docker socket, so it could not stop Hermes. |
+| `live.gate-stale-heartbeat` | Always skipped: stopping Hermes to prove the gate refuses is too invasive for a live check, and unit tests cover it. |
 
 The live checks are the ones that catch a config that looks right and behaves wrong, so run them after every change, not only on the first deploy.
 

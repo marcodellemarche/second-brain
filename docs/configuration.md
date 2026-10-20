@@ -10,6 +10,7 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | --- | --- | --- |
 | `instance_name` | required, `^[a-z0-9][a-z0-9_-]{0,62}$` | Container names and the generated README. |
 | `language` | `en` (`it` or `en`) | Which vault template is scaffolded and which language the model is told to write in. |
+| `shape` | `personal` (`personal` or `team`) | A `team` brain gets the four shared zones (`systems`, `incidents`, `decisions`, `runbooks`), no `_brain/` and no `documents/`, and may route its team calls; a `personal` one is the opposite. |
 | `owner_name` | required | Who the brain belongs to, in `USER.md` and the prompts. |
 | `owner_telegram_id` | none | The Telegram chat the brain answers. Set this or `slack`, not both and not neither. |
 | `slack.owner_id`, `slack.home_channel` | none | The same for a team brain on Slack: member id and default channel. |
@@ -23,6 +24,10 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `tools` | all off | Which optional tool groups exist. See below. |
 | `job_kinds` | none | Background job kinds the model may queue. See below. |
 | `brain_tools_mounts` | `[]` | `host` and `container` of a folder an instance tool reads. Both absolute, no `..`, always mounted read-only, and not `/vault`, `/data`, `/run/secrets` or a path inside them. |
+| `instance_skills_dir` | none | Absolute host folder of the skills the instance adds, one `<name>/SKILL.md` each. `sb init` copies them next to the product skills on every run and refuses a name a product skill already has. |
+| `brain_image` | the product brain image | Image of the brain services, for an instance that builds its own with its tools installed on top. |
+| `vault_group_gid` | none | gid of the group that owns the vault when another service writes it too (a Nextcloud data folder). Every brain service joins the group and notes are written group-writable. |
+| `stack_limits` | none | `slice` (a systemd slice name), `memory_mb`, `cpus`: a ceiling for the whole stack. Every service gets `cgroup_parent: <slice>`, and `sb init` writes `systemd/<slice>` for the operator to install in `/etc/systemd/system`, so the kernel enforces the total. |
 | `staging` | none | `host_dir`, an absolute host folder, and `poll_seconds` (`60`). Where the owner moves candidates from another brain: brain_tools imports each text note into the inbox as `type: capture` with `trust: untrusted`, refuses anything that looks like a secret, and moves the file to `done/` or `failed/`. Mounted read-write at `/staging`, only into brain-tools. |
 | `schedule.digest` | `["08:00", "20:00"]` | Local times of the digest, one entry per time. |
 | `schedule.lint` | `"03:30"` | Local time of the nightly lint. |

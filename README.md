@@ -14,7 +14,7 @@ src/second_brain/
   core/               config, vault schema, shared types
   guard/              Hermes plugin (brain_guard): policy engine, session state, audit
   tools/              MCP server (brain_tools): registry, core tools, vault ops
-  sidecars/           vault watcher, transcript watcher, job runner
+  sidecars/           vault watcher, call router, job runner, scheduler
   gate/               model gate and watchdog
   cli/                `sb` command: init an instance, scaffold a vault, check a deployment
 templates/            vault/{it,en}, hardened Hermes config, deploy compose and egress proxy

@@ -17,7 +17,7 @@ brain_tools (container) ── the ONLY writer of the vault, the ONLY holder of 
    core tools: vault_write / vault_move / vault_delete / vault_undo, calendar, weather,
                nextcloud_link, archive_store / archive_discard, job_enqueue
    extension API: instance repos add their own tools
-sidecars ── vault watcher, transcript watcher, job runner ─► Hermes webhooks (HMAC)
+sidecars ── vault watcher, call router, job runner, scheduler ─► Hermes webhooks (HMAC)
 model_gate ── reverse proxy in front of the model endpoint: holds the API key, refuses
               requests when the watchdog says brain_guard is not loaded
 watchdog ── stops Hermes if the brain_guard heartbeat is missing or stale
@@ -60,7 +60,7 @@ docs/                 architecture, threat model, configuration, extending
 src/second_brain/
   guard/              Hermes plugin (brain_guard): policy engine, session state, budget, sanitizer, audit
   tools/              MCP server (brain_tools): registry, core tools, vault ops, secret scanner
-  sidecars/           vault watcher, transcript watcher, job runner
+  sidecars/           vault watcher, call router, job runner, scheduler
   gate/               model gate and watchdog
   cli/                `sb` command: init an instance, scaffold a vault, check a deployment
 templates/
