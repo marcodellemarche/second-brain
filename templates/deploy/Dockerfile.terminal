@@ -1,5 +1,6 @@
 # The terminal container Hermes reaches over ssh (terminal.backend: ssh). It runs nothing else:
-# a shell, the tools the agent needs, and sshd. No Docker socket, no credentials, no vault.
+# a shell, the tools the agent needs, and sshd. No Docker socket, no credentials, and the vault
+# mounted read-only, because Hermes' file tools run here and see the same `/vault` paths.
 FROM debian:bookworm-slim
 
 RUN apt-get update \
@@ -11,24 +12,32 @@ RUN apt-get update \
         git \
     && rm -rf /var/lib/apt/lists/*
 
-# Key-only access: authorized_keys comes from a mounted secret, so there is no password to set.
+# Key-only access: authorized_keys is mounted by the host operator, so there is no password to set.
 RUN useradd --create-home --shell /bin/bash agent \
-    && mkdir -p /home/agent/.ssh /run/sshd \
-    && chmod 700 /home/agent/.ssh \
-    && chown -R agent:agent /home/agent/.ssh
+    && mkdir -p /run/sshd /etc/ssh/authorized_keys \
+    && chown agent:agent /etc/ssh/authorized_keys
 
+# sshd runs as the unprivileged agent, so the host key is generated here and owned by it.
+RUN ssh-keygen -t ed25519 -N '' -f /etc/ssh/agent_host_ed25519_key \
+    && chown agent:agent /etc/ssh/agent_host_ed25519_key*
+
+# No pid file: the image is read-only at runtime. StrictModes is off because the mounted
+# authorized_keys belongs to the host operator, not to agent.
 RUN printf '%s\n' \
     'Port 2222' \
+    'HostKey /etc/ssh/agent_host_ed25519_key' \
+    'PidFile none' \
     'PermitRootLogin no' \
     'PasswordAuthentication no' \
     'KbdInteractiveAuthentication no' \
     'ChallengeResponseAuthentication no' \
     'UsePAM no' \
     'PubkeyAuthentication yes' \
-    'AuthorizedKeysFile /home/agent/.ssh/authorized_keys' \
+    'AuthorizedKeysFile /etc/ssh/authorized_keys/%u' \
     'AllowUsers agent' \
     'X11Forwarding no' \
     'PrintMotd no' \
+    'StrictModes no' \
     > /etc/ssh/sshd_config
 
 EXPOSE 2222

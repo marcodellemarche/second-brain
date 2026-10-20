@@ -424,3 +424,143 @@ def test_an_explicit_initiative_path_wins_over_the_schema(tmp_path: Path, answer
     tools = ToolsConfig.from_yaml(tmp_path / "explicit-instance" / "config" / "brain-tools.yaml")
     assert tools.notify is not None
     assert tools.notify.initiative_path == "_brain/mia-iniziativa.md"
+
+
+def test_the_docker_group_from_the_answers_wins(tmp_path: Path, answers_file: Path) -> None:
+    from second_brain.cli.config import template_values
+
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["docker_gid"] = 999
+    path = tmp_path / "gid.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with_group = Answers.from_yaml(path)
+    plain = Answers.from_yaml(answers_file)
+    assert template_values(with_group, _registry(with_group), _generated(plain))["docker_gid"] == 999
+    # Without the answer it is the socket's group, or 0 when there is no socket to look at.
+    assert template_values(plain, _registry(plain), _generated(plain))["docker_gid"] == _socket_gid()
+
+
+def _socket_gid() -> int:
+    try:
+        return Path("/var/run/docker.sock").stat().st_gid
+    except OSError:
+        return 0
+
+
+def _registry(answers: Answers):
+    from second_brain.cli.config import export_registry, tools_config
+
+    return export_registry(tools_config(answers))
+
+
+def _generated(answers: Answers) -> dict[str, str]:
+    from second_brain.cli.secrets import SEARXNG_KEY
+
+    return {SEARXNG_KEY: "sample-searxng-key-not-a-real-one"}
+
+
+def test_the_gate_upstream_has_no_v1_suffix(tmp_path: Path, answers_file: Path) -> None:
+    from second_brain.cli.config import model_upstream, template_values
+
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["model_endpoint"] = "https://model.example.com/v1"
+    path = tmp_path / "endpoint.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with_v1 = Answers.from_yaml(path)
+    assert model_upstream(with_v1) == "https://model.example.com"
+    assert template_values(with_v1, _registry(with_v1), _generated(with_v1))["model_upstream"] == (
+        "https://model.example.com"
+    )
+    # The other form keeps working: it is the endpoint as written.
+    raw["model_endpoint"] = "https://model.example.com"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    without_v1 = Answers.from_yaml(path)
+    assert model_upstream(without_v1) == "https://model.example.com"
+
+
+def test_the_compose_gate_upstream_drops_the_v1(instance: Path) -> None:
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    upstream = compose["services"]["gate"]["environment"].get("GATE_UPSTREAM")
+    if upstream is not None:
+        assert upstream == "https://model.example.com"
+
+
+def test_brain_tools_listens_on_every_interface(instance: Path) -> None:
+    tools = ToolsConfig.from_yaml(instance / "config" / "brain-tools.yaml")
+    assert tools.listen.host == "0.0.0.0"
+    assert tools.listen.port == 8765
+
+
+def test_a_brain_without_a_calendar_has_no_calendar_token(tmp_path: Path, answers_file: Path) -> None:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["tools"] = {"weather": False}
+    raw["job_kinds"] = {}
+    del raw["archive_dir"]
+    path = tmp_path / "no-calendar.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    instance = tmp_path / "no-calendar-instance"
+    init(Answers.from_yaml(path), instance)
+    assert not (instance / "secrets" / "calendar_token").exists()
+    assert "calendar_token" not in (instance / "secrets" / "README.md").read_text(encoding="utf-8")
+
+
+def test_a_brain_with_a_calendar_has_a_calendar_token(instance: Path) -> None:
+    assert (instance / "secrets" / "calendar_token").is_file()
+    assert "calendar_token" in (instance / "secrets" / "README.md").read_text(encoding="utf-8")
+
+
+def test_owners_sh_is_executable_and_fixes_the_ownership(instance: Path, answers: Answers) -> None:
+    script = instance / "owners.sh"
+    assert script.is_file()
+    assert stat.S_IMODE(script.stat().st_mode) & 0o111 == 0o111
+    text = script.read_text(encoding="utf-8")
+    assert text.startswith("#!/bin/sh")
+    assert 'cd "$(dirname "$0")"' in text
+    assert 'chown 23001:23001 "secrets/hermes.env"' in text
+    assert 'chown 23002:23002 "secrets/tools_token"' in text
+    assert f"chown -R 23002:23002 '{answers.vault_dir}'" in text
+    assert f"chown -R 23002:23002 '{answers.archive_dir}'" in text
+    # The calendar token is only chowned when the brain has a calendar.
+    assert "secrets/calendar_token" in text
+    assert 'chmod 600 "secrets/calendar_token"' in text
+
+
+def test_owners_sh_is_rerendered_on_every_run(tmp_path: Path, answers: Answers) -> None:
+    directory = tmp_path / "instance"
+    init(answers, directory)
+    (directory / "owners.sh").write_text("stale", encoding="utf-8")
+    init(answers, directory, force=True)
+    assert "#!/bin/sh" in (directory / "owners.sh").read_text(encoding="utf-8")
+
+
+def test_a_brain_without_a_calendar_has_no_calendar_line_in_owners_sh(
+    tmp_path: Path, answers_file: Path
+) -> None:
+    minimal = _minimal_answers(tmp_path, answers_file)
+    instance = tmp_path / "minimal-instance"
+    init(minimal, instance)
+    text = (instance / "owners.sh").read_text(encoding="utf-8")
+    assert "secrets/calendar_token" not in text
+    assert "archive" not in text
+
+
+def test_the_capture_folder_is_created_in_a_fresh_vault(instance: Path, answers: Answers) -> None:
+    capture = answers.vault_dir / "inbox" / "calls"
+    assert capture.is_dir()
+    assert (capture / ".gitkeep").is_file()
+
+
+def test_an_existing_vault_does_not_get_a_capture_folder(tmp_path: Path, answers: Answers) -> None:
+    answers.vault_dir.mkdir(parents=True)
+    note = answers.vault_dir / "mine.md"
+    note.write_text("mine", encoding="utf-8")
+    init(answers, tmp_path / "instance")
+    assert not (answers.vault_dir / "inbox" / "calls").exists()
+
+
+def test_the_searxng_image_is_a_tag_that_exists(instance: Path) -> None:
+    from second_brain.cli.config import SEARXNG_IMAGE
+
+    assert SEARXNG_IMAGE == "searxng/searxng:2026.10.19-81371861f"
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert compose["services"]["searxng"]["image"] == SEARXNG_IMAGE

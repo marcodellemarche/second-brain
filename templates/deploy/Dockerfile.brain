@@ -12,8 +12,16 @@ COPY pyproject.toml README.md /build/
 COPY src /build/src
 RUN pip install --no-cache-dir /build && rm -rf /build
 
-RUN useradd --create-home --uid 10001 brain
+# The data and guard volumes take their initial owner from these directories, and the services
+# that mount them run as different uids.
+RUN useradd --create-home --uid 23002 brain \
+    && mkdir -p /app /data /guard \
+    && chown 23002:23002 /data \
+    && chown 23001:23001 /guard
+
+# A plain 755 path, not the home: a container running as another uid still has to enter it, and
+# pydantic-settings reads `.env` from the working directory.
+WORKDIR /app
 USER brain
-WORKDIR /home/brain
 
 CMD ["python", "-m", "second_brain.tools.server"]

@@ -8,13 +8,16 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # The base image ships a sealed venv at /opt/hermes/.venv, on PATH but never written at runtime,
-# so extra packages have to go in here at build time, with the venv's own pip.
+# so extra packages have to go in here at build time, and that venv has no pip of its own.
 COPY pyproject.toml README.md /build/
 COPY src /build/src
-RUN /opt/hermes/.venv/bin/pip install --no-cache-dir /build \
-    && /opt/hermes/.venv/bin/pip install --no-cache-dir firecrawl-anydoc faster-whisper "av==18.1.0" \
+RUN /opt/hermes/.venv/bin/python -m ensurepip \
+    && /opt/hermes/.venv/bin/python -m pip install --no-cache-dir --no-deps /build \
+    && /opt/hermes/.venv/bin/python -m pip install --no-cache-dir firecrawl-anydoc faster-whisper "av==18.1.0" \
     && rm -rf /build
 
+# --no-deps above keeps the mcp 2.x Hermes ships: the guard plugin needs only pydantic and pyyaml,
+# which Hermes already has, and our mcp pin would downgrade the one the agent runs on.
 # av 19 breaks faster-whisper's audio decoding, so the pin above is deliberate: do not drop it.
 # HF_HOME is the only place faster-whisper looks for its model cache.
 ENV HF_HOME=/opt/models/hf
@@ -22,6 +25,12 @@ ENV HF_HOME=/opt/models/hf
 # Pre-downloaded faster-whisper `small` model, laid out as a HF cache. `sb init` (the CLI) downloads
 # it once at install time into models/ so the image builds and runs offline.
 COPY models/ /opt/models/hf/
+
+# The Hermes config loads the core skills from here through skills.external_dirs.
+COPY skills /opt/second-brain/skills
+
+# Hermes runs as uid 23001 and the guard volume takes its initial owner from this directory.
+RUN mkdir -p /guard && chown 23001:23001 /guard
 
 # The terminal backend is not the docker one: Hermes never talks to a Docker socket here, it reaches
 # the terminal container over ssh (terminal.backend: ssh). No docker-cli usage in this image.

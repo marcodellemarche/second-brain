@@ -53,8 +53,10 @@ secrets:
     file: ./secrets/model_api_key
   tools_token:
     file: ./secrets/tools_token
-  calendar_token:
-    file: ./secrets/calendar_token
+{% for name in optional_secrets %}
+  {{ name }}:
+    file: ./secrets/{{ name }}
+{% endfor %}
   terminal_ssh_key:
     file: ./secrets/terminal_ssh_key
   webhook_ingest:
@@ -75,6 +77,9 @@ services:
     container_name: {{ instance_name }}-hermes
     command: ["gateway", "run"]
     networks: [internal, terminal-net]
+    # s6 in the Hermes image drops to the hermes user at start: without these it dies with
+    # "unable to set supplementary group list", and cap_drop alone is not enough.
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER, KILL]
     depends_on:
       brain-tools:
         condition: service_healthy
@@ -143,10 +148,18 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - /home/agent
       # The workspace is a tmpfs, so nothing a command writes survives the container restart.
       - {{ terminal_cwd }}
+    volumes:
+      # Hermes' file tools run in this container, so they have to see the same /vault paths. It
+      # has no network, so a read-only vault here adds no way out.
+      - {{ vault_dir }}:/vault:ro
+      # The one public key allowed to log in as agent.
+      - ./secrets/terminal_ssh_key.pub:/etc/ssh/authorized_keys/agent:ro
     healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 2222"]
+      # The image has no nc, and python3 is there for the agent anyway.
+      test: ["CMD", "python3", "-c", "import socket;socket.create_connection(('127.0.0.1',2222),3)"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -160,7 +173,6 @@ services:
     container_name: {{ instance_name }}-brain-tools
     command: ["python", "-m", "second_brain.tools.server"]
     networks: [internal]
-    user: "23002:23002"
     environment:
       BRAIN_TOOLS_CONFIG: /etc/brain-tools/config.yaml
       HOME: /tmp
@@ -171,7 +183,11 @@ services:
       - data:/data
       # Media Hermes wrote, read-only: a reply may point at a file, and that is all.
       - {{ media_dir }}:{{ media_dir }}:ro
-    secrets: [tools_token, calendar_token, outbox_secret]
+{% for volume in brain_tools_extra_volumes %}
+      - {{ volume }}
+{% endfor %}
+    # calendar_token only when the calendar tools are on: compose refuses a secret file that does not exist.
+    secrets: [{{ brain_tools_secrets }}]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',8765),3)"]
       interval: 30s
@@ -208,6 +224,8 @@ services:
     container_name: {{ instance_name }}-watchdog
     command: ["python", "-m", "second_brain.gate.watchdog"]
     networks: [internal]
+    # It runs as 23002 and the socket is root:docker 660, so it needs the host's docker group.
+    group_add: ["{{ docker_gid }}"]
     environment:
       WATCHDOG_CONTAINER: {{ instance_name }}-hermes
       WATCHDOG_HEARTBEAT: /guard/heartbeat.json
@@ -306,10 +324,13 @@ services:
     container_name: {{ instance_name }}-egress
     # The one door. The allowlist in squid.conf is rendered from the model endpoint host, the Telegram API and the hosts the enabled brain_tools tools declare.
     networks: [internal, egress-net]
+    # squid switches user at start, which is the same set of calls s6 needs in the Hermes image.
+    cap_add: [CHOWN, SETUID, SETGID, DAC_OVERRIDE, FOWNER, KILL]
     volumes:
       - ./config/squid.conf:/etc/squid/squid.conf:ro
     healthcheck:
-      test: ["CMD-SHELL", "squid -k check -f /etc/squid/squid.conf"]
+      # `squid -k check` wants a pid file and the config disables it, so probe the port instead.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
       interval: 60s
       timeout: 10s
       retries: 3

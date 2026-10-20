@@ -20,6 +20,7 @@ from typing import Any
 from second_brain.cli.answers import Answers
 from second_brain.cli.render import render_template
 from second_brain.cli.secrets import (
+    CALENDAR_TOKEN,
     OUTBOX_SECRET,
     SEARXNG_KEY,
     TOOLS_TOKEN,
@@ -44,6 +45,7 @@ from second_brain.sidecars.vault_watcher import DEFAULT_IGNORE
 from second_brain.tools.config import (
     CalendarToolsConfig,
     JobsConfig,
+    Listen,
     ToolsConfig,
     WeatherConfig,
     build_registry,
@@ -60,6 +62,8 @@ SECRETS_IN_CONTAINER = Path("/run/secrets")
 TEMPLATES = Path(__file__).resolve().parents[3] / "templates"
 HERMES_WEBHOOK_BASE_URL = "http://hermes:8644/webhooks"
 SCHEDULE_STATE_FILE = DATA_IN_CONTAINER / "scheduler.json"
+DOCKER_SOCKET = Path("/var/run/docker.sock")
+SEARXNG_IMAGE = "searxng/searxng:2026.10.19-81371861f"
 
 SCHEDULE_ROUTES: dict[str, str] = {
     "digest": "scheduled-digest",
@@ -132,6 +136,7 @@ def tools_config(answers: Answers) -> ToolsConfig:
     return ToolsConfig(
         vault=VaultConfig(root=VAULT_IN_CONTAINER),
         token_file=SECRETS_IN_CONTAINER / TOOLS_TOKEN,
+        listen=Listen(host="0.0.0.0", port=8765),
         calendar=calendar,
         weather=WeatherConfig(enabled=True) if tools.weather else None,
         links=answers.link_config(),
@@ -269,6 +274,49 @@ def egress_hosts(answers: Answers, registry: Registry) -> list[str]:
     return list(ordered)
 
 
+def docker_gid(answers: Answers) -> int:
+    """The group that owns the docker socket: the answer, else this machine's, else the root group.
+
+    The watchdog talks to the socket as the brain image's group, so compose has to give it a
+    group id the socket accepts. `sb init` runs on the host, where the socket can be looked at.
+    """
+    if answers.docker_gid is not None:
+        return answers.docker_gid
+    try:
+        return DOCKER_SOCKET.stat().st_gid
+    except OSError:
+        return 0
+
+
+def model_upstream(answers: Answers) -> str:
+    """The endpoint as the gate needs it: no trailing `/v1`, because it forwards the path as is.
+
+    The answers hold the OpenAI base URL, `/v1` included. A request to the gate arrives as
+    `/v1/chat/completions`, so an upstream that already ends in `/v1` would make it `/v1/v1/...`.
+    """
+    endpoint = answers.model_endpoint.rstrip("/")
+    if endpoint.endswith("/v1"):
+        return endpoint[: -len("/v1")]
+    return endpoint
+
+
+def brain_tools_extra_volumes(answers: Answers) -> list[str]:
+    """The host paths brain_tools needs mounted at the same path inside the container.
+
+    The archive config carries host paths, and the tool moves files between them, so the archive
+    root has to be there under its own name rather than under `/vault`.
+    """
+    archive = answers.archive_config
+    if archive is None:
+        return []
+    return [f"{archive.root}:{archive.root}"]
+
+
+def optional_secrets(answers: Answers) -> list[str]:
+    """The secret files that exist only when their tool group is on."""
+    return [CALENDAR_TOKEN] if answers.tools.calendar is not None else []
+
+
 def template_values(answers: Answers, registry: Registry, generated: Mapping[str, str]) -> dict[str, Any]:
     """Every placeholder the deploy and Hermes templates use, and nothing else."""
     schema = vault_schema(answers.language)
@@ -281,12 +329,16 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "terminal_image": "second-brain/terminal:0.1.0",
         "brain_image": "second-brain/brain:0.1.0",
         "egress_image": "ubuntu/squid:6.6-24.04_edge",
-        "searxng_image": "searxng/searxng:2025.1.1",
-        "model_upstream": answers.model_endpoint,
+        "searxng_image": SEARXNG_IMAGE,
+        "model_upstream": model_upstream(answers),
         "model_gate_url": "http://gate:8080/v1",
         "model_name": answers.model_name,
         "model_context_length": answers.model_context_length,
         "timezone": answers.timezone,
+        "docker_gid": docker_gid(answers),
+        "brain_tools_extra_volumes": brain_tools_extra_volumes(answers),
+        "optional_secrets": optional_secrets(answers),
+        "brain_tools_secrets": ["tools_token", "outbox_secret", *optional_secrets(answers)],
         "skills_dir": "/data/skills",
         "terminal_ssh_key": str(SECRETS_IN_CONTAINER / "terminal_ssh_key"),
         "brain_tools_url": "http://brain-tools:8765/mcp",

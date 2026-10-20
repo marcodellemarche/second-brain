@@ -54,9 +54,28 @@ def test_hermes_image_pins_the_hermes_version() -> None:
 
 def test_hermes_image_installs_into_the_sealed_venv() -> None:
     text = dockerfile("Dockerfile.hermes")
-    assert "/opt/hermes/.venv/bin/pip install" in text
+    # The venv has no pip of its own, so ensurepip comes first.
+    assert "/opt/hermes/.venv/bin/python -m ensurepip" in text
+    assert "/opt/hermes/.venv/bin/python -m pip install" in text
     for package in ("firecrawl-anydoc", "faster-whisper", "poppler-utils"):
         assert package in text
+
+
+def test_hermes_image_installs_our_package_without_dependencies() -> None:
+    # Hermes ships mcp 2.x and the guard needs only pydantic and pyyaml, which it already has.
+    text = dockerfile("Dockerfile.hermes")
+    assert "--no-deps /build" in text
+    assert "pip install --no-cache-dir firecrawl-anydoc" in text
+
+
+def test_hermes_image_ships_the_core_skills() -> None:
+    # The Hermes config loads them through skills.external_dirs.
+    assert "COPY skills /opt/second-brain/skills" in dockerfile("Dockerfile.hermes")
+
+
+def test_hermes_image_creates_the_guard_dir_for_its_uid() -> None:
+    # The named volume takes its initial owner from this directory.
+    assert "chown 23001:23001 /guard" in dockerfile("Dockerfile.hermes")
 
 
 def test_hermes_image_pins_av_below_19() -> None:
@@ -76,9 +95,31 @@ def test_terminal_image_is_key_only() -> None:
     assert "Port 2222" in text
 
 
+def test_terminal_image_runs_sshd_as_the_agent_user() -> None:
+    text = dockerfile("Dockerfile.terminal")
+    # Nothing to chown as root at runtime: the host key is made here and owned by agent.
+    assert "ssh-keygen -t ed25519 -N '' -f /etc/ssh/agent_host_ed25519_key" in text
+    assert "chown agent:agent /etc/ssh/agent_host_ed25519_key*" in text
+    assert "'HostKey /etc/ssh/agent_host_ed25519_key'" in text
+    assert "'PidFile none'" in text
+    assert "'StrictModes no'" in text
+    assert "'AuthorizedKeysFile /etc/ssh/authorized_keys/%u'" in text
+    assert "USER agent" in text
+
+
 def test_brain_image_serves_the_tools_by_default() -> None:
     text = dockerfile("Dockerfile.brain")
     assert "FROM python:3.12-slim" in text
     assert 'CMD ["python", "-m", "second_brain.tools.server"]' in text
     assert "git" in text
     assert "USER brain" in text
+
+
+def test_brain_image_runs_as_uid_23002_in_a_shared_workdir() -> None:
+    text = dockerfile("Dockerfile.brain")
+    assert "--uid 23002" in text
+    # Not the home: a container running as another uid has to be able to enter it.
+    assert "WORKDIR /app" in text
+    assert "WORKDIR /home/brain" not in text
+    assert "chown 23002:23002 /data" in text
+    assert "chown 23001:23001 /guard" in text

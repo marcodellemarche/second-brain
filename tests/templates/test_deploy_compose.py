@@ -8,12 +8,13 @@ no published port, one door to the internet.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
 import pytest
 import yaml
+
+from second_brain.cli.render import render_template
 
 DEPLOY = Path(__file__).resolve().parents[2] / "templates" / "deploy"
 
@@ -36,29 +37,15 @@ VALUES: dict[str, Any] = {
     "egress_hosts": HOSTS,
     "searxng_upstream_hosts": "duckduckgo.com wikipedia.org",
     "searxng_secret_key": "sample-secret-key-not-a-real-one",
+    "docker_gid": 999,
+    "brain_tools_extra_volumes": ["/srv/brain/archive:/srv/brain/archive"],
+    "optional_secrets": ["calendar_token"],
+    "brain_tools_secrets": ["tools_token", "outbox_secret", "calendar_token"],
 }
-
-_PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
-_FOR = re.compile(r"\{%\s*for\s+(\w+)\s+in\s+(\w+)\s*%\}(.*?)\{%\s*endfor\s*%\}", re.S)
-
-
-def _value(name: str, values: dict[str, Any]) -> str:
-    assert name in values, f"unknown placeholder {name!r}"
-    return str(values[name])
 
 
 def render(template: Path, values: dict[str, Any]) -> str:
-    text = template.read_text(encoding="utf-8")
-
-    def loop(match: re.Match[str]) -> str:
-        item, collection, body = match.group(1), match.group(2), match.group(3)
-        assert collection in values, f"{template.name} loops over an unknown {collection!r}"
-        return "".join(
-            re.sub(r"\{\{\s*" + item + r"\s*\}\}", str(entry), body) for entry in values[collection]
-        )
-
-    text = _FOR.sub(loop, text)
-    return _PLACEHOLDER.sub(lambda match: _value(match.group(1), values), text)
+    return render_template(template, values)
 
 
 @pytest.fixture(scope="module")
@@ -66,6 +53,15 @@ def compose() -> dict[str, Any]:
     loaded = yaml.safe_load(render(DEPLOY / "compose.yaml.j2", VALUES))
     assert isinstance(loaded, dict)
     return loaded
+
+
+def rendered_services(**overrides: Any) -> dict[str, Any]:
+    values = {**VALUES, **overrides}
+    loaded = yaml.safe_load(render(DEPLOY / "compose.yaml.j2", values))
+    assert isinstance(loaded, dict)
+    services = loaded["services"]
+    assert isinstance(services, dict)
+    return services
 
 
 @pytest.fixture(scope="module")
@@ -115,7 +111,7 @@ def test_no_service_publishes_a_port(services: dict[str, Any]) -> None:
 
 def test_the_vault_is_read_only_everywhere_but_brain_tools(services: dict[str, Any]) -> None:
     assert f"{VAULT}:/vault" in _mounts(services["brain-tools"])
-    for name in ("hermes", "vault-watcher", "call-router", "job-runner"):
+    for name in ("hermes", "terminal", "vault-watcher", "call-router", "job-runner"):
         assert f"{VAULT}:/vault:ro" in _mounts(services[name]), name
     for name, service in services.items():
         for mount in service.get("volumes", []):
@@ -222,6 +218,62 @@ def test_no_container_runs_with_added_privileges(services: dict[str, Any]) -> No
         assert service["cap_drop"] == ["ALL"], name
 
 
+S6_CAPS = ["CHOWN", "SETUID", "SETGID", "DAC_OVERRIDE", "FOWNER", "KILL"]
+
+
+@pytest.mark.parametrize("name", ["hermes", "egress"])
+def test_the_services_that_drop_privileges_keep_only_the_caps_they_need(
+    services: dict[str, Any], name: str
+) -> None:
+    # s6 in the Hermes image and squid both start as root and switch user: these are the calls
+    # that takes, and cap_drop: ALL stays on top of it.
+    assert services[name]["cap_add"] == S6_CAPS
+    assert services[name]["cap_drop"] == ["ALL"]
+    assert "no-new-privileges:true" in services[name]["security_opt"]
+
+
+def test_the_egress_healthcheck_does_not_ask_squid_about_its_pid_file(services: dict[str, Any]) -> None:
+    test = services["egress"]["healthcheck"]["test"]
+    assert "squid -k" not in " ".join(test)
+    assert test == ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+
+
+def test_the_watchdog_can_open_the_docker_socket(services: dict[str, Any]) -> None:
+    # The socket is root:docker 660 and the container runs as 23002.
+    assert services["watchdog"]["group_add"] == [str(VALUES["docker_gid"])]
+
+
+def test_brain_tools_runs_as_the_image_user(services: dict[str, Any]) -> None:
+    # The image sets USER 23002 itself, and overriding it here is one place too many to keep right.
+    assert "user" not in services["brain-tools"]
+
+
+def test_brain_tools_mounts_the_configured_extra_volumes() -> None:
+    with_archive = rendered_services()
+    assert "/srv/brain/archive:/srv/brain/archive" in _mounts(with_archive["brain-tools"])
+    # The archive dir is optional: an empty list must still render valid YAML with no stray item.
+    without = rendered_services(brain_tools_extra_volumes=[])
+    mounts = _mounts(without["brain-tools"])
+    assert not [mount for mount in mounts if "archive" in mount]
+    assert f"{VAULT}:/vault" in mounts
+
+
+def test_the_terminal_sees_the_vault_and_only_the_public_key(services: dict[str, Any]) -> None:
+    # Hermes' file tools run over ssh in this container, so the /vault paths have to match.
+    mounts = _mounts(services["terminal"])
+    assert f"{VAULT}:/vault:ro" in mounts
+    assert "./secrets/terminal_ssh_key.pub:/etc/ssh/authorized_keys/agent:ro" in mounts
+    # The private key stays with Hermes.
+    assert not [mount for mount in mounts if mount.endswith("terminal_ssh_key")]
+    assert services["terminal"]["tmpfs"] == ["/tmp", "/home/agent", VALUES["terminal_cwd"]]
+
+
+def test_the_terminal_healthcheck_does_not_need_nc(services: dict[str, Any]) -> None:
+    test = services["terminal"]["healthcheck"]["test"]
+    assert "nc" not in test
+    assert test[0] == "CMD" and test[1] == "python3"
+
+
 def test_squid_allows_only_the_rendered_allowlist(squid: str) -> None:
     for host in HOSTS:
         assert f"acl allowed_egress dstdomain {host}" in squid
@@ -313,3 +365,10 @@ def test_every_secret_is_a_file_next_to_the_instance(declared_secrets: dict[str,
     assert "webhook_schedule" in declared_secrets
     for name, secret in declared_secrets.items():
         assert secret["file"] == f"./secrets/{name}", name
+
+
+def test_no_calendar_means_no_calendar_secret_anywhere() -> None:
+    values = {**VALUES, "optional_secrets": [], "brain_tools_secrets": ["tools_token", "outbox_secret"]}
+    loaded = yaml.safe_load(render(DEPLOY / "compose.yaml.j2", values))
+    assert "calendar_token" not in loaded["secrets"]
+    assert loaded["services"]["brain-tools"]["secrets"] == ["tools_token", "outbox_secret"]
