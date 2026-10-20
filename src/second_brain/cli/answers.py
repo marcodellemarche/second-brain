@@ -103,6 +103,25 @@ class ScheduleAnswers(BaseModel):
         return [_clock_time(item) for item in value]
 
 
+class StagingAnswers(BaseModel):
+    """The folder the owner moves candidates from another brain into.
+
+    It is a plain host directory, mounted read-only-where-possible into brain_tools: the importer is
+    the only thing that reads it, and it writes into the vault, never back into the folder except to
+    move a file to `done/` or `failed/`. Absent, nothing is imported and the folder is not mounted.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    host_dir: Path = Field(description="Host folder the owner copies candidates into.")
+    poll_seconds: float = Field(default=60, gt=0, le=3600)
+
+    @field_validator("host_dir")
+    @classmethod
+    def _absolute(cls, value: Path) -> Path:
+        return _absolute_path(value)
+
+
 class CallsAnswers(BaseModel):
     """Where the call notes land and who counts as the team in a call."""
 
@@ -234,6 +253,8 @@ class Answers(BaseModel):
     )
     schedule: ScheduleAnswers = Field(default_factory=ScheduleAnswers)
     calls: CallsAnswers = Field(default_factory=CallsAnswers)
+    # A team brain takes candidates from another brain through a folder the owner moves them into.
+    staging: StagingAnswers | None = None
 
     @field_validator("vault_dir", "media_dir", "archive_dir")
     @classmethod

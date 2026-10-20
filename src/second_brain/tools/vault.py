@@ -110,6 +110,10 @@ class VaultConfig(BaseModel):
     # Other people's words land here once and stay as they arrived: a new note is fine, rewriting,
     # moving or deleting one is not, or the provenance of everything derived from it is lost.
     immutable: list[str] = Field(default_factory=lambda: ["raw"])
+    # 0o644 keeps a note readable by everyone and writable by its owner, which is right for a vault
+    # only the brain writes. A vault shared with another service (a Nextcloud data directory) needs
+    # 0o664, so that service can modify a note the brain created.
+    file_mode: int = Field(default=0o644, ge=0o600, le=0o666)
     trash_dir: str = ".trash"
     author_name: str = "brain"
     author_email: str = "brain@localhost"
@@ -532,7 +536,7 @@ class Vault:
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.chmod(tmp, 0o644)
+            os.chmod(tmp, self._config.file_mode)
             os.replace(tmp, target)
             self._fsync_dir(target.parent)
         except BaseException:

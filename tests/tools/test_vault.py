@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -910,3 +911,18 @@ def test_moving_a_note_into_raw_is_not_blocked_by_immutability(root: Path) -> No
     vault.write("inbox/forward.md", "forwarded\n", _provenance())
     vault.move("inbox/forward.md", "raw/mail/forward.md", _provenance())
     assert (root / "raw/mail/forward.md").is_file()
+
+
+def test_a_shared_vault_writes_files_the_other_writer_can_change(tmp_path: Path) -> None:
+    # A vault inside a Nextcloud data directory is written by both: 0o644 would leave every note the
+    # brain creates read-only for Nextcloud, and the owner could not edit it from the sync client.
+    repo = tmp_path / "vault"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.name", "tester")
+    _git(repo, "config", "user.email", "tester@localhost")
+    vault = Vault(VaultConfig(root=repo, quiet_seconds=0, file_mode=0o664))
+
+    vault.write("note.md", "body\n", _provenance())
+
+    assert stat.S_IMODE((repo / "note.md").stat().st_mode) == 0o664
