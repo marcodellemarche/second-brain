@@ -22,7 +22,7 @@ Call `calendar_list` on both calendars with `date_from` = `due` and `date_to` = 
 For each event, brief it when both hold:
 
 - it has at least one participant other than the owner;
-- `calls/<YYYY-MM-DD>-<slug>-brief.md` does not exist yet, with `<YYYY-MM-DD>` the event date and `<slug>` a few lowercase words from the event title in the vault's language. Check with `search_files` or a `read_file` on that exact path before writing.
+- `calls/<YYYY-MM-DD>-<slug>-brief.md` does not exist yet, with `<YYYY-MM-DD>` the event date and `<slug>` a few lowercase words from the event title in the vault's language. Check with `vault_read` on that path, or `read_file` on `/vault/<calls folder>/...` (the vault is mounted at `/vault`), before writing.
 
 An event that already has its brief is done: do not rewrite it, do not extend it. A meeting that moved to another hour keeps its brief.
 

@@ -26,7 +26,7 @@ Read `_brain/lint` (a `type: brain` page, created on the first run). It holds a 
 
 Take the zone whose `last checked` is the oldest, or the zone missing from the table when there is one. One zone per night, never two: a chunk that grows past what one run can do is where the lint starts to hallucinate.
 
-Then list the notes of that zone with `search_files` and read the ones in the chunk with `vault_read` or `read_file`. At most about 40 notes per run. When the zone is bigger, take the next 40 in path order starting after the `last path checked` the page records, and write the last path of this run back into the page so the next night continues from there. A zone with more than 40 notes takes several nights, and that is fine.
+Then list the notes of that zone with `search_files` on its absolute path, `/vault/<zone folder>` (the vault is mounted at `/vault`; a relative path or `~` finds nothing) and read the ones in the chunk with `vault_read` or `read_file`. At most about 40 notes per run. When the zone is bigger, take the next 40 in path order starting after the `last path checked` the page records, and write the last path of this run back into the page so the next night continues from there. A zone with more than 40 notes takes several nights, and that is fine.
 
 ## 2. The checks
 
@@ -41,7 +41,7 @@ On the notes in the chunk, in this order:
 
 ## 3. The only writes
 
-Two writes are allowed in this run, and no others.
+Two writes are allowed in this run, and no others. The first one happens on every run, even when the chunk was empty or had no findings: a night with nothing to report still updates the table, so the digest can tell a clean night from a lint that never ran.
 
 1. **`_brain/lint`.** Read it with `vault_read` to get its `sha256`, then write it back with `vault_write` and `expected_sha256`. Keep the zone table up to date (`last checked` is tonight's date, `findings` the count, plus the `last path checked` for a zone that is not finished), and add tonight's findings under a heading with the date, newest night on top. Every finding carries its path. Keep the last 7 nights and drop what is older, so the page stays readable. Bump `updated`.
 2. **Open questions.** When the chunk left questions the owner should answer, enqueue them with `job_enqueue` for the open-questions skill, at most 3 per run, one line each with the note path it came from. Do not open the questions here and do not answer them.
