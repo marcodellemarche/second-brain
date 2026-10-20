@@ -7,6 +7,7 @@ check that fails for two reasons would not say which rule it is actually enforci
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -143,6 +144,73 @@ def test_a_secret_readable_by_the_group_fails_the_secrets_check(instance: Path) 
     status, reason = _status(instance, "secrets")
     assert status == FAIL
     assert "tools_token" in reason
+
+
+def test_an_unreadable_secret_with_content_is_not_reported_as_empty(instance: Path) -> None:
+    # A deployed host hands the secrets to the container uids, so the operator running
+    # `sb check` cannot open them: the check must go by size, never by content.
+    if os.geteuid() == 0:
+        pytest.skip("root can read any file, whatever its mode")
+    secret = instance / "secrets" / "telegram_bot_token"
+    for name in FILLED:
+        (instance / "secrets" / name).write_text("filled\n", encoding="utf-8")
+    secret.chmod(0o000)
+    status, reason = _status(instance, "secrets")
+    # The mode is wrong now, which is reported, but never an emptiness that is not there.
+    assert status == FAIL
+    assert "is still empty" not in reason
+    assert "crashed" not in reason
+
+
+def test_an_empty_secret_is_reported(instance: Path) -> None:
+    (instance / "secrets" / "telegram_bot_token").write_text("", encoding="utf-8")
+    status, reason = _status(instance, "secrets")
+    assert status == FAIL
+    assert "telegram_bot_token is still empty" in reason
+
+
+def test_a_secret_with_only_a_newline_is_reported_as_empty(instance: Path) -> None:
+    (instance / "secrets" / "telegram_bot_token").write_text("\n", encoding="utf-8")
+    status, reason = _status(instance, "secrets")
+    assert status == FAIL
+    assert "telegram_bot_token is still empty" in reason
+
+
+def test_a_secret_owned_by_another_uid_fails_the_secrets_check(
+    instance: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(os, "geteuid", lambda: 4242)
+    status, reason = _status(instance, "secrets")
+    assert status == FAIL
+    assert "owned by uid" in reason
+
+
+# --- brain_tools listening -------------------------------------------------------------------
+
+
+def test_a_loopback_listen_address_fails(instance: Path) -> None:
+    _edit_yaml(instance / "config/brain-tools.yaml", lambda data: data["listen"].update(host="127.0.0.1"))
+    status, reason = _status(instance, "tools.listen")
+    assert status == FAIL
+    assert "127.0.0.1" in reason
+
+
+def test_listening_on_every_interface_passes(instance: Path) -> None:
+    _edit_yaml(instance / "config/brain-tools.yaml", lambda data: data["listen"].update(host="0.0.0.0"))
+    status, _ = _status(instance, "tools.listen")
+    assert status == PASS
+
+
+def test_a_check_that_raises_becomes_a_failure(instance: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(ctx: object) -> CheckResult:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("second_brain.cli.check._files_check", boom)
+    results = _results(instance)
+    assert results["files"].status == FAIL
+    assert results["files"].reason == "crashed: boom"
+    # Every other check still reports its own line.
+    assert results["placeholders"].status == PASS
 
 
 # --- compose --------------------------------------------------------------------------------
@@ -368,12 +436,17 @@ def _fake_runner(calls: list[list[str]], ps: str, codes: dict[str, int] | None =
     return run
 
 
+def _ps_for_every_service(instance: Path) -> str:
+    """A healthy `ps` row for every service compose.yaml declares."""
+    declared = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))["services"]
+    return "".join(
+        f'{{"Service":"{service}","State":"running","Health":"healthy"}}\n' for service in declared
+    )
+
+
 def test_live_checks_pass_against_a_healthy_stack(instance: Path) -> None:
     calls: list[list[str]] = []
-    ps = (
-        '{"Service":"hermes","State":"running","Health":"healthy"}\n'
-        '{"Service":"brain-tools","State":"running","Health":"healthy"}\n'
-    )
+    ps = _ps_for_every_service(instance)
     codes = {"sb-check": 3, "docker.sock": 0, "heartbeat.json": 0}
     results = live_checks(instance, runner=_fake_runner(calls, ps, codes), docker="docker")
     statuses = {result.name: result.status for result in results}
@@ -384,6 +457,19 @@ def test_live_checks_pass_against_a_healthy_stack(instance: Path) -> None:
     # The gate's stale-heartbeat behaviour stops Hermes, so it is never exercised live.
     assert statuses["live.gate-stale-heartbeat"] == SKIP
     assert calls[0][:4] == ["docker", "compose", "-f", str(instance.resolve() / "compose.yaml")]
+
+
+def test_live_services_report_a_declared_service_without_a_container(instance: Path) -> None:
+    # An image that could not be pulled leaves no container behind, so the service is simply
+    # absent from `ps`.
+    calls: list[list[str]] = []
+    ps = "".join(
+        line for line in _ps_for_every_service(instance).splitlines(keepends=True) if '"searxng"' not in line
+    )
+    results = live_checks(instance, runner=_fake_runner(calls, ps, {}), docker="docker")
+    services = next(result for result in results if result.name == "live.services")
+    assert services.status == FAIL
+    assert "searxng has no container" in services.reason
 
 
 def test_live_checks_fail_when_the_vault_is_writable_and_the_socket_is_there(instance: Path) -> None:

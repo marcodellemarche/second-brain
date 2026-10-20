@@ -12,17 +12,20 @@ config that is not what it should be, and a missing file is exactly that.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import stat
 import subprocess
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from second_brain.cli.config import export_registry
+from second_brain.cli.init import BRAIN_UID, HERMES_UID
 from second_brain.cli.secrets import GENERATED, SECRET_MODE, SECRETS_DIR, TERMINAL_SSH_KEY
 from second_brain.gate.watchdog import DEFAULT_MAX_AGE
 from second_brain.guard.config import GuardConfig, GuardConfigError
@@ -80,6 +83,14 @@ NO_DELIVERY: tuple[Any, ...] = (None, False, "", "log", "none")
 
 HEARTBEAT_MAX_AGE = DEFAULT_MAX_AGE
 
+# A listen address only the container itself can reach. Hermes talks to brain_tools over the
+# internal network, so a loopback host makes every tool call fail.
+LOOPBACK_HOSTS: tuple[str, ...] = ("localhost", "::1", "0:0:0:0:0:0:0:1")
+
+# The uids that read the secrets inside the containers, so an operator cannot read them from the
+# host. The brain image services run as BRAIN_UID, Hermes as HERMES_UID.
+CONTAINER_UIDS: tuple[int, ...] = (HERMES_UID, BRAIN_UID)
+
 # A write into the read-only vault must fail; the probe removes its file if it somehow succeeds.
 VAULT_WRITE_PROBE = (
     "import os, sys\n"
@@ -134,6 +145,17 @@ def _skip(name: str, reason: str) -> CheckResult:
     return CheckResult(name, SKIP, reason)
 
 
+def _run_checks(checks: Sequence[tuple[str, Callable[[], CheckResult]]]) -> list[CheckResult]:
+    """Run every check, turning an unexpected exception into a FAIL for that check alone."""
+    results: list[CheckResult] = []
+    for name, check in checks:
+        try:
+            results.append(check())
+        except Exception as exc:  # a check that crashes must not take the whole report with it
+            results.append(_fail(name, f"crashed: {exc}"))
+    return results
+
+
 @dataclass(slots=True)
 class _Instance:
     """The instance as the checks read it: the root, and the three configs already parsed."""
@@ -154,27 +176,30 @@ class _Instance:
 def static_checks(instance: Path) -> list[CheckResult]:
     """Everything that can be decided from the instance directory alone, in report order."""
     ctx = _load(instance.resolve())
-    return [
-        _files_check(ctx),
-        _placeholders_check(ctx),
-        _secrets_check(ctx),
-        _compose_vault_check(ctx),
-        _compose_socket_check(ctx),
-        _compose_ports_check(ctx),
-        _compose_network_check(ctx),
-        _compose_proxy_check(ctx),
-        _approvals_check(ctx),
-        _terminal_check(ctx),
-        _owner_check(ctx),
-        _plugin_check(ctx),
-        _research_routes_check(ctx),
-        _sidecars_config_check(ctx),
-        _sidecar_routes_check(ctx),
-        _team_domains_check(ctx),
-        _scheduled_routes_check(ctx),
-        _guard_tools_check(ctx),
-        _squid_check(ctx),
-    ]
+    return _run_checks(
+        [
+            ("files", partial(_files_check, ctx)),
+            ("placeholders", partial(_placeholders_check, ctx)),
+            ("secrets", partial(_secrets_check, ctx)),
+            ("compose.vault-read-only", partial(_compose_vault_check, ctx)),
+            ("compose.docker-socket", partial(_compose_socket_check, ctx)),
+            ("compose.no-published-ports", partial(_compose_ports_check, ctx)),
+            ("compose.internal-network", partial(_compose_network_check, ctx)),
+            ("compose.hermes-proxy", partial(_compose_proxy_check, ctx)),
+            ("hermes.approvals", partial(_approvals_check, ctx)),
+            ("hermes.terminal", partial(_terminal_check, ctx)),
+            ("hermes.owner", partial(_owner_check, ctx)),
+            ("hermes.plugin", partial(_plugin_check, ctx)),
+            ("hermes.research-routes", partial(_research_routes_check, ctx)),
+            ("sidecars_config", partial(_sidecars_config_check, ctx)),
+            ("sidecar_routes", partial(_sidecar_routes_check, ctx)),
+            ("team_domains", partial(_team_domains_check, ctx)),
+            ("scheduled_routes", partial(_scheduled_routes_check, ctx)),
+            ("tools.listen", partial(_tools_listen_check, ctx)),
+            ("guard.tools", partial(_guard_tools_check, ctx)),
+            ("squid.registries", partial(_squid_check, ctx)),
+        ]
+    )
 
 
 def live_checks(
@@ -185,17 +210,24 @@ def live_checks(
     if not binary:
         return [_skip("live", "docker is not available, nothing live was checked")]
     run = runner or _run
-    compose = [binary, "compose", "-f", str(instance.resolve() / "compose.yaml")]
-    return [
-        _live_services(compose, run),
-        _live_vault_read_only(compose, run),
-        _live_no_socket(compose, run),
-        _live_heartbeat(compose, run),
-        _skip(
-            "live.gate-stale-heartbeat",
-            "not exercised here, stopping Hermes to test it is too invasive: covered by unit tests",
-        ),
-    ]
+    root = instance.resolve()
+    compose = [binary, "compose", "-f", str(root / "compose.yaml")]
+    declared = _declared_services(root)
+    return _run_checks(
+        [
+            ("live.services", partial(_live_services, compose, run, declared)),
+            ("live.vault-read-only", partial(_live_vault_read_only, compose, run)),
+            ("live.no-docker-socket", partial(_live_no_socket, compose, run)),
+            ("live.heartbeat", partial(_live_heartbeat, compose, run)),
+            (
+                "live.gate-stale-heartbeat",
+                lambda: _skip(
+                    "live.gate-stale-heartbeat",
+                    "not exercised here, stopping Hermes to test it is too invasive: covered by unit tests",
+                ),
+            ),
+        ]
+    )
 
 
 # --- reading the instance -------------------------------------------------------------------
@@ -301,17 +333,34 @@ def _secrets_check(ctx: _Instance) -> CheckResult:
     for path in sorted(directory.iterdir()):
         if not path.is_file() or path.name.endswith(".pub"):
             continue
-        mode = stat.S_IMODE(path.stat().st_mode)
+        try:
+            info = path.stat()
+        except OSError as exc:
+            problems.append(f"{path.name}: cannot stat it: {exc}")
+            continue
+        mode = stat.S_IMODE(info.st_mode)
         if mode != SECRET_MODE:
             problems.append(f"{path.name} is {oct(mode)}, not {oct(SECRET_MODE)}")
+        owner = info.st_uid
+        if owner != os.geteuid() and owner not in CONTAINER_UIDS:
+            problems.append(f"{path.name} is owned by uid {owner}, not by this operator nor a container")
     to_fill, readme_error = _must_fill(directory / "README.md")
     if readme_error is not None:
         problems.append(readme_error)
     for secret in to_fill:
-        path = directory / secret
-        if not path.is_file():
+        # Never read the content: on a deployed host the file belongs to a container uid and the
+        # operator cannot open it, and only its size decides whether a human filled it in.
+        try:
+            info = (directory / secret).stat()
+        except FileNotFoundError:
             problems.append(f"{secret} is missing")
-        elif not path.read_text(encoding="utf-8", errors="replace").strip():
+            continue
+        except OSError as exc:
+            problems.append(f"{secret}: cannot stat it: {exc}")
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            problems.append(f"{secret} is not a regular file")
+        elif info.st_size <= 1:
             problems.append(f"{secret} is still empty")
     if problems:
         return _fail(name, "; ".join(problems))
@@ -690,6 +739,20 @@ def _scheduled_routes_check(ctx: _Instance) -> CheckResult:
     return _pass(name, f"{', '.join(routes)}: no web, no mirror, and only the digest is delivered")
 
 
+def _tools_listen_check(ctx: _Instance) -> CheckResult:
+    name = "tools.listen"
+    if ctx.tools is None:
+        return _fail(name, ctx.tools_error or "the tools config is not readable")
+    host = ctx.tools.listen.host.strip().lower().strip("[]")
+    if host.startswith("127.") or host in LOOPBACK_HOSTS:
+        return _fail(
+            name,
+            f"brain-tools listens on {ctx.tools.listen}, so nothing outside its container can "
+            "reach it, Hermes included",
+        )
+    return _pass(name, f"brain-tools listens on {ctx.tools.listen}, reachable from Hermes")
+
+
 def _guard_tools_check(ctx: _Instance) -> CheckResult:
     name = "guard.tools"
     if ctx.guard is None:
@@ -784,16 +847,29 @@ def _compose_probe(
     return None, detail, _fail(name, detail or f"the probe in {service} exited {result.returncode}")
 
 
-def _live_services(compose: list[str], run: Runner) -> CheckResult:
+def _declared_services(root: Path) -> list[str]:
+    """The services compose.yaml declares: one with no container never appears in `ps`."""
+    data, _ = _read_yaml(root / "compose.yaml")
+    services = data.get("services") if isinstance(data, dict) else None
+    if not isinstance(services, dict):
+        return []
+    return sorted(str(service) for service in services)
+
+
+def _live_services(compose: list[str], run: Runner, declared: Sequence[str]) -> CheckResult:
     name = "live.services"
     result, error = _compose_output(name, compose, ["ps", "--format", "json"], run)
     if error is not None:
         return error
     assert result is not None
     rows = _ps_rows(result.stdout)
-    if not rows:
+    if not rows and not declared:
         return _fail(name, "compose reports no service: is the stack up?")
     problems: list[str] = []
+    running = {str(row.get("Service") or row.get("Name") or "?") for row in rows}
+    for service in declared:
+        if service not in running:
+            problems.append(f"{service} has no container: was its image pulled?")
     for row in rows:
         service = str(row.get("Service") or row.get("Name") or "?")
         state = str(row.get("State") or "")
