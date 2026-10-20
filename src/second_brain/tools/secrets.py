@@ -82,6 +82,7 @@ _RELATIVE_PATH_RE = re.compile(r"(?<![\w/])[\w.-]+(?:/[\w.-]+){2,}/?", re.MULTIL
 _LOWERCASE_SEGMENT = re.compile(r"[a-z0-9_.]+")
 _UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 # A file name can be long and mixed case; the extension at the end of the token gives it away.
+_DATA_BLOCK_RE = re.compile(r"^```(?:compressed-json|json)\r?\n.*?^```[ \t]*$", re.DOTALL | re.MULTILINE)
 _CAMEL_CASE_RE = re.compile(r"[A-Za-z][a-z0-9]+(?:[A-Z][a-z0-9]+){2,}")
 _DIGITS_IN_SEGMENT = re.compile(r"[A-Za-z]+[0-9]|[0-9]+[A-Za-z]")
 
@@ -164,8 +165,11 @@ def _in_exempt_span(spans: list[tuple[int, int]], start: int) -> bool:
 
 
 def _exempt_spans(text: str) -> list[tuple[int, int]]:
-    """A wikilink, a URL without credentials or a filesystem path is structure, not a secret."""
+    """A wikilink, a URL without credentials, a path or a data block is structure, not a secret."""
     spans = [(span.start(), span.end()) for span in _WIKILINK_RE.finditer(text)]
+    # An Excalidraw note carries the drawing as base64 in a fenced `compressed-json` block. It is
+    # data the editor writes, not something a person pasted, so it is not scanned for keys.
+    spans.extend((span.start(), span.end()) for span in _DATA_BLOCK_RE.finditer(text))
     for span in _URL_RE.finditer(text):
         netloc = span.group(0).split("://", 1)[1].split("/", 1)[0]
         if "@" not in netloc:

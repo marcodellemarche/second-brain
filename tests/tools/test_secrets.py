@@ -272,3 +272,17 @@ def test_a_keyword_followed_by_prose_is_not_an_assignment(note: str) -> None:
 
 def test_a_camel_case_identifier_is_not_a_secret() -> None:
     assert scan("`TestBucketsHardDeletionOnProjectHardDeletion` keeps covering the case.") == []
+
+
+def test_a_compressed_drawing_block_is_not_scanned() -> None:
+    payload = "".join(["N4KAkARALgUwgLgAQQQDwMYEMA2AlgCYBOuA7hADTgQBuCpAzoQPYB2KqATLZMzYBXUtiRoIACyhQ"])
+    note = f"---\nexcalidraw-plugin: parsed\n---\n\n## Drawing\n```compressed-json\n{payload}\n```\n"
+
+    assert scan(note) == []
+
+
+def test_a_key_outside_the_drawing_block_is_still_found() -> None:
+    payload = "N4KAkARALgUwgLgAQQQDwMYEMA2AlgCYBOuA7hADTgQBuCpA"
+    note = f"```compressed-json\n{payload}\n```\n\ntoken = {'hunter2' * 2}\n"
+
+    assert [finding.rule for finding in scan(note)] == ["assignment"]
