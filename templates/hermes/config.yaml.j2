@@ -292,6 +292,20 @@ platforms:
           prompt: "Scheduled task: {task}. Due {due} ({weekday})."
           toolsets: [file, skills, brain]
           skills: [brief]
+        scheduled-triage:
+          secret: "${WEBHOOK_SECRET_SCHEDULE}"
+          prompt: "Scheduled task: {task}. Due {due} ({weekday})."
+          toolsets: [file, skills, brain]
+          skills: [triage]
+        # The skills this instance schedules by name: one route each, same shape as the builtin
+        # ones. None of them delivers: the skill writes its note through brain_tools.
+{% for skill in scheduled_skills %}
+        scheduled-{{ skill }}:
+          secret: "${WEBHOOK_SECRET_SCHEDULE}"
+          prompt: "Scheduled task: {task}. Due {due} ({weekday})."
+          toolsets: [file, skills, brain]
+          skills: [{{ skill }}]
+{% endfor %}
 
 {% if is_slack %}
 thread_sessions_per_user: true

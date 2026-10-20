@@ -42,6 +42,9 @@ MAIL_DIR_IN_CONTAINER = DATA_IN_CONTAINER / "mail"
 MAIL_STAGING_IN_CONTAINER = MAIL_DIR_IN_CONTAINER / "inbox"
 MAIL_STATE_IN_CONTAINER = MAIL_DIR_IN_CONTAINER / "state.json"
 MAIL_RULES_IN_CONTAINER = MAIL_DIR_IN_CONTAINER / "rules.json"
+# The scheduled tasks the product ships: a skill with one of these names would collide with the
+# builtin route of the same name, so it cannot be scheduled.
+SCHEDULED_TASK_NAMES: tuple[str, ...] = ("digest", "lint", "brief", "triage")
 
 
 class AnswersError(RuntimeError):
@@ -191,16 +194,32 @@ class ScheduleAnswers(BaseModel):
     digest: list[str] = Field(default_factory=lambda: ["08:00", "20:00"])
     lint: str = "03:30"
     brief: list[str] = Field(default_factory=lambda: ["07:00", "13:00"])
+    triage: list[str] = Field(default_factory=lambda: ["21:00"])
+    # Skills this instance schedules by name, each with the local times it fires at. The name is
+    # both the skill folder and the route, so it is held to a name the scheduler accepts.
+    skills: dict[str, list[str]] = Field(default_factory=dict)
 
     @field_validator("lint")
     @classmethod
     def _check_time(cls, value: str) -> str:
         return _clock_time(value)
 
-    @field_validator("digest", "brief")
+    @field_validator("digest", "brief", "triage")
     @classmethod
     def _check_times(cls, value: list[str]) -> list[str]:
         return [_clock_time(item) for item in value]
+
+    @field_validator("skills")
+    @classmethod
+    def _check_skill_times(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        checked: dict[str, list[str]] = {}
+        for skill, times in value.items():
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,40}", skill):
+                raise ValueError(f"not a skill name: {skill!r}")
+            if skill in SCHEDULED_TASK_NAMES:
+                raise ValueError(f"{skill!r} is a scheduled task of its own, not a skill this file schedules")
+            checked[skill] = [_clock_time(item) for item in times]
+        return checked
 
 
 class StagingAnswers(BaseModel):

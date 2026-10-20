@@ -681,3 +681,48 @@ def test_a_binary_file_in_the_vault_is_not_a_template_placeholder(instance: Path
     pdf.write_bytes(b"%PDF-1.4\nstream\n{{\\binary\nendstream\n")
     status, reason = _status(instance, "placeholders")
     assert status == PASS, reason
+
+
+# --- the skills an instance schedules by name ------------------------------------------------
+
+
+def _scheduled_instance(tmp_path: Path, skills: dict[str, list[str]]) -> Path:
+    data = yaml.safe_load(SAMPLE.read_text(encoding="utf-8"))
+    data["vault_dir"] = str(tmp_path / "vault")
+    data["media_dir"] = str(tmp_path / "media")
+    data["archive_dir"] = str(tmp_path / "archive")
+    data["schedule"] = {
+        "digest": ["08:00"],
+        "lint": "03:30",
+        "brief": ["07:00"],
+        "triage": ["21:00"],
+        "skills": skills,
+    }
+    path = tmp_path / "scheduled.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    directory = tmp_path / "scheduled-instance"
+    init(Answers.from_yaml(path), directory)
+    return directory
+
+
+def test_a_skill_the_instance_schedules_passes_the_scheduled_routes(tmp_path: Path) -> None:
+    directory = _scheduled_instance(tmp_path, {"dailies": ["03:00"]})
+    status, reason = _status(directory, "scheduled_routes")
+    assert status == PASS, reason
+    assert "scheduled-dailies" in reason
+
+
+def test_a_scheduled_route_without_a_hermes_block_fails(tmp_path: Path) -> None:
+    directory = _scheduled_instance(tmp_path, {"dailies": ["03:00"]})
+
+    def mutate(data: dict) -> None:
+        entries = data["scheduler"]["schedule"]["entries"]
+        entries.append({"name": "foo", "route": "scheduled-foo", "at": "09:00"})
+        # The sidecars config refuses a route with no secret, so the secret is there: what is
+        # missing is the Hermes block, which is what this check is about.
+        data["route_secrets"]["scheduled-foo"] = "/run/secrets/webhook_schedule"
+
+    _edit_yaml(directory / "config/sidecars.yaml", mutate)
+    status, reason = _status(directory, "scheduled_routes")
+    assert status == FAIL
+    assert "scheduled-foo is not one of" in reason

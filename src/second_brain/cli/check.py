@@ -98,9 +98,13 @@ PLACEHOLDER_TEXT_SUFFIXES = frozenset(
 )
 
 # The routes the scheduler is allowed to post to, and the only one that may deliver its reply into
-# the chat. A scheduled run that reaches the web or mirrors its reply is how untrusted content ends
-# up quoted into the conversation.
-SCHEDULED_ROUTES: tuple[str, ...] = ("scheduled-digest", "scheduled-lint", "scheduled-brief")
+# the chat: a run that reaches the web or mirrors its reply quotes untrusted content into it.
+SCHEDULED_ROUTES: tuple[str, ...] = (
+    "scheduled-digest",
+    "scheduled-lint",
+    "scheduled-brief",
+    "scheduled-triage",
+)
 DELIVERING_ROUTE = "scheduled-digest"
 NO_DELIVERY: tuple[Any, ...] = (None, False, "", "log", "none")
 
@@ -702,6 +706,13 @@ def _research_routes_check(ctx: _Instance) -> CheckResult:
     return _pass(name, f"{', '.join(routes)}: the web, and no vault or brain_tools")
 
 
+def _skill_route(route: str, block: Any) -> bool:
+    """Whether this route is a skill the instance scheduled, judged by the skill its block runs."""
+    if not route.startswith("scheduled-") or not isinstance(block, dict):
+        return False
+    return block.get("skills") == [route.removeprefix("scheduled-")]
+
+
 def _webhook_routes(hermes: dict[str, Any]) -> dict[str, Any]:
     platforms = hermes.get("platforms")
     if not isinstance(platforms, dict):
@@ -783,6 +794,7 @@ def _scheduled_routes_check(ctx: _Instance) -> CheckResult:
     problems: list[str] = [
         f"{route} is not one of {', '.join(SCHEDULED_ROUTES)}"
         for route in sorted(set(routes) - set(SCHEDULED_ROUTES))
+        if not _skill_route(route, configured.get(route))
     ]
     for route in routes:
         block = configured.get(route)

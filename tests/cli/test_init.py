@@ -11,6 +11,7 @@ import os
 import shutil
 import stat
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -1149,3 +1150,59 @@ def test_an_empty_skills_folder_is_refused(tmp_path: Path, answers_file: Path) -
     source.mkdir()
     with pytest.raises(InitError, match="no skill folder"):
         init(_with_skills(tmp_path, answers_file, source), tmp_path / "instance")
+
+
+# --- the tasks and the skills the scheduler fires -------------------------------------------
+
+
+def _scheduled_answers(tmp_path: Path, answers_file: Path, schedule: dict) -> Answers:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["schedule"] = schedule
+    path = tmp_path / "scheduled.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return Answers.from_yaml(path)
+
+
+def _routes(instance: Path) -> dict[str, Any]:
+    hermes = yaml.safe_load((instance / "config" / "hermes" / "config.yaml").read_text(encoding="utf-8"))
+    return hermes["platforms"]["webhook"]["extra"]["routes"]
+
+
+def test_the_triage_runs_nightly_by_default(instance: Path) -> None:
+    by_route: dict[str, list[str]] = {}
+    for entry in _sidecars(instance).scheduler.schedule.entries:
+        by_route.setdefault(entry.route, []).append(entry.at)
+    assert by_route["scheduled-triage"] == ["21:00"]
+    assert _routes(instance)["scheduled-triage"]["skills"] == ["triage"]
+
+
+def test_a_skill_the_instance_schedules_gets_an_entry_a_secret_and_a_route(
+    tmp_path: Path, answers_file: Path
+) -> None:
+    answers = _scheduled_answers(
+        tmp_path,
+        answers_file,
+        {"digest": ["08:00"], "lint": "03:30", "brief": ["07:00"], "skills": {"dailies": ["03:00"]}},
+    )
+    instance = tmp_path / "scheduled-instance"
+    init(answers, instance)
+
+    sidecars = _sidecars(instance)
+    fired = [(entry.name, entry.route, entry.at) for entry in sidecars.scheduler.schedule.entries]
+    assert ("dailies-1", "scheduled-dailies", "03:00") in fired
+    assert sidecars.route_secrets["scheduled-dailies"] == Path("/run/secrets/webhook_schedule")
+
+    route = _routes(instance)["scheduled-dailies"]
+    assert route["skills"] == ["dailies"]
+    assert route["toolsets"] == ["file", "skills", "brain"]
+    assert "deliver" not in route
+
+
+def test_a_skill_named_like_a_scheduled_task_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError):
+        _scheduled_answers(tmp_path, answers_file, {"skills": {"digest": ["03:00"]}})
+
+
+def test_a_skill_name_the_scheduler_cannot_use_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError):
+        _scheduled_answers(tmp_path, answers_file, {"skills": {"Bad Name": ["03:00"]}})

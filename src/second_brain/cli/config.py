@@ -72,6 +72,7 @@ SCHEDULE_ROUTES: dict[str, str] = {
     "digest": "scheduled-digest",
     "lint": "scheduled-lint",
     "brief": "scheduled-brief",
+    "triage": "scheduled-triage",
 }
 INGEST_ROUTE = "ingest"
 
@@ -262,6 +263,11 @@ def capture_dir(answers: Answers) -> str:
     return f"{vault_schema(answers.language).folder(Zone.INBOX)}/{Zone.CALLS.value}"
 
 
+def scheduled_skill_route(skill: str) -> str:
+    """The webhook route a scheduled skill posts to: one route per skill, named after it."""
+    return f"scheduled-{skill}"
+
+
 def sidecars_config(answers: Answers) -> SidecarsConfig:
     """The sidecars config: what each sidecar watches, and the secret file of every route it posts to.
 
@@ -274,6 +280,8 @@ def sidecars_config(answers: Answers) -> SidecarsConfig:
         route_secrets[kind.route] = SECRETS_IN_CONTAINER / secret
     for route in SCHEDULE_ROUTES.values():
         route_secrets[route] = SECRETS_IN_CONTAINER / WEBHOOK_SCHEDULE
+    for skill in answers.schedule.skills:
+        route_secrets[scheduled_skill_route(skill)] = SECRETS_IN_CONTAINER / WEBHOOK_SCHEDULE
 
     calls = answers.calls
     jobs = jobs_config(answers)
@@ -312,6 +320,15 @@ def _schedule_entries(answers: Answers) -> list[ScheduleEntry]:
         ScheduleEntry(name=f"brief-{index}", route=SCHEDULE_ROUTES["brief"], at=at)
         for index, at in enumerate(schedule.brief, start=1)
     ]
+    entries += [
+        ScheduleEntry(name=f"triage-{index}", route=SCHEDULE_ROUTES["triage"], at=at)
+        for index, at in enumerate(schedule.triage, start=1)
+    ]
+    for skill in sorted(schedule.skills):
+        entries += [
+            ScheduleEntry(name=f"{skill}-{index}", route=scheduled_skill_route(skill), at=at)
+            for index, at in enumerate(schedule.skills[skill], start=1)
+        ]
     return entries
 
 
@@ -483,6 +500,8 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         # The filter file, when the answers name one: a list with zero or one entry, because the
         # renderer has no nested conditional block.
         "mail_rules_mount": mail_rules_mount(answers),
+        # The skills this instance schedules by name, so the Hermes config gets a route for each.
+        "scheduled_skills": sorted(answers.schedule.skills),
         "deliver_platform": answers.channel.lower(),
         "example_note_path": f"{schema.folder('knowledge')}/example.md",
         "egress_hosts": egress_hosts(answers, registry),
