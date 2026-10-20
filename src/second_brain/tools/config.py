@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +31,7 @@ from second_brain.tools.jobs import JobKind, JobStore, job_tools
 from second_brain.tools.links import LinkConfig, link_tools
 from second_brain.tools.notify import NotifyConfig, notify_tools
 from second_brain.tools.outbox import OutboxConfig
-from second_brain.tools.registry import Registry, Tool
+from second_brain.tools.registry import ExtensionError, ExtensionSettings, Registry, Tool
 from second_brain.tools.vault import Vault, VaultConfig
 from second_brain.tools.weather import weather_tools
 
@@ -43,7 +43,9 @@ CONFIG_ENV = "BRAIN_TOOLS_CONFIG"
 # ours or out of the way.
 _NOTE_EXCLUDED_ZONES = (Zone.RAW, Zone.BRAIN, Zone.META, Zone.ARCHIVE)
 
-# A field whose name is one of these holds a secret value, so it may only be a path to a file.
+# A field whose name ends in one of these holds a secret value, so it may only be a path to a file.
+# Instance sections name their secrets after the service (`parcel_api_key`), so the match is on the
+# trailing word and not on the whole key.
 _SECRET_NAMES = frozenset(
     {"token", "access_token", "refresh_token", "client_secret", "secret", "password", "api_key"}
 )
@@ -138,6 +140,10 @@ class ToolsConfig(BaseModel):
     jobs: JobsConfig | None = None
     notify: NotifyConfig | None = None
     outbox: OutboxConfig | None = None
+    # Entry point name to that instance package's settings. Free-form on purpose: the core does not
+    # know what an instance tool needs, it only refuses a secret value in there.
+    extensions: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    secrets_dir: Path = Path("/run/secrets")
 
     @model_validator(mode="before")
     @classmethod
@@ -187,7 +193,7 @@ def _reject_secret_fields(value: Any, path: str) -> None:
     if isinstance(value, Mapping):
         for key, item in value.items():
             here = f"{path}.{key}"
-            if isinstance(key, str) and key.strip().lower() in _SECRET_NAMES:
+            if isinstance(key, str) and _names_a_secret(key):
                 raise ValueError(f"{here}: secrets are never in this file, point at a *_file instead")
             _reject_secret_fields(item, here)
     elif isinstance(value, list):
@@ -195,16 +201,24 @@ def _reject_secret_fields(value: Any, path: str) -> None:
             _reject_secret_fields(item, f"{path}[{index}]")
 
 
+def _names_a_secret(key: str) -> bool:
+    normalized = key.strip().lower()
+    return any(normalized == name or normalized.endswith(f"_{name}") for name in _SECRET_NAMES)
+
+
 def build_registry(
     config: ToolsConfig,
     *,
     calendar_backend: CalendarBackend | None = None,
     load_entry_points: bool = True,
+    check_credentials: bool = True,
 ) -> Registry:
     """Every tool this brain has: the vault always, each optional group only when configured.
 
     The calendar needs an access token, so its backend is built here from `token_file` unless the
-    caller passes one (the tests do).
+    caller passes one (the tests do). After the instance tools are loaded, the secrets they declare
+    are read once: a brain that starts without them would only fail on the first call. `sb init`
+    passes `check_credentials=False` because it builds the registry before the secrets exist.
     """
     registry = Registry()
     vault = Vault(config.vault)
@@ -213,8 +227,28 @@ def build_registry(
     for tool in _optional_tools(config, calendar_backend):
         registry.add(tool)
     if load_entry_points:
-        registry.load_entry_points()
+        registry.load_entry_points(settings_for=_settings_for(config))
+        if check_credentials:
+            _check_credentials(registry)
     return registry
+
+
+def _settings_for(config: ToolsConfig) -> Callable[[str], ExtensionSettings]:
+    def settings(name: str) -> ExtensionSettings:
+        return ExtensionSettings(name, config.extensions.get(name, {}), config.secrets_dir)
+
+    return settings
+
+
+def _check_credentials(registry: Registry) -> None:
+    """Read every secret an instance tool declared, so a missing one fails at startup."""
+    for tool_name, settings in registry.instance_tools().items():
+        spec = registry.get(tool_name).spec
+        for name in spec.credentials:
+            try:
+                settings.secret(name)
+            except ExtensionError as exc:
+                raise ExtensionError(f"tool {tool_name}: {exc}") from None
 
 
 def _optional_tools(config: ToolsConfig, backend: CalendarBackend | None) -> list[Tool]:

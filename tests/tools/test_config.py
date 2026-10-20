@@ -11,6 +11,7 @@ import pytest
 import yaml
 from pydantic import BaseModel
 
+from second_brain.core.types import Autonomy, Effect, ToolSpec
 from second_brain.tools import registry as registry_module
 from second_brain.tools.config import (
     CONFIG_ENV,
@@ -18,7 +19,7 @@ from second_brain.tools.config import (
     ToolsConfigError,
     build_registry,
 )
-from second_brain.tools.registry import Tool
+from second_brain.tools.registry import ExtensionError, ExtensionSettings, Tool
 from second_brain.tools.vault import Provenance
 
 CALENDAR = {
@@ -412,3 +413,157 @@ def test_instance_entry_points_are_loaded(
     config = ToolsConfig.from_yaml(_write(tmp_path, _minimal(vault_root, tmp_path)))
     registry = build_registry(config)
     assert "ask_team" in {spec.name for spec in registry.specs()}
+
+
+# --- instance tools: their settings and their secrets ---------------------------------------
+
+
+class _InstanceEntryPoint:
+    """An entry point whose factory takes the package's settings, like an instance tool does."""
+
+    name = "mytools"
+
+    def __init__(self, credentials: tuple[str, ...]) -> None:
+        self._credentials = credentials
+
+    def load(self) -> Any:
+        def factory(settings: ExtensionSettings) -> list[Tool]:
+            return [self._tool(settings)]
+
+        return factory
+
+    def _tool(self, settings: ExtensionSettings) -> Tool:
+        class _Params(BaseModel):
+            tracking_number: str
+
+        def handler(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
+            return {"base_url": settings.config.get("base_url")}
+
+        spec = ToolSpec(
+            name="parcel_status",
+            description="Current delivery status of a parcel.",
+            params=_Params,
+            effect=Effect.READ,
+            autonomy=Autonomy.AUTO,
+            credentials=self._credentials,
+        )
+        return Tool(spec=spec, handler=handler)
+
+
+def _extensions_config(
+    vault_root: Path,
+    tmp_path: Path,
+    *,
+    secrets_dir: Path | None = None,
+    extensions: dict[str, Any] | None = None,
+) -> ToolsConfig:
+    payload = _minimal(vault_root, tmp_path)
+    payload["secrets_dir"] = str(secrets_dir or tmp_path / "secrets")
+    if extensions is not None:
+        payload["extensions"] = extensions
+    return ToolsConfig.from_yaml(_write(tmp_path, payload))
+
+
+def test_the_extension_settings_hold_the_section_and_the_secrets_dir(
+    vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[ExtensionSettings] = []
+
+    class _EntryPoint:
+        name = "mytools"
+
+        def load(self) -> Any:
+            def factory(settings: ExtensionSettings) -> list[Tool]:
+                seen.append(settings)
+                return []
+
+            return factory
+
+    monkeypatch.setattr(registry_module, "entry_points", lambda group: [_EntryPoint()])
+    secrets = tmp_path / "secrets"
+    config = _extensions_config(
+        vault_root, tmp_path, secrets_dir=secrets, extensions={"mytools": {"base_url": "u"}}
+    )
+    build_registry(config)
+    assert seen == [ExtensionSettings("mytools", {"base_url": "u"}, secrets)]
+
+
+def test_a_package_without_a_section_gets_an_empty_one(
+    vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[ExtensionSettings] = []
+
+    class _EntryPoint:
+        name = "mytools"
+
+        def load(self) -> Any:
+            def factory(settings: ExtensionSettings) -> list[Tool]:
+                seen.append(settings)
+                return []
+
+            return factory
+
+    monkeypatch.setattr(registry_module, "entry_points", lambda group: [_EntryPoint()])
+    build_registry(_extensions_config(vault_root, tmp_path))
+    assert seen[0].config == {}
+
+
+def test_the_secrets_dir_defaults_to_run_secrets(vault_root: Path, tmp_path: Path) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    config = ToolsConfig.from_yaml(_write(tmp_path, payload))
+    assert config.secrets_dir == Path("/run/secrets")
+    assert config.extensions == {}
+
+
+def test_an_inline_secret_inside_extensions_is_rejected(vault_root: Path, tmp_path: Path) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["extensions"] = {"mytools": {"parcel_api_key": "not-in-a-file"}}
+    with pytest.raises(ToolsConfigError, match="secrets are never in this file"):
+        ToolsConfig.from_yaml(_write(tmp_path, payload))
+
+
+def test_a_missing_credential_stops_the_registry(
+    vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        registry_module, "entry_points", lambda group: [_InstanceEntryPoint(("parcel_api_key",))]
+    )
+    config = _extensions_config(vault_root, tmp_path)
+    with pytest.raises(ExtensionError, match="parcel_status"):
+        build_registry(config)
+
+
+def test_a_missing_credential_is_named_in_the_error(
+    vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        registry_module, "entry_points", lambda group: [_InstanceEntryPoint(("parcel_api_key",))]
+    )
+    config = _extensions_config(vault_root, tmp_path)
+    with pytest.raises(ExtensionError, match="parcel_api_key"):
+        build_registry(config)
+
+
+def test_a_credential_that_can_be_read_lets_the_registry_build(
+    vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secrets = tmp_path / "secrets"
+    secrets.mkdir()
+    (secrets / "parcel_api_key").write_text("test-key", encoding="utf-8")
+    monkeypatch.setattr(
+        registry_module, "entry_points", lambda group: [_InstanceEntryPoint(("parcel_api_key",))]
+    )
+    config = _extensions_config(vault_root, tmp_path, secrets_dir=secrets)
+    registry = build_registry(config)
+    assert "parcel_status" in {spec.name for spec in registry.specs()}
+
+
+def test_check_credentials_false_skips_the_check(
+    vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        registry_module, "entry_points", lambda group: [_InstanceEntryPoint(("parcel_api_key",))]
+    )
+    config = _extensions_config(vault_root, tmp_path)
+    registry = build_registry(config, check_credentials=False)
+    assert "parcel_status" in {spec.name for spec in registry.specs()}

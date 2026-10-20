@@ -11,7 +11,7 @@ Instance tools come from installed packages that expose the entry point group `s
 mytools = "brain_example.tools:tools"
 ```
 
-The entry point resolves to a list of `Tool` objects, or to a callable that returns one. brain_tools loads every entry point at startup, and a failing entry point stops it from starting. That is on purpose: a brain never runs with a tool silently missing.
+The entry point resolves to a list of `Tool` objects, or to a callable that returns one. A callable with one positional parameter receives that package's `ExtensionSettings`, which carries the entry point name, the package's own section of the tools config, and the secrets directory. brain_tools loads every entry point at startup, and a failing entry point stops it from starting. That is on purpose: a brain never runs with a tool silently missing.
 
 A tool is a spec plus a handler:
 
@@ -22,7 +22,7 @@ import httpx
 from pydantic import BaseModel
 
 from second_brain.core.types import ToolSpec
-from second_brain.tools.registry import Tool
+from second_brain.tools.registry import ExtensionSettings, Tool
 from second_brain.tools.vault import Provenance
 
 
@@ -30,32 +30,48 @@ class ParcelStatusParams(BaseModel):
     tracking_number: str
 
 
-def parcel_status(params: ParcelStatusParams, provenance: Provenance) -> dict[str, Any]:
-    response = httpx.get(f"https://api.example.com/parcels/{params.tracking_number}", timeout=10)
+def parcel_status(params: ParcelStatusParams, provenance: Provenance, settings: ExtensionSettings) -> dict[str, Any]:
+    base_url = settings.config["base_url"]
+    api_key = settings.secret("parcel_api_key")
+    response = httpx.get(
+        f"{base_url}/parcels/{params.tracking_number}",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=10,
+    )
     response.raise_for_status()
     body = response.json()
     return {"status": body["status"], "eta": body["eta"]}
 
 
-parcel_status_tool = Tool(
-    spec=ToolSpec(
-        name="parcel_status",
-        description="Current delivery status of a parcel, given its tracking number.",
-        params=ParcelStatusParams,
-        effect="read",
-        autonomy="auto",
-        hosts=["api.example.com"],
-        credentials=[],
-    ),
-    handler=parcel_status,
+PARCEL_STATUS_SPEC = ToolSpec(
+    name="parcel_status",
+    description="Current delivery status of a parcel, given its tracking number.",
+    params=ParcelStatusParams,
+    effect="read",
+    autonomy="auto",
+    hosts=["api.example.com"],
+    credentials=["parcel_api_key"],
 )
 
 
-def tools() -> list[Tool]:
-    return [parcel_status_tool]
+def tools(settings: ExtensionSettings) -> list[Tool]:
+    def handler(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
+        return parcel_status(params, provenance, settings)  # type: ignore[arg-type]
+
+    return [Tool(spec=PARCEL_STATUS_SPEC, handler=handler)]
 ```
 
-The handler signature is `def handler(params: BaseModel, provenance: Provenance) -> dict[str, Any]`. Provenance says who asked: the session, the sender, whether the input was untrusted, and whether a human approved this exact call. Use it when a tool needs to know, not as a substitute for the policy.
+The handler signature is `def handler(params: BaseModel, provenance: Provenance) -> dict[str, Any]`. Provenance says who asked: the session, the sender, whether the input was untrusted, and whether a human approved this exact call. Use it when a tool needs to know, not as a substitute for the policy. Settings reach the handler through the closure above, because the server always calls it with those two arguments.
+
+Settings come from the tools config. Each instance package gets its own section under `extensions:`, keyed by the entry point name:
+
+```yaml
+extensions:
+  mytools:
+    base_url: https://api.example.com
+```
+
+A missing section is an empty mapping, so a package with no options needs nothing there. Secrets are never values in this file: `extensions` is walked by the same validator as the rest, and a `token`, `secret`, `password` or `api_key` key is refused. Name a secret in `credentials` instead and read it with `settings.secret("parcel_api_key")`, which reads `/run/secrets/parcel_api_key` on every call, so a rotation needs no restart. brain_tools reads every declared credential at startup and refuses to start when one is missing.
 
 `ToolSpec` fields:
 
