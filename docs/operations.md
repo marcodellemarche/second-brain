@@ -8,7 +8,7 @@ The order matters: the static checks pass before anything starts, and the live c
 
 1. Build the three images: `second-brain/hermes`, `second-brain/terminal`, `second-brain/brain`.
 2. Run `sb init <instance_dir> --answers answers.yaml`. It renders the config, scaffolds the vault and generates the internal secrets.
-3. Fill the external secrets listed in `secrets/README.md` of the instance: the model API key, the Telegram bot token or the Slack bot and app tokens, and the calendar OAuth token.
+3. Fill the external secrets listed in `secrets/README.md` of the instance: the model API key, the Telegram bot token or the Slack bot and app tokens, and the calendar credential (a Google service-account key, or an OAuth access token).
 4. Run `sb check <instance_dir>`. Every static check must pass before you start anything.
 5. Run `docker compose up -d` inside the instance directory.
 6. Run `sb check <instance_dir> --live`. This asks docker compose what is running and probes it.

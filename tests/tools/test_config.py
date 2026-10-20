@@ -567,3 +567,29 @@ def test_check_credentials_false_skips_the_check(
     config = _extensions_config(vault_root, tmp_path)
     registry = build_registry(config, check_credentials=False)
     assert "parcel_status" in {spec.name for spec in registry.specs()}
+
+
+def test_the_calendar_takes_exactly_one_token_source(tmp_path: Path) -> None:
+    base = {
+        "vault": {"root": str(tmp_path)},
+        "token_file": str(tmp_path / "tools_token"),
+        "calendar": {
+            "assistant_calendar_id": "a@example.test",
+            "main_calendar_id": "m@example.test",
+            "timezone": "Europe/Rome",
+        },
+    }
+
+    def load(calendar: dict) -> ToolsConfig:
+        path = tmp_path / "tools.yaml"
+        path.write_text(yaml.safe_dump({**base, "calendar": calendar}), encoding="utf-8")
+        return ToolsConfig.from_yaml(path)
+
+    with pytest.raises(ToolsConfigError, match="exactly one"):
+        load(base["calendar"])
+    with pytest.raises(ToolsConfigError, match="exactly one"):
+        load({**base["calendar"], "token_file": "t", "service_account_file": "k"})
+
+    config = load({**base["calendar"], "service_account_file": "k"})
+    assert config.calendar is not None
+    assert config.calendar.service_account_file is not None

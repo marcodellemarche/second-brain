@@ -13,14 +13,19 @@ Google SDK dependency. Error codes: `not_found`, `foreign_calendar`, `approval_r
 
 from __future__ import annotations
 
+import base64
 import json
 import re
+import subprocess
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Literal, Protocol
 from zoneinfo import ZoneInfo
 
@@ -266,7 +271,7 @@ class GoogleCalendarBackend:
         return _event(payload)
 
     def _moment(self, day: date) -> str:
-        return datetime.combine(day, time.min, tzinfo=self._zone).isoformat()
+        return datetime.combine(day, datetime.min.time(), tzinfo=self._zone).isoformat()
 
     @staticmethod
     def _events_path(calendar_id: str) -> str:
@@ -591,3 +596,102 @@ def calendar_tools(backend: CalendarBackend, config: CalendarConfig) -> list[Too
             handler=invite,
         ),
     ]
+
+
+class ServiceAccountToken:
+    """An access token minted from a Google service-account key, refreshed when it is about to expire.
+
+    A service account signs a JWT with its private key and trades it for an access token, so there
+    is no refresh token to keep alive and no consent screen: the key file is the only secret. The
+    signature goes through `openssl`, which the brain image already has, rather than a new
+    dependency. The token is cached until a minute before it expires.
+    """
+
+    def __init__(
+        self,
+        key_file: Path,
+        *,
+        scope: str = "https://www.googleapis.com/auth/calendar.events",
+        clock: Callable[[], float] = time.time,
+        timeout: float = 30.0,
+        openssl: str = "openssl",
+        exchange: Callable[[str, bytes], dict[str, Any]] | None = None,
+    ) -> None:
+        self._key_file = key_file
+        self._exchange = exchange or self._http_exchange
+        self._scope = scope
+        self._clock = clock
+        self._timeout = timeout
+        self._openssl = openssl
+        self._token = ""
+        self._expires_at = 0.0
+
+    def __call__(self) -> str:
+        if self._token and self._clock() < self._expires_at - 60:
+            return self._token
+        key = json.loads(self._key_file.read_text(encoding="utf-8"))
+        assertion = self._assertion(key)
+        body = urllib.parse.urlencode(
+            {
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "assertion": assertion,
+            }
+        ).encode()
+        payload = self._exchange(key.get("token_uri", "https://oauth2.googleapis.com/token"), body)
+        token = payload.get("access_token")
+        if not isinstance(token, str) or not token:
+            raise CalendarError("backend_error", "the token endpoint returned no access token")
+        self._token = token
+        self._expires_at = self._clock() + float(payload.get("expires_in") or 3600)
+        return token
+
+    def _http_exchange(self, token_uri: str, body: bytes) -> dict[str, Any]:
+        request = urllib.request.Request(
+            token_uri,
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                return json.load(response)
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise CalendarError("backend_error", f"the service account token request failed: {exc}") from exc
+
+    def _assertion(self, key: dict[str, Any]) -> str:
+        now = int(self._clock())
+        header = _b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+        claims = _b64url(
+            json.dumps(
+                {
+                    "iss": key["client_email"],
+                    "scope": self._scope,
+                    "aud": key.get("token_uri", "https://oauth2.googleapis.com/token"),
+                    "iat": now,
+                    "exp": now + 3600,
+                }
+            ).encode()
+        )
+        signing_input = f"{header}.{claims}".encode()
+        # `openssl` signs a PEM file, and the key lives inside the JSON: hand it one in a private
+        # temporary file, removed as soon as the signature is out.
+        with tempfile.NamedTemporaryFile("w", suffix=".pem", delete=False) as handle:
+            handle.write(key["private_key"])
+            pem = Path(handle.name)
+        try:
+            pem.chmod(0o600)
+            signed = subprocess.run(
+                [self._openssl, "dgst", "-sha256", "-sign", str(pem)],
+                input=signing_input,
+                capture_output=True,
+                timeout=self._timeout,
+                check=True,
+            )
+        except (subprocess.SubprocessError, OSError) as exc:
+            raise CalendarError("backend_error", f"cannot sign the service account assertion: {exc}") from exc
+        finally:
+            pem.unlink(missing_ok=True)
+        return f"{header}.{claims}.{_b64url(signed.stdout)}"
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()

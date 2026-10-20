@@ -45,12 +45,18 @@ class SlackAnswers(BaseModel):
 
 
 class CalendarAnswers(BaseModel):
-    """The calendar section, minus the token: that is a secret file."""
+    """The calendar section, minus the token: that is a secret file.
+
+    `service_account: true` says the secret is a Google service-account key, and the brain mints its
+    own access tokens from it. Left out, `secrets/calendar_token` is a bearer token that expires
+    after an hour and has to be replaced by hand.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     assistant_calendar_id: str = Field(min_length=1)
     main_calendar_id: str = Field(min_length=1)
+    service_account: bool = False
 
 
 class ArchiveAnswers(BaseModel):

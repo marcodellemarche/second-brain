@@ -24,6 +24,7 @@ from second_brain.tools.calendar import (
     CalendarBackend,
     CalendarConfig,
     GoogleCalendarBackend,
+    ServiceAccountToken,
     calendar_tools,
 )
 from second_brain.tools.core_vault import vault_tools
@@ -62,14 +63,26 @@ class WeatherConfig(BaseModel):
 
 
 class CalendarToolsConfig(BaseModel):
-    """The calendar section: the calendar ids and a path to the file holding the OAuth token."""
+    """The calendar section: the calendar ids and how the access token is obtained.
+
+    `token_file` is a ready bearer token, which expires after an hour and then has to be replaced by
+    hand. `service_account_file` is the key of a Google service account: the brain mints its own
+    tokens from it, so nothing has to be refreshed. Exactly one of the two.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     assistant_calendar_id: str = Field(min_length=1)
     main_calendar_id: str = Field(min_length=1)
     timezone: str = Field(min_length=1)
-    token_file: Path
+    token_file: Path | None = None
+    service_account_file: Path | None = None
+
+    @model_validator(mode="after")
+    def _one_token_source(self) -> CalendarToolsConfig:
+        if (self.token_file is None) == (self.service_account_file is None):
+            raise ValueError("calendar needs exactly one of token_file and service_account_file")
+        return self
 
     def calendar_config(self) -> CalendarConfig:
         return CalendarConfig(
@@ -279,9 +292,14 @@ def _note_folders(root: Path) -> list[str] | None:
 
 
 def _calendar_backend(config: ToolsConfig) -> CalendarBackend:
-    """The Google backend, reading the token from its file on every call."""
+    """The Google backend: a service account mints its own tokens, a token file is read as it is."""
     assert config.calendar is not None
+    if config.calendar.service_account_file is not None:
+        return GoogleCalendarBackend(
+            ServiceAccountToken(config.calendar.service_account_file), config.calendar.timezone
+        )
     token_file = config.calendar.token_file
+    assert token_file is not None
 
     def read_token() -> str:
         return token_file.read_text(encoding="utf-8").strip()

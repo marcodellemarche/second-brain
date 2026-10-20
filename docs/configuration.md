@@ -83,6 +83,7 @@ tools:
   calendar:
     assistant_calendar_id: assistant@example.com
     main_calendar_id: main@example.com
+    service_account: true
   weather: true
   links:
     base_url: https://cloud.example.com
@@ -180,7 +181,7 @@ No file in `secrets/` is written twice, not by a second `sb init` and not with `
 - `token_file`: file holding the bearer token Hermes presents.
 - `listen`: `host:port`, written as one string, default `127.0.0.1:8765`.
 - `human_commit_seconds`: how often the background timer commits the owner's edits, so history shows them even when the brain wrote nothing.
-- `calendar`: `assistant_calendar_id`, `main_calendar_id`, `timezone`, and `token_file`. The token is a path, never a value.
+- `calendar`: `assistant_calendar_id`, `main_calendar_id`, `timezone`, and exactly one of `service_account_file` or `token_file`. Both are paths, never values. With a service account the brain mints its own access tokens from the key, so nothing expires under it; a `token_file` is a bearer token that lasts an hour and has to be replaced by hand. `sb init` writes `service_account_file` when the answers say `service_account: true`.
 - `weather.enabled`.
 - `links`: `base_url`, `vault_folder`, `archive_folder`.
 - `archive`: `root`, `inbox_media_dir`, `discard_dir`, `allowed_extensions`.

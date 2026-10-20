@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import subprocess
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,6 +22,7 @@ from second_brain.tools.calendar import (
     InviteParams,
     ListParams,
     MainWriteParams,
+    ServiceAccountToken,
     calendar_tools,
 )
 from second_brain.tools.registry import Tool
@@ -557,3 +562,73 @@ def test_backend_turns_a_404_into_not_found(monkeypatch: pytest.MonkeyPatch) -> 
     with pytest.raises(CalendarError) as excinfo:
         backend.get_event(ASSISTANT, "evt-1")
     assert excinfo.value.code == "not_found"
+
+
+def _service_account_key(tmp_path: Path, *, key_id: str = "sa-1") -> Path:
+    """A real RSA key and a service-account JSON around it, so `openssl` really signs."""
+    private = tmp_path / f"{key_id}.pem"
+    subprocess.run(
+        ["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private)],
+        check=True,
+        capture_output=True,
+    )
+    key = {
+        "type": "service_account",
+        "client_email": f"{key_id}@example.iam.gserviceaccount.com",
+        "private_key": private.read_text(encoding="utf-8"),
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    path = tmp_path / f"{key_id}.json"
+    path.write_text(json.dumps(key), encoding="utf-8")
+    return path
+
+
+def test_a_service_account_mints_a_token_and_caches_it(tmp_path: Path) -> None:
+    key_file = _service_account_key(tmp_path)
+    calls: list[bytes] = []
+    clock = [1000.0]
+
+    def exchange(_uri: str, body: bytes) -> dict[str, Any]:
+        calls.append(body)
+        return {"access_token": "minted-1", "expires_in": 3600}
+
+    token = ServiceAccountToken(key_file, clock=lambda: clock[0], timeout=5.0, exchange=exchange)
+
+    assert token() == "minted-1"
+    assert token() == "minted-1"
+    assert len(calls) == 1
+    clock[0] += 3600
+    assert token() == "minted-1"
+    assert len(calls) == 2
+
+
+def test_the_assertion_is_a_signed_jwt_with_the_right_claims(tmp_path: Path) -> None:
+    key_file = _service_account_key(tmp_path)
+    key = json.loads(key_file.read_text(encoding="utf-8"))
+    token = ServiceAccountToken(key_file, clock=lambda: 1000.0, timeout=5.0)
+
+    assertion = token._assertion(key)
+    header, claims, signature = assertion.split(".")
+    assert json.loads(_b64decode(header))["alg"] == "RS256"
+    payload = json.loads(_b64decode(claims))
+    assert payload["iss"] == key["client_email"]
+    assert payload["scope"] == "https://www.googleapis.com/auth/calendar.events"
+    assert payload["exp"] - payload["iat"] == 3600
+    assert len(_b64decode(signature)) == 256
+
+
+def test_a_key_that_cannot_be_signed_is_a_backend_error(tmp_path: Path) -> None:
+    key_file = tmp_path / "broken.json"
+    key_file.write_text(
+        json.dumps({"client_email": "x@example.test", "private_key": "not a key"}), encoding="utf-8"
+    )
+    token = ServiceAccountToken(key_file, timeout=5.0)
+
+    with pytest.raises(CalendarError) as error:
+        token()
+    assert error.value.code == "backend_error"
+
+
+def _b64decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)

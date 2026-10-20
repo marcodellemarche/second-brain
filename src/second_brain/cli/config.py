@@ -127,12 +127,20 @@ def tools_config(answers: Answers) -> ToolsConfig:
     tools = answers.tools
     calendar = None
     if tools.calendar is not None:
-        calendar = CalendarToolsConfig(
-            assistant_calendar_id=tools.calendar.assistant_calendar_id,
-            main_calendar_id=tools.calendar.main_calendar_id,
-            timezone=answers.timezone,
-            token_file=SECRETS_IN_CONTAINER / "calendar_token",
-        )
+        if tools.calendar.service_account:
+            calendar = CalendarToolsConfig(
+                assistant_calendar_id=tools.calendar.assistant_calendar_id,
+                main_calendar_id=tools.calendar.main_calendar_id,
+                timezone=answers.timezone,
+                service_account_file=SECRETS_IN_CONTAINER / "calendar_token",
+            )
+        else:
+            calendar = CalendarToolsConfig(
+                assistant_calendar_id=tools.calendar.assistant_calendar_id,
+                main_calendar_id=tools.calendar.main_calendar_id,
+                timezone=answers.timezone,
+                token_file=SECRETS_IN_CONTAINER / "calendar_token",
+            )
     return ToolsConfig(
         vault=VaultConfig(
             root=VAULT_IN_CONTAINER, immutable=[vault_schema(answers.language).folder(Zone.RAW)]
