@@ -123,6 +123,7 @@ class Decision:
 class CallRouter:
     """Poll the capture folder and tell the personal brain's ingest route about every new call.
 
+    A note still in the capture folder is one that was never ingested, so the first poll sends it.
     A missing capture folder is not an error: it is empty until it appears.
     """
 
@@ -151,7 +152,7 @@ class CallRouter:
         self._poll_seconds = poll_seconds
         self._clock = clock
         self._sleep = sleep
-        self._seen: dict[str, tuple[int, int]] = self._scan()
+        self._seen: dict[str, tuple[int, int]] = {}
         self._stopped = False
 
     @property
