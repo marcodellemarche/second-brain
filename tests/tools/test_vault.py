@@ -768,3 +768,123 @@ def test_human_author_is_configurable(root: Path) -> None:
     vault.commit_human_changes()
 
     assert _git(root, "log", "-1", "--format=%an <%ae>") == "owner <owner@localhost>"
+
+
+# --- log -----------------------------------------------------------------------------------
+
+
+def test_log_lists_brain_and_human_commits_newest_first(root: Path) -> None:
+    vault = _vault(root)
+    vault.write("topics/note.md", "brain wrote this\n", _provenance())
+    (root / "inbox").mkdir()
+    (root / "inbox/from-editor.md").write_text("the owner wrote this\n")
+    vault.commit_human_changes()
+
+    entries = vault.log()
+
+    assert [entry["subject"] for entry in entries[:2]] == ["human: 1 files", "write: topics/note.md"]
+    assert [entry["author"] for entry in entries[:2]] == ["human", "brain"]
+    assert entries[0]["commit"] == _git(root, "rev-parse", "HEAD")
+    assert entries[0]["short"] == _git(root, "rev-parse", "--short", "HEAD")
+    assert entries[1]["paths"] == ["topics/note.md"]
+
+
+def test_log_keeps_the_author_name_it_does_not_know(root: Path) -> None:
+    (root / "note.md").write_text("written by hand\n")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.name=someone", "-c", "user.email=someone@localhost", "commit", "-q", "-m", "else")
+
+    assert _vault(root).log()[0]["author"] == "someone"
+
+
+def test_log_parses_the_trailers_of_a_brain_write(root: Path) -> None:
+    vault = _vault(root)
+    vault.write("topics/note.md", "hello\n", _provenance(requested_by="job:nightly", reason="nightly ingest"))
+
+    entry = vault.log()[0]
+
+    assert entry["trailers"] == {
+        "Requested-By": "job:nightly",
+        "Reason": "nightly ingest",
+        "Source-Integrity": "trusted",
+        "Session": "session-1",
+        "Approval": "none",
+    }
+    assert entry["date"].startswith("20")
+
+
+def _commit_at(root: Path, when: str, path: str, content: str) -> None:
+    (root / path).parent.mkdir(parents=True, exist_ok=True)
+    (root / path).write_text(content)
+    _git(root, "add", "-A")
+    env = {**os.environ, "GIT_AUTHOR_DATE": when, "GIT_COMMITTER_DATE": when}
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=brain",
+            "-c",
+            "user.email=brain@localhost",
+            "commit",
+            "-q",
+            "-m",
+            f"write: {path}",
+        ],
+        capture_output=True,
+        check=True,
+        env=env,
+    )
+
+
+def test_log_since_filters_older_commits(root: Path) -> None:
+    _commit_at(root, "2020-01-01T09:00:00+00:00", "topics/old.md", "old\n")
+    _commit_at(root, "2024-06-01T09:00:00+00:00", "topics/new.md", "new\n")
+
+    recent = _vault(root).log(since="2023-01-01T00:00:00+00:00")
+    touched = [path for entry in recent for path in entry["paths"]]
+
+    assert "topics/new.md" in touched
+    assert "topics/old.md" not in touched
+    assert _vault(root).log(since="2099-01-01T00:00:00+00:00") == []
+
+
+def test_log_lists_a_path_with_non_ascii_characters_as_is(root: Path) -> None:
+    vault = _vault(root)
+    vault.write("topics/caff\u00e8 \u00e8.md", "hello\n", _provenance())
+
+    assert vault.log()[0]["paths"] == ["topics/caff\u00e8 \u00e8.md"]
+
+
+def test_log_limit_caps_the_entries(root: Path) -> None:
+    vault = _vault(root)
+    for index in range(3):
+        vault.write(f"topics/note-{index}.md", "hello\n", _provenance())
+
+    assert len(vault.log(limit=2)) == 2
+    assert vault.log(limit=2)[0]["paths"] == ["topics/note-2.md"]
+
+
+@pytest.mark.parametrize("since", ["yesterday", "2026-13-45", "not a date"])
+def test_log_refuses_a_since_it_cannot_parse(root: Path, since: str) -> None:
+    with pytest.raises(VaultError) as error:
+        _vault(root).log(since=since)
+
+    assert error.value.code == "bad_since"
+
+
+@pytest.mark.parametrize("limit", [0, 201])
+def test_log_refuses_a_limit_out_of_range(root: Path, limit: int) -> None:
+    with pytest.raises(VaultError) as error:
+        _vault(root).log(limit=limit)
+
+    assert error.value.code == "bad_limit"
+
+
+def test_log_of_an_empty_repository_is_empty(tmp_path: Path) -> None:
+    repo = tmp_path / "empty"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+
+    assert _vault(repo).log() == []

@@ -1,4 +1,4 @@
-"""The core vault tools: read, write, move, delete and undo.
+"""The core vault tools: log, read, write, move, delete and undo.
 
 Each handler turns a `VaultError` into a result the model can read, so a refused write reaches
 the conversation as an error code instead of a transport failure.
@@ -18,6 +18,14 @@ from second_brain.tools.vault import Provenance, Vault, VaultError
 
 class ReadParams(BaseModel):
     path: str = Field(min_length=1, description="Vault-relative path of the note.")
+
+
+class LogParams(BaseModel):
+    since: str | None = Field(
+        default=None,
+        description="Only commits after this ISO 8601 date or datetime, for example the previous digest.",
+    )
+    limit: int = Field(default=50, ge=1, le=200, description="How many commits to return at most.")
 
 
 class WriteParams(BaseModel):
@@ -68,6 +76,10 @@ def vault_tools(vault: Vault) -> list[Tool]:
 
         return _guarded(run)
 
+    def log(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
+        assert isinstance(params, LogParams)
+        return _guarded(lambda: {"commits": vault.log(params.since, params.limit)})
+
     def write(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
         assert isinstance(params, WriteParams)
         return _guarded(
@@ -97,6 +109,20 @@ def vault_tools(vault: Vault) -> list[Tool]:
                 taints_private=True,
             ),
             handler=read,
+        ),
+        Tool(
+            spec=ToolSpec(
+                name="vault_log",
+                description=(
+                    "List recent vault commits, newest first: who made them, why, which notes, "
+                    "and the commit id to undo."
+                ),
+                params=LogParams,
+                effect=Effect.READ,
+                autonomy=Autonomy.AUTO,
+                taints_private=True,
+            ),
+            handler=log,
         ),
         Tool(
             spec=ToolSpec(

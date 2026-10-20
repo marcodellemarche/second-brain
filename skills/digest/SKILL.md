@@ -15,9 +15,9 @@ The morning and evening messages do not count against the initiative budget, so 
 
 Keep a section only when it has something in it. Skip it silently otherwise: an empty heading is noise.
 
-**Since the last digest.** One line per thing that happened, newest first, taken from the `_meta/log.md` entries written since the previous digest and from the recent vault commits the tools list (path, one-line reason, short commit id). Group the small stuff: "4 captures, 2 call notes". Leave out the routine internals the owner does not care about.
+**Since the last digest.** One line per thing that happened, newest first, taken from the `_meta/log.md` entries written since the previous digest and from the recent vault commits the tools list (path, one-line reason, short commit id). Call `vault_log` with `since` set to the time of the previous digest, so the list starts where the last digest stopped. Group the small stuff: "4 captures, 2 call notes". Leave out the routine internals the owner does not care about.
 
-**What I did on my own.** Only the writes that were not asked for in the moment: a topic page updated from a call, a commitment added, a note moved. Each line ends with its undo hint, the commit id, so the owner can say "undo `<commit>`". Use `vault_undo` only when the owner asks; the digest never undoes anything by itself.
+**What I did on my own.** Only the writes that were not asked for in the moment: a topic page updated from a call, a commitment added, a note moved. Call `vault_log` with `since` set to the time of the previous digest and keep the commits authored by the brain whose `Requested-By` is not a direct request from the owner in chat: scheduled tasks, jobs and ingest events (`webhook:...`, `job:...`). Each line ends with its undo hint, the short commit id from `vault_log`, so the owner can say "undo `<commit>`". Use `vault_undo` only when the owner asks; the digest never undoes anything by itself.
 
 **Due soon.** Rows from `_brain/commitments` whose `due` is within the next seven days or already past and still open, plus document cards in `documents/` whose `expires` falls in the same window. Format: what, when, how many days left. Overdue first, and say plainly that it is overdue.
 

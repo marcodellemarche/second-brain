@@ -174,7 +174,14 @@ def test_vault_read_returns_content_and_sha(registry: Registry) -> None:
 def test_server_exposes_every_tool_with_a_guard_argument(registry: Registry) -> None:
     server = build_server(registry, TOKEN)
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
-    assert set(tools) == {"vault_read", "vault_write", "vault_move", "vault_delete", "vault_undo"}
+    assert set(tools) == {
+        "vault_read",
+        "vault_log",
+        "vault_write",
+        "vault_move",
+        "vault_delete",
+        "vault_undo",
+    }
     schema = tools["vault_write"].inputSchema
     assert schema["required"] == ["path", "content", "reason"]
     assert set(schema["properties"]) == {"path", "content", "reason", "expected_sha256", "guard"}

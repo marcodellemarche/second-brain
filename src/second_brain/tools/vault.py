@@ -14,7 +14,8 @@ the brain then refuses to touch it.
 
 Error codes: `outside_vault`, `zone_denied`, `quiet_window`, `hash_mismatch`, `secret_detected`,
 `not_found`, `exists`, `conflict` when a later change makes an undo impossible to apply cleanly,
-and `git_failed` when git itself refuses the operation.
+`bad_since` and `bad_limit` when a log query is malformed, and `git_failed` when git itself refuses
+the operation.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -40,6 +41,11 @@ from second_brain.tools.secrets import scan
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 _PATH_SEPARATORS = re.compile(r"[\\/]+")
 _BINARY_SNIFF_BYTES = 8000
+_TRAILER_LINE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]*):[ \t]*(.*)$")
+_FIELD = "\x1f"
+_RECORD = "\x1e"
+# The closing separator keeps the `--name-only` file list out of the message body field.
+_LOG_FORMAT = _RECORD + _FIELD.join(["%H", "%h", "%an", "%cI", "%s", "%b"]) + _FIELD
 
 
 class VaultError(Exception):
@@ -137,6 +143,18 @@ def _segments(path: str) -> list[str]:
     return [part for part in _PATH_SEPARATORS.split(path.strip()) if part not in ("", ".")]
 
 
+def _parse_trailers(body: str) -> dict[str, str]:
+    """Trailer lines sit at the end of the message body, so parsing stops at the first other line."""
+    lines = [line for line in body.splitlines() if line.strip()]
+    found: list[tuple[str, str]] = []
+    for line in reversed(lines):
+        match = _TRAILER_LINE.match(line)
+        if match is None:
+            break
+        found.append((match.group(1), match.group(2).strip()))
+    return dict(reversed(found))
+
+
 def _change_paths(change: _Change) -> tuple[str, ...]:
     """Both sides of a rename or a copy, so the index sees the change the way git status does."""
     return (change.origin, change.path) if change.origin else (change.path,)
@@ -161,6 +179,71 @@ class Vault:
     @property
     def root(self) -> Path:
         return self._root
+
+    def log(self, since: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        """Recent commits, newest first, with who made them, why, and which notes they touched."""
+        if not 1 <= limit <= 200:
+            raise VaultError("bad_limit", f"limit must be between 1 and 200, got {limit}")
+        if since is not None:
+            try:
+                datetime.fromisoformat(since)
+            except ValueError as exc:
+                raise VaultError("bad_since", f"not an ISO 8601 date or datetime: {since!r}") from exc
+        with self._lock:
+            if not self._has_commits():
+                return []
+            # Without quotePath=false git escapes non-ASCII paths, and the digest would show `caff\303\250`.
+            args = [
+                "-c",
+                "core.quotePath=false",
+                "log",
+                f"--max-count={limit}",
+                f"--format={_LOG_FORMAT}",
+                "--name-only",
+            ]
+            if since is not None:
+                args.append(f"--since={since}")
+            return self._parse_log(self._git(*args, strip=False))
+
+    def _has_commits(self) -> bool:
+        """A repository with no commit yet has nothing to log, and `git log` would fail on it."""
+        try:
+            self._git("rev-parse", "--verify", "--quiet", "HEAD")
+        except VaultError:
+            return False
+        return True
+
+    def _parse_log(self, raw: str) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        for record in raw.split(_RECORD):
+            if not record.strip():
+                continue
+            fields = record.split(_FIELD)
+            if len(fields) < 6:
+                continue
+            commit, short, author, date, subject, body = fields[:6]
+            names = fields[6] if len(fields) > 6 else ""
+            entries.append(
+                {
+                    "commit": commit.strip(),
+                    "short": short.strip(),
+                    "author": self._author(author),
+                    "date": date.strip(),
+                    "subject": subject.strip(),
+                    "paths": [line.strip() for line in names.splitlines() if line.strip()],
+                    "trailers": _parse_trailers(body),
+                }
+            )
+        return entries
+
+    def _author(self, name: str) -> str:
+        """The digest needs to tell the brain's own writes from the owner's, so map both to a role."""
+        normalized = name.strip().lower()
+        if normalized == self._config.author_name.strip().lower():
+            return "brain"
+        if normalized == self._config.human_name.strip().lower():
+            return "human"
+        return name.strip()
 
     def read(self, path: str) -> tuple[str, str]:
         rel, target = self._resolve(path)

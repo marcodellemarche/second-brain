@@ -236,6 +236,7 @@ def test_minimal_registry_has_only_the_vault_tools(
     config = ToolsConfig.from_yaml(_write(tmp_path, _minimal(vault_root, tmp_path)))
     assert _names(config, monkeypatch) == {
         "vault_read",
+        "vault_log",
         "vault_write",
         "vault_move",
         "vault_delete",
@@ -249,6 +250,7 @@ def test_full_registry_has_every_group(
     config = ToolsConfig.from_yaml(_write(tmp_path, _full(vault_root, tmp_path)))
     assert _names(config, monkeypatch) == {
         "vault_read",
+        "vault_log",
         "vault_write",
         "vault_move",
         "vault_delete",
@@ -277,6 +279,7 @@ def test_a_jobs_section_registers_one_tool_per_effect_class(
     config = ToolsConfig.from_yaml(_write(tmp_path, payload))
     assert _names(config, monkeypatch) == {
         "vault_read",
+        "vault_log",
         "vault_write",
         "vault_move",
         "vault_delete",
@@ -359,6 +362,7 @@ def test_each_optional_section_is_independent(
     config = ToolsConfig.from_yaml(_write(tmp_path, payload))
     assert _names(config, monkeypatch) == {
         "vault_read",
+        "vault_log",
         "vault_write",
         "vault_move",
         "vault_delete",
@@ -375,6 +379,7 @@ def test_the_shipped_specs_declare_their_taints(
     registry = build_registry(config, calendar_backend=FakeBackend())
     taints = {spec.name: (spec.taints_untrusted, spec.taints_private) for spec in registry.specs()}
     assert taints.pop("vault_read") == (False, True)
+    assert taints.pop("vault_log") == (False, True)
     assert taints.pop("calendar_list") == (True, True)
     assert set(taints.values()) == {(False, False)}
 
