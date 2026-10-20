@@ -24,7 +24,7 @@ The owner asks to look something up in depth.
 
 The prompt starts with "Background research job.", then the title and the question. You have the web and nothing else: no vault, no brain_tools, no conversation.
 
-1. Answer the question that was given, not a related one you find more interesting. If it is too broad to answer in one pass, answer the core of it and say what you left out.
+1. Search with `web_search`. Reading whole pages may not be available (`web_extract` can answer with an error): then answer from the result snippets and say that you could not open the pages. Answer the question that was given, not a related one you find more interesting. If it is too broad to answer in one pass, answer the core of it and say what you left out.
 2. Every claim carries its URL, right after the sentence it supports. Two sources for anything that would be expensive to get wrong.
 3. Say how sure you are, in plain words: "well documented", "one source only", "the sources disagree". A disagreement stays visible instead of being smoothed into a middle answer.
 4. Quotes stay short, a line or two, with the URL. Long pages are summarised, never pasted.

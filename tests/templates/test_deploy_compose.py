@@ -411,3 +411,7 @@ def test_no_calendar_means_no_calendar_secret_anywhere() -> None:
 
 def test_egress_runs_under_an_init_that_forwards_sigterm(services: dict[str, Any]) -> None:
     assert services["egress"]["init"] is True
+
+
+def test_hermes_finds_searxng(services: dict[str, Any]) -> None:
+    assert services["hermes"]["environment"]["SEARXNG_URL"] == "http://searxng:8080"

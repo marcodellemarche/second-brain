@@ -303,3 +303,7 @@ def test_only_the_digest_of_the_scheduled_routes_is_delivered(config: dict[str, 
     assert routes["scheduled-brief"]["skills"] == ["brief"]
     for name in ("scheduled-lint", "scheduled-brief"):
         assert "deliver" not in routes[name], name
+
+
+def test_web_search_uses_searxng_and_no_keyless_tier(config: dict[str, Any]) -> None:
+    assert config["web"] == {"search_backend": "searxng", "keyless_fallback": False, "keyless_rescue": False}

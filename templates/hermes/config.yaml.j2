@@ -40,6 +40,14 @@ security:
   allow_lazy_installs: false
   allow_private_urls: false
 
+# Web search goes to the SearXNG container and nowhere else. The keyless free tiers would send
+# every query and URL to third parties, and squid blocks them anyway. There is no local extract
+# backend in Hermes, so web_extract has no provider and answers with an error.
+web:
+  search_backend: searxng
+  keyless_fallback: false
+  keyless_rescue: false
+
 agent:
   reasoning_effort: none
   # browser is here on purpose: web access goes through web_search/web_extract, which the guard

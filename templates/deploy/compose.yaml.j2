@@ -101,6 +101,8 @@ services:
       HERMES_WRITE_SAFE_ROOT: "{{ media_dir }}:/opt/data/cache/scratch"
       TERMINAL_CWD: "{{ terminal_cwd }}"
       BRAIN_GUARD_CONFIG: /etc/brain-guard/config.yaml
+      # web_search goes to our SearXNG, on the internal network, not through the proxy.
+      SEARXNG_URL: http://searxng:8080
       BRAIN_GUARD_HEARTBEAT: /guard/heartbeat.json
       # The only way out. Every internal name is in NO_PROXY, or the MCP call to brain-tools and
       # the model call to the gate would be sent through squid, which refuses plain HTTP.
