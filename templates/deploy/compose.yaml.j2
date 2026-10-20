@@ -186,10 +186,18 @@ services:
     <<: *brain
     container_name: {{ instance_name }}-brain-tools
     command: ["python", "-m", "second_brain.tools.server"]
-    networks: [internal]
+    # The tools declare the hosts they need (the calendar API, the weather service, an instance
+    # tool's service) and squid only lets those through, but a tool cannot reach anything at all
+    # from a network with no gateway: brain-tools needs the egress network and the proxy too.
+    networks: [internal, egress-net]
     environment:
       BRAIN_TOOLS_CONFIG: /etc/brain-tools/config.yaml
       HOME: /tmp
+      HTTP_PROXY: http://egress:3128
+      HTTPS_PROXY: http://egress:3128
+      http_proxy: http://egress:3128
+      https_proxy: http://egress:3128
+      NO_PROXY: localhost,127.0.0.1,brain-tools,gate,searxng
     volumes:
       # The one writer of the vault, and the only place it is mounted read-write.
       - {{ vault_dir }}:/vault

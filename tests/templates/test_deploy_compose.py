@@ -143,12 +143,14 @@ def test_hermes_reads_the_managed_config_read_only(services: dict[str, Any]) -> 
     assert "env_file" not in services["hermes"]
 
 
-def test_only_the_three_allowed_services_see_the_internet(compose: dict[str, Any]) -> None:
+def test_only_the_allowed_services_see_the_internet(compose: dict[str, Any]) -> None:
+    # brain-tools is here because its tools declare the hosts they need and squid is the only way
+    # out: without the egress network no tool with an external host could ever reach it.
     networks = compose["networks"]
     assert networks["internal"]["internal"] is True
     assert networks["terminal-net"]["internal"] is True
     on_egress = {name for name, service in compose["services"].items() if "egress-net" in service["networks"]}
-    assert on_egress == {"egress", "gate", "searxng"}
+    assert on_egress == {"egress", "gate", "searxng", "brain-tools"}
 
 
 def test_every_service_is_on_an_internal_network(services: dict[str, Any]) -> None:
@@ -449,3 +451,16 @@ def test_the_brain_image_comes_from_the_values() -> None:
         "scheduler",
     ):
         assert services[name]["image"] == "registry.example.com/team/brain:1.2.3", name
+
+
+def test_brain_tools_can_reach_the_hosts_its_tools_declare(services: dict[str, Any]) -> None:
+    # A tool declares hosts and squid lets only those through, but from a network with no gateway
+    # nothing is reachable at all: brain-tools needs the egress network and the proxy as well.
+    service = services["brain-tools"]
+    assert "egress-net" in service["networks"]
+    assert service["environment"]["HTTPS_PROXY"] == "http://egress:3128"
+    # The internal names stay off the proxy, and `egress` itself is the proxy: excluding it would
+    # mean the request to the proxy is never proxied.
+    no_proxy = service["environment"]["NO_PROXY"].split(",")
+    assert "localhost" in no_proxy
+    assert "brain-tools" in no_proxy
