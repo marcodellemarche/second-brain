@@ -654,3 +654,12 @@ def test_a_git_object_in_the_vault_is_not_a_template_placeholder(instance: Path)
     (git_dir / "index").write_bytes(b"DIRC\x00\x00{%\x00binary")
     status, reason = _status(instance, "placeholders")
     assert status == PASS, reason
+
+
+def test_a_binary_file_in_the_vault_is_not_a_template_placeholder(instance: Path) -> None:
+    # A PDF in the archive can hold the marker bytes by chance; only text is rendered from a template.
+    pdf = instance / "vault" / "archivio" / "contract.pdf"
+    pdf.parent.mkdir(parents=True, exist_ok=True)
+    pdf.write_bytes(b"%PDF-1.4\nstream\n{{\\binary\nendstream\n")
+    status, reason = _status(instance, "placeholders")
+    assert status == PASS, reason
