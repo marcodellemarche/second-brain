@@ -18,7 +18,7 @@ from second_brain.cli.render import render_text
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates" / "hermes"
 
 OWNER_ID = "100000001"
-VALUES: dict[str, str] = {
+VALUES: dict[str, Any] = {
     "model_name": "local-model",
     "model_gate_url": "http://model-gate:8080/v1",
     "model_context_length": "131072",
@@ -42,11 +42,13 @@ VALUES: dict[str, str] = {
     "deliver_platform": "telegram",
     "slack_home_channel": "C0000000001",
     "example_note_path": "knowledge/example.md",
+    # Empty here: the routes of the skills an instance schedules are built in the CLI tests.
+    "scheduled_skills": [],
 }
 _PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*(\|\s*lower\s*)?\}\}")
 
 
-def render(template: Path, values: dict[str, str]) -> str:
+def render(template: Path, values: dict[str, Any]) -> str:
     """Render with the real renderer, so the `{% if %}` and `{% for %}` blocks are the product's.
 
     The renderer is the one `sb init` uses, so this file cannot disagree with it about what a
