@@ -336,6 +336,11 @@ class Answers(BaseModel):
     model_endpoint: str = Field(description="Base URL of an OpenAI-compatible endpoint.")
     model_name: str = Field(min_length=1)
     model_context_length: int = Field(default=131072, ge=1024)
+    instance_skills_dir: Path | None = Field(
+        default=None,
+        description="A folder of skills this instance adds, copied next to the product ones. "
+        "Each skill is a `<name>/SKILL.md`, and `sb init` refuses one that is not valid.",
+    )
     brain_image: str | None = Field(
         default=None,
         description="Image for the brain services, when the instance builds its own with its tools.",
@@ -357,6 +362,11 @@ class Answers(BaseModel):
     calls: CallsAnswers = Field(default_factory=CallsAnswers)
     # A team brain takes candidates from another brain through a folder the owner moves them into.
     staging: StagingAnswers | None = None
+
+    @field_validator("instance_skills_dir")
+    @classmethod
+    def _skills_dir(cls, value: Path | None) -> Path | None:
+        return None if value is None else _absolute_path(value)
 
     @field_validator("vault_dir", "media_dir", "archive_dir")
     @classmethod

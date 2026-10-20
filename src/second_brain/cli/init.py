@@ -130,6 +130,8 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
         result.created.append(relative)
     os.chmod(instance / OWNERS_SCRIPT, OWNERS_MODE)
     _copy_skills(instance, result)
+    if answers.instance_skills_dir is not None:
+        _copy_instance_skills(answers.instance_skills_dir, instance, result)
 
     _ensure_host_dirs(answers)
     if not result.vault_skipped:
@@ -255,6 +257,37 @@ def _copy_skills(instance: Path, result: InitResult) -> None:
         copied += 1
     if copied:
         result.created.append(f"{SKILLS_DIR}/")
+
+
+def _copy_instance_skills(source: Path, instance: Path, result: InitResult) -> None:
+    """Copy the skills this instance brings, next to the product ones.
+
+    They are the instance's own code, so a rerun refreshes them like the product skills: compose
+    mounts the whole `skills/` folder read-only into Hermes. A folder without a `SKILL.md` is a
+    mistake, not something to copy silently, and the name has to match the folder the way Hermes
+    looks it up.
+    """
+    if not source.is_dir():
+        raise InitError(f"instance_skills_dir is not a folder: {source}")
+    folders = [path for path in sorted(source.iterdir()) if path.is_dir() and not path.name.startswith(".")]
+    if not folders:
+        raise InitError(f"instance_skills_dir has no skill folder: {source}")
+    for folder in folders:
+        skill = folder / "SKILL.md"
+        if not skill.is_file():
+            raise InitError(f"{folder.name} has no SKILL.md")
+        target = instance / SKILLS_DIR / folder.name
+        if target.exists():
+            raise InitError(
+                f"the instance skill {folder.name} would replace the product skill of the same name"
+            )
+        target.mkdir(parents=True)
+        for path in sorted(folder.rglob("*")):
+            if path.is_file() and "__pycache__" not in path.parts:
+                destination = target / path.relative_to(folder)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(path.read_bytes())
+        result.created.append(f"{SKILLS_DIR}/{folder.name}/")
 
 
 def _commit_scaffold(vault: Path) -> None:

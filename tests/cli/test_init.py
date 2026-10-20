@@ -1099,3 +1099,53 @@ def test_a_mail_section_with_a_bad_host_is_refused(tmp_path: Path, answers_file:
         _with_services(tmp_path, answers_file, mail={"imap_host": "not a host"})
     with pytest.raises(AnswersError):
         _with_services(tmp_path, answers_file, mail={"quiet_hours": "22:00"})
+
+
+# --- the skills an instance brings -----------------------------------------------------------
+
+
+def _skill(root: Path, name: str, body: str = "---\nname: {name}\ndescription: test\n---\n\nText.\n") -> Path:
+    folder = root / name
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(body.replace("{name}", name), encoding="utf-8")
+    return folder
+
+
+def _with_skills(tmp_path: Path, answers_file: Path, source: Path) -> Answers:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["instance_skills_dir"] = str(source)
+    path = tmp_path / "skills.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return Answers.from_yaml(path)
+
+
+def test_an_instance_skill_lands_next_to_the_product_ones(tmp_path: Path, answers_file: Path) -> None:
+    source = tmp_path / "own-skills"
+    _skill(source, "mail")
+    instance = tmp_path / "instance"
+    init(_with_skills(tmp_path, answers_file, source), instance)
+
+    assert (instance / "skills" / "mail" / "SKILL.md").is_file()
+    # The product skills are still there: one folder each, no overwriting.
+    assert (instance / "skills" / "digest" / "SKILL.md").is_file()
+
+
+def test_an_instance_skill_cannot_replace_a_product_one(tmp_path: Path, answers_file: Path) -> None:
+    source = tmp_path / "own-skills"
+    _skill(source, "digest")
+    with pytest.raises(InitError, match="would replace the product skill"):
+        init(_with_skills(tmp_path, answers_file, source), tmp_path / "instance")
+
+
+def test_a_folder_without_a_skill_file_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    source = tmp_path / "own-skills"
+    (source / "broken").mkdir(parents=True)
+    with pytest.raises(InitError, match="has no SKILL.md"):
+        init(_with_skills(tmp_path, answers_file, source), tmp_path / "instance")
+
+
+def test_an_empty_skills_folder_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    source = tmp_path / "own-skills"
+    source.mkdir()
+    with pytest.raises(InitError, match="no skill folder"):
+        init(_with_skills(tmp_path, answers_file, source), tmp_path / "instance")
