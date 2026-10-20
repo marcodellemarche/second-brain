@@ -2,7 +2,7 @@
 
 Hermes uploads a file whenever the reply contains a `MEDIA:` tag or a bare absolute path.
 Nothing in the reply needs either one to be useful, so both go, except for files inside the
-media directory the tools are allowed to share.
+media directory the tools are allowed to share and for chat commands like `/new`.
 """
 
 from __future__ import annotations
@@ -41,12 +41,20 @@ def sanitize_reply(text: str, allowed_media_dir: str | None) -> tuple[str, list[
 
         raw = match.group("path")
         path = raw.rstrip(_TRAILING)
-        if _inside(path, root):
+        if _inside(path, root) or _is_command(path):
             return match.group(0)
         removed.append(path)
         return PATH_PLACEHOLDER + raw[len(path) :]
 
     return _REPLY_RE.sub(replace, text), removed
+
+
+def _is_command(path: str) -> bool:
+    """A single segment without a dot (`/new`, `/undo`) is a chat command, not a path."""
+    if not path.startswith("/"):
+        return False
+    segment = path[1:]
+    return "/" not in segment and "." not in segment
 
 
 def _media_path(tag: str) -> str:

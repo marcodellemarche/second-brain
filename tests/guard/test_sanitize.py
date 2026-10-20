@@ -136,3 +136,40 @@ def test_no_allowed_dir_means_nothing_is_kept(allowed: str | None) -> None:
     cleaned, removed = sanitize_reply("MEDIA:/tmp/a.png", allowed)
     assert cleaned == ""
     assert removed == ["MEDIA:/tmp/a.png"]
+
+
+@pytest.mark.parametrize("command", ["/new", "/reset", "/undo", "/sethome", "/start"])
+def test_chat_commands_untouched(command: str) -> None:
+    cleaned, removed = sanitize_reply(f"Scrivi {command} per ripartire pulito", None)
+    assert cleaned == f"Scrivi {command} per ripartire pulito"
+    assert removed == []
+
+
+def test_chat_command_at_end_of_sentence_untouched() -> None:
+    cleaned, removed = sanitize_reply("Usa /new.", None)
+    assert cleaned == "Usa /new."
+    assert removed == []
+
+
+def test_several_chat_commands_untouched() -> None:
+    text = "usa /new e poi /undo"
+    cleaned, removed = sanitize_reply(text, None)
+    assert cleaned == text
+    assert removed == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/vault/idee/x.md", "/etc/passwd", "/config.yaml", "~/secret.txt"],
+)
+def test_paths_still_removed(path: str) -> None:
+    cleaned, removed = sanitize_reply(f"Apri {path} ora", None)
+    assert cleaned == f"Apri {PATH_PLACEHOLDER} ora"
+    assert removed == [path]
+
+
+def test_commands_kept_but_real_paths_removed() -> None:
+    text = "Scrivi /new, non /vault/idee/x.md ne /config.yaml"
+    cleaned, removed = sanitize_reply(text, None)
+    assert cleaned == f"Scrivi /new, non {PATH_PLACEHOLDER} ne {PATH_PLACEHOLDER}"
+    assert removed == ["/vault/idee/x.md", "/config.yaml"]
