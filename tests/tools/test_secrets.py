@@ -67,8 +67,8 @@ def test_each_rule_flags_its_value(rule: str, value: str) -> None:
 
 
 def test_assignment_rule_covers_the_documented_keywords() -> None:
-    for key in ("password", "passwd", "secret", "api_key", "api-key", "token", "PASSWORD"):
-        findings = scan(f"{key}: {'v' * 12}")
+    for key in ("password", "passwd", "pwd", "secret", "api_key", "api-key", "token", "PASSWORD"):
+        findings = scan(f"{key}: {'hunter2' * 2}")
         assert [finding.rule for finding in findings] == ["assignment"], key
 
 
@@ -255,4 +255,16 @@ def test_a_mixed_case_key_is_still_a_secret(value: str) -> None:
     ],
 )
 def test_a_file_name_is_not_a_secret(note: str) -> None:
+    assert scan(note) == []
+
+
+@pytest.mark.parametrize(
+    "note",
+    [
+        "Secret: remoto_1 does not want the source keys in the coordinator database.",
+        'The token: "" for the first page, and the next one for the rest.',
+        "Password: first-page is the label of that field in the form.",
+    ],
+)
+def test_a_keyword_followed_by_prose_is_not_an_assignment(note: str) -> None:
     assert scan(note) == []

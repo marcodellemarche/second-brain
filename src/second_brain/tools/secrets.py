@@ -47,7 +47,10 @@ _RULES: tuple[tuple[str, Pattern[str]], ...] = (
     ("jwt", re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
     (
         "assignment",
-        re.compile(r"(?i)\b(?:password|passwd|secret|api[_-]?key|token)\b\s*[:=]\s*(?P<value>\S{8,})"),
+        re.compile(
+            r"(?i)\b(?:password|passwd|pwd|secret|api[_-]?key|apikey|token|access[_-]?key)\b"
+            r"\s*[:=]\s*(?P<value>\S{8,})"
+        ),
     ),
     # URLs are exempt from the entropy rule, so a credential in the query string needs its own.
     (
@@ -93,6 +96,27 @@ def _is_placeholder(value: str) -> bool:
     if not value.strip("*x"):
         return True
     return any(marker in value for marker in PLACEHOLDER_MARKERS)
+
+
+def _looks_like_value(value: str) -> bool:
+    """A credential is one opaque token: prose after the key means the key was a word in a sentence."""
+    if _is_placeholder(value):
+        return False
+    if value.startswith(("http://", "https://", "/", "./", "~/", "@")):
+        return False
+    # `Secret: the keys stay in the gateway` and `token: "" for the first page` are prose, not values.
+    if not re.fullmatch(r"[\w+/=.~:@-]+", value):
+        return False
+    if value.isalpha():
+        return False
+    # A word with a digit glued on (`remoto_1`, `shard2`, `first-page`) is prose; a key mixes case,
+    # carries symbols, or is a long run with no separator at all.
+    lowered = value.lower()
+    if re.fullmatch(r"[a-z0-9_.-]+", lowered):
+        if re.fullmatch(r"[0-9a-f]{16,}", lowered):
+            return True
+        return "_" not in lowered and len(value) >= 12
+    return True
 
 
 def _looks_like_digest(text: str, start: int) -> bool:
@@ -146,7 +170,7 @@ def _shannon_entropy(value: str) -> float:
 def _candidates(text: str) -> Iterator[_Match]:
     for rule, pattern in _RULES:
         for match in pattern.finditer(text):
-            if rule in _VALUE_RULES and _is_placeholder(match.group("value")):
+            if rule in _VALUE_RULES and not _looks_like_value(match.group("value")):
                 continue
             yield _Match(rule, match.start(), match.end(), match.group(0))
 
