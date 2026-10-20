@@ -443,8 +443,15 @@ def _enqueue(
     kinds: Mapping[str, JobKind],
     tool_name: str,
     note_folders: Sequence[str] | None = None,
+    *,
+    note_path_required: bool = False,
 ) -> Callable[[BaseModel, Provenance], dict[str, Any]]:
-    """The handler of one enqueue tool, accepting only the kinds of its own effect class."""
+    """The handler of one enqueue tool, accepting only the kinds of its own effect class.
+
+    `note_path_required` is for research: the follow-up job is told to write the final note at
+    that path, and without it the job has nothing to look for and waits out its whole timeout
+    after the work is done.
+    """
 
     def handler(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
         assert isinstance(params, JobEnqueueParams)
@@ -460,6 +467,12 @@ def _enqueue(
                     )
                 known = ", ".join(sorted(accepted)) or "none"
                 raise JobError("unknown_kind", f"no job kind {kind!r}, configured: {known}")
+            if note_path_required and not params.note_path:
+                raise JobError(
+                    "bad_note_path",
+                    f"{tool_name} needs the note_path the result goes into: the follow-up job "
+                    "writes the final note there",
+                )
             payload = JobPayload(title=params.title, question=params.question, note_path=params.note_path)
             if note_folders is not None and payload.note_path is not None:
                 _check_note_folder(payload.note_path, note_folders)
@@ -509,7 +522,9 @@ def job_tools(
                     hosts=JOB_HOSTS,
                     credentials=JOB_CREDENTIALS,
                 ),
-                handler=_enqueue(store, web_kinds, kinds, "research_enqueue", note_folders),
+                handler=_enqueue(
+                    store, web_kinds, kinds, "research_enqueue", note_folders, note_path_required=True
+                ),
             )
         )
     if local_kinds:

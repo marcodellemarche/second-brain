@@ -79,6 +79,7 @@ def _payload(**overrides: Any) -> dict[str, Any]:
     values: dict[str, Any] = {
         "title": "How do heat pumps behave below zero",
         "question": "Collect what is known about heat pump efficiency at -15 C and summarize it.",
+        "note_path": "conoscenza/heat-pumps.md",
     }
     values.update(overrides)
     return values
@@ -192,7 +193,11 @@ def test_enqueue_is_idempotent_for_the_same_payload_while_dispatched(store: JobS
 
 def test_enqueue_is_idempotent_across_field_order(store: JobStore) -> None:
     first = store.enqueue("research", _payload(), "user-1", "session-1")
-    reordered = {"question": _payload()["question"], "title": _payload()["title"], "note_path": None}
+    reordered = {
+        "note_path": _payload()["note_path"],
+        "question": _payload()["question"],
+        "title": _payload()["title"],
+    }
     assert store.enqueue("research", reordered, "user-1", "session-1") == first
 
 
@@ -736,9 +741,22 @@ def test_a_note_path_in_raw_is_refused(store: JobStore) -> None:
     assert store.list() == []
 
 
-def test_no_note_path_is_still_accepted_with_the_folder_check(store: JobStore) -> None:
+def test_research_without_a_note_path_is_refused(tools: dict[str, Tool], store: JobStore) -> None:
+    # The follow-up job is told to write the final note at that path: without it the job waits out
+    # its whole timeout after the work is already done.
+    result = _call(
+        tools,
+        "research_enqueue",
+        {"kind": "research", "title": "t", "question": "q", "note_path": None},
+    )
+    assert result["ok"] is False
+    assert result["code"] == "bad_note_path"
+    assert store.list() == []
+
+
+def test_a_local_job_still_needs_no_note_path(store: JobStore) -> None:
     tools = _tools_with_folders(store, list(NOTE_FOLDERS))
-    result = _call(tools, "research_enqueue", {"kind": "research", **_payload()})
+    result = _call(tools, "job_enqueue", {"kind": "develop_idea", **_payload(note_path=None)})
     assert result["ok"] is True
     assert store.list()[0].payload.note_path is None
 
