@@ -7,6 +7,7 @@ import pytest
 from second_brain.core.policy import ToolPolicy
 from second_brain.core.types import Autonomy
 from second_brain.guard import plugin
+from second_brain.guard import session as session_module
 from second_brain.guard.config import GuardConfig, GuardConfigError
 from second_brain.guard.heartbeat import read_heartbeat
 from second_brain.guard.rules import Decision
@@ -705,3 +706,42 @@ def test_a_new_turn_forgets_searches_that_never_answered(guard: plugin.Guard) ->
         guard.pre_tool_call(tool_name="search_files", args={"pattern": f"x-{index}"}, session_id="s1")
     guard.pre_llm_call(session_id="s1", sender_id="user-1")
     assert guard.pre_tool_call(tool_name="search_files", args={"pattern": "y"}, session_id="s1") is None
+
+
+def test_a_new_turn_starts_the_time_budget_over(guard: plugin.Guard, monkeypatch: pytest.MonkeyPatch) -> None:
+    # One clock for both: plugin and session share the time module.
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(session_module.time, "monotonic", lambda: clock["now"])
+    guard.pre_llm_call(session_id="s1", sender_id="user-1")
+    assert guard.pre_tool_call(tool_name="read_file", args={"path": "/vault/a.md"}, session_id="s1") is None
+
+    clock["now"] += guard.config.policy.max_seconds + 1
+    decision = guard.pre_tool_call(tool_name="read_file", args={"path": "/vault/b.md"}, session_id="s1")
+    assert decision is not None
+    assert decision["message"].startswith("The time budget for this task is used up")
+
+    guard.pre_llm_call(session_id="s1", sender_id="user-1")
+    assert guard.pre_tool_call(tool_name="read_file", args={"path": "/vault/c.md"}, session_id="s1") is None
+
+
+def test_a_new_turn_starts_the_step_budget_over(guard: plugin.Guard) -> None:
+    guard.pre_llm_call(session_id="s1", sender_id="user-1")
+    for step in range(guard.config.policy.max_steps + 1):
+        guard.pre_tool_call(tool_name="read_file", args={"path": f"/vault/{step}.md"}, session_id="s1")
+    assert guard.store.get("s1").steps > guard.config.policy.max_steps
+
+    guard.pre_llm_call(session_id="s1", sender_id="user-1")
+    assert (
+        guard.pre_tool_call(tool_name="read_file", args={"path": "/vault/again.md"}, session_id="s1") is None
+    )
+
+
+def test_a_new_turn_keeps_the_taint_flags(guard: plugin.Guard) -> None:
+    guard.pre_llm_call(session_id="s1", sender_id="user-1")
+    guard.store.mark_untrusted("s1")
+    guard.store.mark_private("s1")
+    guard.pre_llm_call(session_id="s1", sender_id="user-1")
+    assert guard.store.flags("s1") == (True, True)
+    decision = guard.pre_tool_call(tool_name="web_search", args={"query": "x"}, session_id="s1")
+    assert decision is not None
+    assert decision["action"] == "approve"

@@ -140,9 +140,15 @@ class SessionStore:
         with self._lock:
             return self.get(sid).pending_searches
 
-    def reset_pending_searches(self, sid: str) -> None:
+    def start_turn(self, sid: str, now: float | None = None) -> None:
+        """Zero the run budget of a new user turn. Taint flags, sender, parent and URLs stay."""
         with self._lock:
-            self.get(sid).pending_searches = 0
+            state = self.get(sid)
+            state.steps = 0
+            state.started = now if now is not None else time.monotonic()
+            state.call_counts = {}
+            state.empty_searches = 0
+            state.pending_searches = 0
 
     def empty_searches(self, sid: str) -> int:
         with self._lock:

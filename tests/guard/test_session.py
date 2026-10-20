@@ -196,3 +196,39 @@ def test_thread_safety_smoke() -> None:
 def test_odd_session_ids_are_accepted(sid: str) -> None:
     store = SessionStore()
     assert store.get(sid).sid == sid
+
+
+def test_start_turn_resets_the_budget_and_keeps_the_taint_flags() -> None:
+    store = SessionStore()
+    store.set_identity("s1", "user-1", "telegram")
+    store.link_child("s1", "parent")
+    store.add_known_urls("s1", {"https://example.com/a"})
+    store.mark_untrusted("s1")
+    store.mark_private("s1")
+    for _ in range(5):
+        store.next_step("s1")
+        store.record_call("s1", "weather", {"place": "Rome"})
+    store.start_search("s1")
+    store.note_search("s1", 0)
+
+    store.start_turn("s1", now=1234.5)
+
+    state = store.get("s1")
+    assert state.steps == 0
+    assert state.started == 1234.5
+    assert state.call_counts == {}
+    assert state.empty_searches == 0
+    assert state.pending_searches == 0
+    assert state.untrusted_seen is True
+    assert state.private_seen is True
+    assert state.sender == "user-1"
+    assert state.platform == "telegram"
+    assert state.parent == "parent"
+    assert state.known_urls == {"https://example.com/a"}
+
+
+def test_start_turn_defaults_started_to_now() -> None:
+    store = SessionStore()
+    store.get("s1").started = 0.0
+    store.start_turn("s1")
+    assert store.get("s1").started > 0.0

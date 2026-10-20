@@ -101,8 +101,8 @@ class Guard:
     ) -> None:
         """Remember who is talking, which session is the parent, and the URLs the user gave."""
         self.store.set_identity(session_id, sender_id, platform)
-        # A new turn: whatever was in flight has answered or been dropped by Hermes.
-        self.store.reset_pending_searches(session_id)
+        # The budget bounds one task, not the whole chat session: a new turn starts it over.
+        self.store.start_turn(session_id)
         if parent_session_id:
             self.store.link_child(session_id, parent_session_id)
         if isinstance(user_message, str):
