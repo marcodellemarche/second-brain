@@ -146,6 +146,7 @@ def tools_config(answers: Answers) -> ToolsConfig:
         jobs=jobs_config(answers),
         notify=answers.notify_config(DATA_IN_CONTAINER),
         outbox=outbox_config(answers),
+        extensions=tools.extensions,
     )
 
 
@@ -156,6 +157,9 @@ def export_registry(config: ToolsConfig) -> Registry:
     notification stores and a `Vault`, which want `/vault` and `/data` to exist. On the host they
     do not, so the paths are redirected into a throwaway directory: the specs are the same ones
     the containers will serve.
+
+    The instance tools are loaded, because they are tools the guard has to decide on and hosts the
+    egress proxy has to allow. Their secrets are not checked: `sb init` runs before they exist.
     """
     with tempfile.TemporaryDirectory(prefix="sb-export-") as scratch:
         root = Path(scratch)
@@ -180,7 +184,7 @@ def export_registry(config: ToolsConfig) -> Registry:
                 else None,
             }
         )
-        return build_registry(redirected, load_entry_points=False)
+        return build_registry(redirected, load_entry_points=True, check_credentials=False)
 
 
 def git_init(root: Path) -> None:
@@ -319,9 +323,36 @@ def brain_tools_extra_volumes(answers: Answers) -> list[str]:
     return [f"{archive.root}:{archive.root}"]
 
 
+def instance_credentials(registry: Registry) -> dict[str, str]:
+    """The secrets the instance tools read, mapped to the first tool that named each one."""
+    credentials: dict[str, str] = {}
+    instance = registry.instance_tools()
+    for spec in registry.specs():
+        if spec.name not in instance:
+            continue
+        for name in spec.credentials:
+            credentials.setdefault(name, spec.name)
+    return credentials
+
+
 def optional_secrets(answers: Answers) -> list[str]:
     """The secret files that exist only when their tool group is on."""
     return [CALENDAR_TOKEN] if answers.tools.calendar is not None else []
+
+
+def all_secrets(answers: Answers, registry: Registry) -> list[str]:
+    """Every secret brain_tools reads: the calendar token and the ones the instance tools declared."""
+    names = optional_secrets(answers)
+    for name in instance_credentials(registry):
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def instance_secrets(answers: Answers, registry: Registry) -> list[str]:
+    """The secrets brain_tools reads only because an instance tool declared them."""
+    optional = optional_secrets(answers)
+    return [name for name in all_secrets(answers, registry) if name not in optional]
 
 
 def template_values(answers: Answers, registry: Registry, generated: Mapping[str, str]) -> dict[str, Any]:
@@ -334,7 +365,7 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "terminal_cwd": "/workspace",
         "hermes_image": "second-brain/hermes:0.1.0",
         "terminal_image": "second-brain/terminal:0.1.0",
-        "brain_image": "second-brain/brain:0.1.0",
+        "brain_image": answers.brain_image or "second-brain/brain:0.1.0",
         "egress_image": "ubuntu/squid:6.6-24.04_edge",
         "searxng_image": SEARXNG_IMAGE,
         "model_upstream": model_upstream(answers),
@@ -345,7 +376,8 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "docker_gid": docker_gid(answers),
         "brain_tools_extra_volumes": brain_tools_extra_volumes(answers),
         "optional_secrets": optional_secrets(answers),
-        "brain_tools_secrets": ["tools_token", "outbox_secret", *optional_secrets(answers)],
+        "instance_secrets": instance_secrets(answers, registry),
+        "brain_tools_secrets": ["tools_token", "outbox_secret", *all_secrets(answers, registry)],
         "skills_dir": "/data/skills",
         "terminal_ssh_key": str(SECRETS_IN_CONTAINER / "terminal_ssh_key"),
         "brain_tools_url": "http://brain-tools:8765/mcp",

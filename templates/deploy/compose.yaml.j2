@@ -57,6 +57,10 @@ secrets:
   {{ name }}:
     file: ./secrets/{{ name }}
 {% endfor %}
+{% for name in instance_secrets %}
+  {{ name }}:
+    file: ./secrets/{{ name }}
+{% endfor %}
   terminal_ssh_key:
     file: ./secrets/terminal_ssh_key
   webhook_ingest:

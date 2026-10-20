@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 import urllib.parse
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from second_brain.core.schema import SchemaError, load_schema
 from second_brain.tools.archive import ArchiveConfig
+from second_brain.tools.config import _reject_secret_fields
 from second_brain.tools.links import LinkConfig
 from second_brain.tools.notify import NotifyConfig
 
@@ -133,6 +134,18 @@ class ToolsAnswers(BaseModel):
     archive: ArchiveAnswers | None = None
     jobs: bool = False
     notify: NotifyAnswers | None = None
+    # Entry point name to that instance package's settings. Free-form, but the same rule as the
+    # tools config applies: a secret is a file, never a value in here.
+    extensions: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    @field_validator("extensions")
+    @classmethod
+    def _sections(cls, value: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        for name, section in value.items():
+            if not name or name != name.strip():
+                raise ValueError(f"not an entry point name: {name!r}")
+            _reject_secret_fields(section, f"tools.extensions.{name}")
+        return value
 
 
 class JobKindAnswers(BaseModel):
@@ -163,6 +176,10 @@ class Answers(BaseModel):
     model_endpoint: str = Field(description="Base URL of an OpenAI-compatible endpoint.")
     model_name: str = Field(min_length=1)
     model_context_length: int = Field(default=131072, ge=1024)
+    brain_image: str | None = Field(
+        default=None,
+        description="Image for the brain services, when the instance builds its own with its tools.",
+    )
     tools: ToolsAnswers = Field(default_factory=ToolsAnswers)
     job_kinds: dict[str, JobKindAnswers] = Field(default_factory=dict)
     schedule: ScheduleAnswers = Field(default_factory=ScheduleAnswers)
@@ -181,6 +198,16 @@ class Answers(BaseModel):
         except (ZoneInfoNotFoundError, ValueError) as exc:
             raise ValueError(f"unknown timezone: {value!r}") from exc
         return value.strip()
+
+    @field_validator("brain_image")
+    @classmethod
+    def _image_reference(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text or any(character.isspace() for character in text):
+            raise ValueError(f"not an image reference: {value!r}")
+        return text
 
     @field_validator("model_endpoint")
     @classmethod

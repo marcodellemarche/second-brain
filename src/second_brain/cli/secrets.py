@@ -19,7 +19,8 @@ import os
 import secrets
 import shutil
 import subprocess
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 SECRETS_DIR = "secrets"
@@ -88,10 +89,19 @@ class SecretsPlan:
     generated: dict[str, str]
     external: tuple[str, ...]
     ssh_keypair: bool
+    # The instance tool that declared the secret, for the ones that are not in `EXTERNAL`. It is
+    # what the README says next to the file, so the owner knows where the value comes from.
+    instance_tools: Mapping[str, str] = field(default_factory=dict)
 
 
-def plan(*, channel: str, calendar: bool) -> SecretsPlan:
-    """Every secret this instance needs. A Slack brain has no Telegram token and the other way round."""
+def plan(
+    *, channel: str, calendar: bool, instance_credentials: Mapping[str, str] | None = None
+) -> SecretsPlan:
+    """Every secret this instance needs. A Slack brain has no Telegram token and the other way round.
+
+    `instance_credentials` maps a secret name to the instance tool that declared it. Those are
+    external like the others: only the service the tool talks to can hand the value over.
+    """
     generated = {name: secrets.token_urlsafe(TOKEN_BYTES) for name in GENERATED}
     external = [
         MODEL_API_KEY,
@@ -101,7 +111,18 @@ def plan(*, channel: str, calendar: bool) -> SecretsPlan:
         external.append("slack_app_token")
     if calendar:
         external.append(CALENDAR_TOKEN)
-    return SecretsPlan(generated=generated, external=tuple(external), ssh_keypair=True)
+    instance_tools = dict(instance_credentials or {})
+    # One file per name: two instance tools sharing a service share its key, a name that is
+    # already a secret of this brain is that same file, and a generated one is already there.
+    for name in instance_tools:
+        if name not in external and name not in generated:
+            external.append(name)
+    return SecretsPlan(
+        generated=generated,
+        external=tuple(external),
+        ssh_keypair=True,
+        instance_tools=instance_tools,
+    )
 
 
 def write_secrets(
@@ -165,6 +186,10 @@ def secrets_readme(plan_: SecretsPlan) -> str:
     for name, description in EXTERNAL:
         if name in plan_.external or name == TERMINAL_SSH_KEY:
             lines.append(f"- `{name}`: {description}")
+    for name in plan_.external:
+        tool = plan_.instance_tools.get(name)
+        if tool is not None and name not in dict(EXTERNAL):
+            lines.append(f"- `{name}`: needed by the instance tool {tool}.")
     lines += [
         "",
         "`hermes.env` is the one exception: Hermes wants the MCP token, the chat token and the",

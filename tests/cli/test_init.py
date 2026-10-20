@@ -13,14 +13,17 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import BaseModel
 
 from second_brain.cli.answers import Answers, AnswersError
 from second_brain.cli.init import InitError, init
 from second_brain.cli.main import main
 from second_brain.cli.secrets import create_file
+from second_brain.core.types import Autonomy, Effect, ToolSpec
 from second_brain.guard.config import GuardConfig
 from second_brain.sidecars.config import SidecarsConfig
 from second_brain.tools.config import ToolsConfig
+from second_brain.tools.registry import Tool
 
 SAMPLE = Path(__file__).with_name("answers.sample.yaml")
 GENERATED = (
@@ -757,3 +760,144 @@ def test_the_rendered_hermes_config_speaks_the_instance_language(tmp_path: Path,
     assert hermes["display"]["language"] == "it"
     guard = GuardConfig.from_yaml(directory / "config" / "brain-guard.yaml")
     assert guard.language == "it"
+
+
+# --- instance tools -------------------------------------------------------------------------
+
+
+class _InstanceEntryPoint:
+    """An entry point from an instance repo: a factory that takes its own settings."""
+
+    name = "parceltools"
+
+    def load(self):
+        def factory(settings):
+            def handler(params, provenance):
+                return {"ok": True}
+
+            spec = ToolSpec(
+                name="parcel_status",
+                description="Current delivery status of a parcel.",
+                params=_ParcelParams,
+                effect=Effect.READ,
+                autonomy=Autonomy.AUTO,
+                hosts=("api.example.com",),
+                credentials=("parcel_api_key",),
+            )
+            return [Tool(spec=spec, handler=handler)]
+
+        return factory
+
+
+class _ParcelParams(BaseModel):
+    tracking_number: str
+
+
+@pytest.fixture
+def instance_entry_point(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("second_brain.tools.registry.entry_points", lambda group: [_InstanceEntryPoint()])
+
+
+def _answers_with(tmp_path: Path, answers_file: Path, **changes) -> Answers:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw.update(changes)
+    path = tmp_path / "with-changes.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return Answers.from_yaml(path)
+
+
+EXTENSIONS = {"parceltools": {"base_url": "https://api.example.com"}}
+
+
+def _with_extensions(tmp_path: Path, answers_file: Path) -> Answers:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["tools"]["extensions"] = EXTENSIONS
+    path = tmp_path / "extensions.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return Answers.from_yaml(path)
+
+
+def test_an_instance_tool_is_a_tool_of_the_brain(
+    tmp_path: Path, answers_file: Path, instance_entry_point: None
+) -> None:
+    answers = _with_extensions(tmp_path, answers_file)
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    guard = GuardConfig.from_yaml(instance / "config" / "brain-guard.yaml")
+    assert "parcel_status" in guard.mcp_tools
+    # It reaches the internet, so the egress proxy has to let it out.
+    squid = (instance / "config" / "squid.conf").read_text(encoding="utf-8")
+    assert "acl allowed_egress dstdomain api.example.com" in squid
+    # The settings the instance repo wrote are in the tools config, values and all.
+    tools = ToolsConfig.from_yaml(instance / "config" / "brain-tools.yaml")
+    assert tools.extensions == EXTENSIONS
+
+
+def test_an_instance_credential_is_a_secret_of_the_brain(
+    tmp_path: Path, answers_file: Path, instance_entry_point: None
+) -> None:
+    answers = _with_extensions(tmp_path, answers_file)
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    secret = instance / "secrets" / "parcel_api_key"
+    assert secret.is_file()
+    # A value only the service can hand over: the file is created empty.
+    assert secret.read_text(encoding="utf-8") == ""
+    readme = (instance / "secrets" / "README.md").read_text(encoding="utf-8")
+    assert "- `parcel_api_key`: needed by the instance tool parcel_status." in readme
+
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert compose["secrets"]["parcel_api_key"] == {"file": "./secrets/parcel_api_key"}
+    assert "parcel_api_key" in compose["services"]["brain-tools"]["secrets"]
+
+    owners = (instance / "owners.sh").read_text(encoding="utf-8")
+    assert 'chown 23002:23002 "secrets/parcel_api_key"' in owners
+
+
+def test_an_instance_credential_is_never_listed_twice(
+    tmp_path: Path, answers_file: Path, instance_entry_point: None
+) -> None:
+    answers = _with_extensions(tmp_path, answers_file)
+    instance = tmp_path / "instance"
+    init(answers, instance)
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    mounted = compose["services"]["brain-tools"]["secrets"]
+    assert mounted.count("parcel_api_key") == 1
+    assert mounted.count("calendar_token") == 1
+
+
+def test_without_instance_tools_nothing_extra_is_declared(instance: Path) -> None:
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert "parcel_api_key" not in compose["secrets"]
+    assert compose["services"]["brain-tools"]["secrets"] == [
+        "tools_token",
+        "outbox_secret",
+        "calendar_token",
+    ]
+    tools = ToolsConfig.from_yaml(instance / "config" / "brain-tools.yaml")
+    assert tools.extensions == {}
+
+
+def test_the_brain_image_from_the_answers_lands_in_compose(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(tmp_path, answers_file, brain_image="registry.example.com/team/brain:1.2.3")
+    instance = tmp_path / "instance"
+    init(answers, instance)
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    for name in ("brain-tools", "gate", "watchdog", "vault-watcher", "call-router", "job-runner"):
+        assert compose["services"][name]["image"] == "registry.example.com/team/brain:1.2.3", name
+
+
+def test_the_default_brain_image_is_the_shipped_one(instance: Path) -> None:
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert compose["services"]["brain-tools"]["image"] == "second-brain/brain:0.1.0"
+
+
+def test_an_inline_secret_in_the_extensions_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["tools"]["extensions"] = {"parceltools": {"parcel_api_key": "not-in-a-file"}}
+    path = tmp_path / "inline-secret.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(AnswersError, match="secrets are never in this file"):
+        Answers.from_yaml(path)

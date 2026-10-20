@@ -40,6 +40,7 @@ VALUES: dict[str, Any] = {
     "docker_gid": 999,
     "brain_tools_extra_volumes": ["/srv/brain/archive:/srv/brain/archive"],
     "optional_secrets": ["calendar_token"],
+    "instance_secrets": [],
     "brain_tools_secrets": ["tools_token", "outbox_secret", "calendar_token"],
 }
 
@@ -415,3 +416,36 @@ def test_egress_runs_under_an_init_that_forwards_sigterm(services: dict[str, Any
 
 def test_hermes_finds_searxng(services: dict[str, Any]) -> None:
     assert services["hermes"]["environment"]["SEARXNG_URL"] == "http://searxng:8080"
+
+
+def test_an_instance_secret_is_declared_and_mounted_on_brain_tools() -> None:
+    values = {
+        **VALUES,
+        "instance_secrets": ["parcel_api_key"],
+        "brain_tools_secrets": ["tools_token", "outbox_secret", "calendar_token", "parcel_api_key"],
+    }
+    loaded = yaml.safe_load(render(DEPLOY / "compose.yaml.j2", values))
+    assert loaded["secrets"]["parcel_api_key"] == {"file": "./secrets/parcel_api_key"}
+    # Nothing else reads it: a secret goes to the one container that needs it.
+    owners = [
+        name for name, service in loaded["services"].items() if "parcel_api_key" in service.get("secrets", [])
+    ]
+    assert owners == ["brain-tools"]
+    # The declared secrets and the mounted ones are the same set, or compose refuses to start.
+    assert set(loaded["secrets"]) == {
+        secret for service in loaded["services"].values() for secret in service.get("secrets", [])
+    }
+
+
+def test_the_brain_image_comes_from_the_values() -> None:
+    services = rendered_services(brain_image="registry.example.com/team/brain:1.2.3")
+    for name in (
+        "brain-tools",
+        "gate",
+        "watchdog",
+        "vault-watcher",
+        "call-router",
+        "job-runner",
+        "scheduler",
+    ):
+        assert services[name]["image"] == "registry.example.com/team/brain:1.2.3", name

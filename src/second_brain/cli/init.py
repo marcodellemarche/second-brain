@@ -27,6 +27,7 @@ from second_brain.cli.config import (
     export_registry,
     git_init,
     guard_config,
+    instance_credentials,
     render_deploy,
     render_hermes,
     sidecars_config,
@@ -86,25 +87,33 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
     _check_instance_dir(instance, force)
     result.vault_skipped = not _vault_is_free(answers.vault_dir)
 
+    # The registry is built before the secrets, because the secrets are the ones its instance
+    # tools declared: the guard table and the egress allowlist come from the same build.
+    config = tools_config(answers)
+    registry = export_registry(config)
+    credentials = instance_credentials(registry)
+
     try:
         generated, secrets_created = write_secrets(
             instance / SECRETS_DIR,
-            plan(channel=answers.channel, calendar=answers.tools.calendar is not None),
+            plan(
+                channel=answers.channel,
+                calendar=answers.tools.calendar is not None,
+                instance_credentials=credentials,
+            ),
         )
     except SecretUnreadable as exc:
         raise InitError(_unreadable_secret_message(exc.name, instance)) from exc
     result.created += [f"{SECRETS_DIR}/{name}" for name in secrets_created]
     result.warnings += _keypair_warnings(instance)
 
-    config = tools_config(answers)
-    registry = export_registry(config)
     files = {
         **render_hermes(answers, registry, generated),
         **render_deploy(answers, registry, generated),
         "config/brain-tools.yaml": _yaml(config.model_dump(mode="json", exclude_none=True)),
         "config/brain-guard.yaml": _yaml(_guard_dict(guard_config(answers, registry))),
         "config/sidecars.yaml": _yaml(sidecars_config(answers).model_dump(mode="json", exclude_none=True)),
-        OWNERS_SCRIPT: _owners_script(answers),
+        OWNERS_SCRIPT: _owners_script(answers, credentials),
         "README.md": _readme(answers, instance),
     }
     for relative, content in files.items():
@@ -251,7 +260,7 @@ def _yaml(data: object) -> str:
     return yaml.safe_dump(data, sort_keys=True, default_flow_style=False, allow_unicode=True)
 
 
-def _owners_script(answers: Answers) -> str:
+def _owners_script(answers: Answers, credentials: dict[str, str]) -> str:
     """The one-shot fixup for file ownership: bind-mounted secrets keep the host's uid.
 
     Every service of the brain image runs as 23002 and Hermes as 23001, so a secret file owned by
@@ -262,6 +271,9 @@ def _owners_script(answers: Answers) -> str:
     brain_secrets += [WEBHOOK_INGEST, WEBHOOK_RESEARCH, WEBHOOK_IDEA, WEBHOOK_SCHEDULE]
     if answers.tools.calendar is not None:
         brain_secrets.append(CALENDAR_TOKEN)
+    for name in credentials:
+        if name not in brain_secrets:
+            brain_secrets.append(name)
     hermes_secrets = [HERMES_ENV, TERMINAL_SSH_KEY]
     pubkey = f"{SECRETS_DIR}/{TERMINAL_SSH_PUBKEY}"
     host_key = f"{SECRETS_DIR}/{TERMINAL_HOST_KEY}"
