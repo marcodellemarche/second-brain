@@ -272,6 +272,13 @@ def test_the_terminal_sees_the_vault_and_only_the_public_key(services: dict[str,
     ]
 
 
+def test_the_terminal_host_key_is_mounted_read_only(services: dict[str, Any]) -> None:
+    # The host key outlives the image: one generated at build time changes at every rebuild.
+    assert "./secrets/terminal_host_key:/etc/ssh/terminal_host_key:ro" in _mounts(services["terminal"])
+    # It is a file mount, not a compose secret: sshd reads it as a plain path from its config.
+    assert "terminal_host_key" not in services["terminal"].get("secrets", [])
+
+
 def test_the_terminal_writable_paths_belong_to_the_agent_user(services: dict[str, Any]) -> None:
     # The container is read-only and a tmpfs comes up root-owned, so agent could write nowhere.
     for entry in services["terminal"]["tmpfs"]:
@@ -400,3 +407,7 @@ def test_no_calendar_means_no_calendar_secret_anywhere() -> None:
     loaded = yaml.safe_load(render(DEPLOY / "compose.yaml.j2", values))
     assert "calendar_token" not in loaded["secrets"]
     assert loaded["services"]["brain-tools"]["secrets"] == ["tools_token", "outbox_secret"]
+
+
+def test_egress_runs_under_an_init_that_forwards_sigterm(services: dict[str, Any]) -> None:
+    assert services["egress"]["init"] is True

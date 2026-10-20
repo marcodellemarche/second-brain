@@ -6,6 +6,8 @@ instance directory that already has something in it, and a vault that already ha
 
 from __future__ import annotations
 
+import os
+import shutil
 import stat
 from pathlib import Path
 
@@ -15,6 +17,7 @@ import yaml
 from second_brain.cli.answers import Answers, AnswersError
 from second_brain.cli.init import InitError, init
 from second_brain.cli.main import main
+from second_brain.cli.secrets import create_file
 from second_brain.guard.config import GuardConfig
 from second_brain.sidecars.config import SidecarsConfig
 from second_brain.tools.config import ToolsConfig
@@ -75,6 +78,7 @@ def test_every_config_file_is_created(instance: Path) -> None:
         "secrets/README.md",
         "secrets/hermes.env",
         "secrets/terminal_ssh_key",
+        "secrets/terminal_host_key",
     }
     assert expected <= created
     for name in GENERATED:
@@ -83,7 +87,7 @@ def test_every_config_file_is_created(instance: Path) -> None:
 
 def test_no_template_placeholder_survives(instance: Path) -> None:
     for path in instance.rglob("*"):
-        if not path.is_file() or path.name == "terminal_ssh_key":
+        if not path.is_file() or path.name.startswith("terminal_"):
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         assert "{{" not in text, f"{path} still has a placeholder"
@@ -605,3 +609,70 @@ def test_the_scaffolded_vault_is_committed_once_by_sb_init(instance: Path, answe
     assert commits == ["sb-init sb-init@localhost scaffold: vault created by sb init"]
     # Nothing left over: the human-commit timer must not see the scaffold as the owner's edits.
     assert _git(answers.vault_dir, "status", "--porcelain").strip() == ""
+
+
+KEYPAIRS = ("terminal_ssh_key", "terminal_host_key")
+
+
+def test_a_fresh_init_creates_both_keypairs(tmp_path: Path, answers: Answers) -> None:
+    if shutil.which("ssh-keygen") is None:
+        pytest.skip("ssh-keygen is not on PATH")
+    directory = tmp_path / "instance"
+    init(answers, directory)
+    for name in KEYPAIRS:
+        private = directory / "secrets" / name
+        public = directory / "secrets" / f"{name}.pub"
+        assert private.read_text(encoding="utf-8").startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
+        assert public.read_text(encoding="utf-8").startswith("ssh-ed25519 ")
+        assert stat.S_IMODE(private.stat().st_mode) == 0o600
+
+
+def test_a_rerun_keeps_the_host_key_unchanged(tmp_path: Path, answers: Answers) -> None:
+    directory = tmp_path / "instance"
+    init(answers, directory)
+    host_key = (directory / "secrets" / "terminal_host_key").read_bytes()
+    init(answers, directory, force=True)
+    assert (directory / "secrets" / "terminal_host_key").read_bytes() == host_key
+
+
+def test_the_secrets_readme_names_the_host_key(instance: Path) -> None:
+    readme = (instance / "secrets" / "README.md").read_text(encoding="utf-8")
+    assert "terminal_host_key" in readme
+    assert "/etc/ssh/terminal_host_key" in readme
+
+
+def test_owners_sh_gives_the_host_key_to_the_terminal_user(instance: Path) -> None:
+    text = (instance / "owners.sh").read_text(encoding="utf-8")
+    assert 'chown 1000:1000 "secrets/terminal_host_key"' in text
+    assert 'chmod 600 "secrets/terminal_host_key"' in text
+
+
+def test_the_terminal_mounts_the_host_key_read_only(instance: Path) -> None:
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert (
+        "./secrets/terminal_host_key:/etc/ssh/terminal_host_key:ro"
+        in compose["services"]["terminal"]["volumes"]
+    )
+
+
+def test_create_file_leaves_an_existing_file_alone(tmp_path: Path) -> None:
+    path = tmp_path / "tools_token"
+    path.write_text("first\n", encoding="utf-8")
+    path.chmod(0o644)
+    assert create_file(path, "second\n") == []
+    assert path.read_text(encoding="utf-8") == "first\n"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read a file whatever its mode is")
+def test_an_unreadable_secret_on_a_rerun_gives_a_clear_error(tmp_path: Path, answers: Answers) -> None:
+    directory = tmp_path / "instance"
+    init(answers, directory)
+    secret = directory / "secrets" / "tools_token"
+    secret.chmod(0o000)
+    with pytest.raises(InitError) as raised:
+        init(answers, directory, force=True)
+    message = str(raised.value)
+    assert "tools_token" in message
+    assert "owners.sh" in message
+    assert "--force" in message

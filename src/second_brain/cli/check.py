@@ -25,7 +25,7 @@ from typing import Any
 import yaml
 
 from second_brain.cli.config import export_registry
-from second_brain.cli.init import BRAIN_UID, HERMES_UID
+from second_brain.cli.init import BRAIN_UID, HERMES_UID, TERMINAL_UID
 from second_brain.cli.secrets import GENERATED, SECRET_MODE, SECRETS_DIR, TERMINAL_SSH_KEY
 from second_brain.gate.watchdog import DEFAULT_MAX_AGE
 from second_brain.guard.config import GuardConfig, GuardConfigError
@@ -89,7 +89,7 @@ LOOPBACK_HOSTS: tuple[str, ...] = ("localhost", "::1", "0:0:0:0:0:0:0:1")
 
 # The uids that read the secrets inside the containers, so an operator cannot read them from the
 # host. The brain image services run as BRAIN_UID, Hermes as HERMES_UID.
-CONTAINER_UIDS: tuple[int, ...] = (HERMES_UID, BRAIN_UID)
+CONTAINER_UIDS: tuple[int, ...] = (HERMES_UID, BRAIN_UID, TERMINAL_UID)
 
 # A write into the read-only vault must fail; the probe removes its file if it somehow succeeds.
 VAULT_WRITE_PROBE = (

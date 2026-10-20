@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from second_brain.cli import check
 from second_brain.cli.answers import Answers
 from second_brain.cli.check import (
     FAIL,
@@ -180,6 +181,8 @@ def test_a_secret_owned_by_another_uid_fails_the_secrets_check(
     instance: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(os, "geteuid", lambda: 4242)
+    # The files belong to whoever runs the tests, which may be one of the container uids.
+    monkeypatch.setattr(check, "CONTAINER_UIDS", (4243,))
     status, reason = _status(instance, "secrets")
     assert status == FAIL
     assert "owned by uid" in reason

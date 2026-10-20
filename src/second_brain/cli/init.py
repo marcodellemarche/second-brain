@@ -38,6 +38,8 @@ from second_brain.cli.secrets import (
     MODEL_API_KEY,
     OUTBOX_SECRET,
     SECRETS_DIR,
+    TERMINAL_HOST_KEY,
+    TERMINAL_HOST_PUBKEY,
     TERMINAL_SSH_KEY,
     TERMINAL_SSH_PUBKEY,
     TOOLS_TOKEN,
@@ -45,6 +47,7 @@ from second_brain.cli.secrets import (
     WEBHOOK_INGEST,
     WEBHOOK_RESEARCH,
     WEBHOOK_SCHEDULE,
+    SecretUnreadable,
     plan,
     write_secrets,
 )
@@ -57,6 +60,8 @@ SCAFFOLD_AUTHOR = "sb-init"
 SCAFFOLD_MESSAGE = "scaffold: vault created by sb init"
 BRAIN_UID = 23002
 HERMES_UID = 23001
+# sshd runs as `agent` in the terminal image, and it is the one that reads the host key.
+TERMINAL_UID = 1000
 
 
 class InitError(RuntimeError):
@@ -80,9 +85,13 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
     _check_instance_dir(instance, force)
     result.vault_skipped = not _vault_is_free(answers.vault_dir)
 
-    generated, secrets_created = write_secrets(
-        instance / SECRETS_DIR, plan(channel=answers.channel, calendar=answers.tools.calendar is not None)
-    )
+    try:
+        generated, secrets_created = write_secrets(
+            instance / SECRETS_DIR,
+            plan(channel=answers.channel, calendar=answers.tools.calendar is not None),
+        )
+    except SecretUnreadable as exc:
+        raise InitError(_unreadable_secret_message(exc.name, instance)) from exc
     result.created += [f"{SECRETS_DIR}/{name}" for name in secrets_created]
 
     config = tools_config(answers)
@@ -126,6 +135,13 @@ def _check_instance_dir(instance: Path, force: bool) -> None:
         raise InitError(f"{instance} exists and is not a directory")
     if any(instance.iterdir()) and not force:
         raise InitError(f"{instance} already exists and is not empty; pass --force to re-render it")
+
+
+def _unreadable_secret_message(name: str, instance: Path) -> str:
+    return (
+        f"cannot read {SECRETS_DIR}/{name}: the secrets belong to the containers since owners.sh "
+        f"ran, so run `sudo sb init {instance} --force`, then `sudo sh {OWNERS_SCRIPT}` again"
+    )
 
 
 def _vault_is_free(vault: Path) -> bool:
@@ -232,6 +248,8 @@ def _owners_script(answers: Answers) -> str:
         brain_secrets.append(CALENDAR_TOKEN)
     hermes_secrets = [HERMES_ENV, TERMINAL_SSH_KEY]
     pubkey = f"{SECRETS_DIR}/{TERMINAL_SSH_PUBKEY}"
+    host_key = f"{SECRETS_DIR}/{TERMINAL_HOST_KEY}"
+    host_pubkey = f"{SECRETS_DIR}/{TERMINAL_HOST_PUBKEY}"
 
     lines = [
         "#!/bin/sh",
@@ -251,6 +269,10 @@ def _owners_script(answers: Answers) -> str:
         "",
         "# The public half is not a secret, and sshd in the terminal reads it as its own user.",
         f'if [ -e "{pubkey}" ]; then chmod 644 "{pubkey}"; fi',
+        "",
+        f"# The terminal's host key: sshd runs as agent (uid/gid {TERMINAL_UID}) and must read it.",
+        _chown_line(host_key, TERMINAL_UID),
+        f'if [ -e "{host_pubkey}" ]; then chmod 644 "{host_pubkey}"; fi',
         "",
         "# brain_tools is the only writer of the vault.",
         f"chown -R {BRAIN_UID}:{BRAIN_UID} '{answers.vault_dir}'",

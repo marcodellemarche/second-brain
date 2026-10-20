@@ -107,10 +107,11 @@ def test_terminal_image_runs_sshd_as_the_agent_user() -> None:
     text = dockerfile("Dockerfile.terminal")
     # The tmpfs mounts of /home/agent and the workspace carry this uid, so it is fixed here.
     assert "--uid 1000" in text
-    # Nothing to chown as root at runtime: the host key is made here and owned by agent.
-    assert "ssh-keygen -t ed25519 -N '' -f /etc/ssh/agent_host_ed25519_key" in text
-    assert "chown agent:agent /etc/ssh/agent_host_ed25519_key*" in text
-    assert "'HostKey /etc/ssh/agent_host_ed25519_key'" in text
+    # The host key is mounted by the host operator: one made here would change at every rebuild.
+    assert "ssh-keygen" not in text
+    assert "agent_host_ed25519_key" not in text
+    assert "mkdir -p /run/sshd /etc/ssh/authorized_keys" in text
+    assert "'HostKey /etc/ssh/terminal_host_key'" in text
     assert "'PidFile none'" in text
     assert "'StrictModes no'" in text
     assert "'AuthorizedKeysFile /etc/ssh/authorized_keys/%u'" in text
