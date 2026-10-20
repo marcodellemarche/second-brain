@@ -13,7 +13,8 @@ credential is left out of that commit and stays in the working tree until the se
 the brain then refuses to touch it.
 
 Error codes: `outside_vault`, `zone_denied`, `quiet_window`, `hash_mismatch`, `secret_detected`,
-`not_found`, `exists`, `conflict` when a later change makes an undo impossible to apply cleanly,
+`not_found`, `exists`, `immutable` when a source note would be rewritten, moved or deleted,
+`conflict` when a later change makes an undo impossible to apply cleanly,
 `bad_since` and `bad_limit` when a log query is malformed, and `git_failed` when git itself refuses
 the operation.
 """
@@ -106,6 +107,9 @@ class VaultConfig(BaseModel):
     quiet_seconds: float = 120
     denied: list[str] = Field(default_factory=lambda: ["_brain/policy.md", ".git", ".obsidian"])
     approval_required: list[str] = Field(default_factory=list)
+    # Other people's words land here once and stay as they arrived: a new note is fine, rewriting,
+    # moving or deleting one is not, or the provenance of everything derived from it is lost.
+    immutable: list[str] = Field(default_factory=lambda: ["raw"])
     trash_dir: str = ".trash"
     author_name: str = "brain"
     author_email: str = "brain@localhost"
@@ -266,6 +270,8 @@ class Vault:
             self._check_held_back(rel, held)
             if target.exists() and not target.is_file():
                 raise VaultError("exists", f"{rel} is not a regular file")
+            if target.exists():
+                self._check_mutable(rel)
             self._check_concurrency(rel, target, expected_sha256)
             self._check_secrets(rel, content)
             self._atomic_write(target, content.encode("utf-8"))
@@ -278,6 +284,7 @@ class Vault:
             dst_rel, dst_path = self._resolve(dst)
             self._check_zone(src_rel, provenance)
             self._check_zone(dst_rel, provenance)
+            self._check_mutable(src_rel)
             self._check_held_back(src_rel, held)
             self._check_held_back(dst_rel, held)
             if not src_path.is_file():
@@ -293,6 +300,7 @@ class Vault:
             held = self._commit_human_changes_locked().held_back
             rel, target = self._resolve(path)
             self._check_zone(rel, provenance)
+            self._check_mutable(rel)
             self._check_held_back(rel, held)
             if not target.is_file():
                 raise VaultError("not_found", f"{rel} does not exist")
@@ -477,6 +485,12 @@ class Vault:
             raise VaultError("zone_denied", f"{rel} is not writable by the agent")
         if self._matches(rel, self._config.approval_required) and provenance.approval == "none":
             raise VaultError("zone_denied", f"{rel} needs an explicit approval")
+
+    def _check_mutable(self, rel: str) -> None:
+        if self._matches(rel, self._config.immutable):
+            raise VaultError(
+                "immutable", f"{rel} is a source and stays as it arrived: write a new note instead"
+            )
 
     @staticmethod
     def _matches(rel: str, prefixes: Iterable[str]) -> bool:

@@ -888,3 +888,25 @@ def test_log_of_an_empty_repository_is_empty(tmp_path: Path) -> None:
     _git(repo, "init", "-q")
 
     assert _vault(repo).log() == []
+
+
+def test_a_new_raw_note_can_be_written_but_never_rewritten_moved_or_deleted(root: Path) -> None:
+    vault = _vault(root, quiet_seconds=0)
+    vault.write("raw/web/result.md", "---\ntrust: untrusted\n---\nwords\n", _provenance())
+    _content, sha = vault.read("raw/web/result.md")
+    for attempt in (
+        lambda: vault.write("raw/web/result.md", "changed\n", _provenance(), expected_sha256=sha),
+        lambda: vault.move("raw/web/result.md", "knowledge/result.md", _provenance()),
+        lambda: vault.delete("raw/web/result.md", _provenance()),
+    ):
+        with pytest.raises(VaultError) as error:
+            attempt()
+        assert error.value.code == "immutable"
+    assert (root / "raw/web/result.md").read_text() == "---\ntrust: untrusted\n---\nwords\n"
+
+
+def test_moving_a_note_into_raw_is_not_blocked_by_immutability(root: Path) -> None:
+    vault = _vault(root, quiet_seconds=0)
+    vault.write("inbox/forward.md", "forwarded\n", _provenance())
+    vault.move("inbox/forward.md", "raw/mail/forward.md", _provenance())
+    assert (root / "raw/mail/forward.md").is_file()

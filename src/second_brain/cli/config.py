@@ -134,7 +134,9 @@ def tools_config(answers: Answers) -> ToolsConfig:
             token_file=SECRETS_IN_CONTAINER / "calendar_token",
         )
     return ToolsConfig(
-        vault=VaultConfig(root=VAULT_IN_CONTAINER),
+        vault=VaultConfig(
+            root=VAULT_IN_CONTAINER, immutable=[vault_schema(answers.language).folder(Zone.RAW)]
+        ),
         token_file=SECRETS_IN_CONTAINER / TOOLS_TOKEN,
         listen=Listen(host="0.0.0.0", port=8765),
         calendar=calendar,

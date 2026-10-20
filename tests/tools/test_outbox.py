@@ -374,6 +374,9 @@ def test_importing_finishes_the_research_job_and_queues_the_follow_up(
     assert result.note in followup.payload.question
     assert "How does tidal energy work in the North Sea?" in followup.payload.question
     assert followup.payload.note_path == "ideas/tidal.md"
+    # The vault route serves other jobs too: the follow-up is told where to write and which skill part.
+    assert "Write the final note at ideas/tidal.md" in followup.payload.question
+    assert "research skill, side three" in followup.payload.question
     assert followup.requested_by == f"job:{job_id}"
 
 

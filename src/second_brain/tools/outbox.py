@@ -364,7 +364,16 @@ class OutboxImporter:
 
     def _enqueue_followup(self, job: Job, note_path: str) -> str | None:
         """Queue the vault job that writes the final note from the raw one."""
-        suffix = f"\n\nThe research result is in {note_path}. Write the note from it."
+        target = job.payload.note_path
+        where = (
+            f"Write the final note at {target}" if target else "Write the final note in the knowledge zone"
+        )
+        # The follow-up runs on a vault route that also serves other jobs, so it is told which part of
+        # which skill applies and where to write: the runner finishes the job when that note exists.
+        suffix = (
+            f"\n\nThe research result is in {note_path}. Follow the research skill, side three. "
+            f"{where}, as a new note: the raw note stays where it is."
+        )
         question = job.payload.question[: MAX_QUESTION_CHARS - len(suffix)]
         payload = JobPayload(
             title=job.payload.title,
