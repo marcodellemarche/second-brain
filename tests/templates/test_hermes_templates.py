@@ -264,6 +264,30 @@ def test_soul_calls_other_content_data_and_forbids_python() -> None:
     assert "`/new`" in soul
 
 
+def test_soul_keeps_identifiers_out_of_the_reply() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
+    assert "identity document number" in soul
+    assert "IBAN" in soul
+    assert "card number" in soul
+    # The note path is what the model points to instead of the value.
+    assert "Name the note that holds it" in soul
+
+
+def test_soul_says_when_the_owner_denied_something() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
+    assert "denies an action" in soul
+    assert "comes from memory" in soul
+    assert "did not check it" in soul
+
+
+def test_soul_suggests_new_inside_a_sentence() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
+    assert "one short sentence" in soul
+    for line in soul.splitlines():
+        assert not line.rstrip().endswith("/new`"), f"bare /new at the end of a line: {line!r}"
+        assert not line.rstrip().endswith("`/new`"), f"bare /new at the end of a line: {line!r}"
+
+
 def test_user_card_carries_the_owner_details() -> None:
     user = render(TEMPLATES / "USER.md.j2", VALUES)
     assert VALUES["owner_name"] in user

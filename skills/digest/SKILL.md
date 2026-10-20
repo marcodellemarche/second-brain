@@ -17,7 +17,7 @@ Keep a section only when it has something in it. Skip it silently otherwise: an 
 
 **Since the last digest.** One line per thing that happened, newest first, taken from the `_meta/log.md` entries written since the previous digest and from the recent vault commits the tools list (path, one-line reason, short commit id). Call `vault_log` with `since` set to the time of the previous digest, so the list starts where the last digest stopped. Group the small stuff: "4 captures, 2 call notes". Leave out the routine internals the owner does not care about.
 
-**What I did on my own.** Only the writes that were not asked for in the moment: a topic page updated from a call, a commitment added, a note moved. Call `vault_log` with `since` set to the time of the previous digest and keep the commits authored by the brain whose `Requested-By` is not a direct request from the owner in chat: scheduled tasks, jobs and ingest events (`webhook:...`, `job:...`). Each line ends with its undo hint, the short commit id from `vault_log`, so the owner can say "undo `<commit>`". Use `vault_undo` only when the owner asks; the digest never undoes anything by itself.
+**What I did on my own.** Only the writes that were not asked for in the moment: a topic page updated from a call, a commitment added, a note moved. Call `vault_log` with `since` set to the time of the previous digest and keep only the commits authored by the brain that nobody asked for. A commit whose `Requested-By` is a bare id, the owner's own chat sender, was asked for in chat: it goes under "Since the last digest" and never here. Everything else was not asked for: `webhook:...`, `job:...` and `schedule:...` are scheduled tasks, jobs and ingest events. Each line ends with its undo hint, the short commit id from `vault_log`, so the owner can say "undo `<commit>`". Use `vault_undo` only when the owner asks; the digest never undoes anything by itself.
 
 **Due soon.** Rows from `_brain/commitments` whose `due` is within the next seven days or already past and still open, plus document cards in `documents/` whose `expires` falls in the same window. Format: what, when, how many days left. Overdue first, and say plainly that it is overdue.
 
@@ -25,7 +25,7 @@ Keep a section only when it has something in it. Skip it silently otherwise: an 
 
 **Held back.** Notes the owner edited that the vault left uncommitted because they look like a credential: the vault's held-back list gives the path and which rule matched. Tell the owner which file to clean, and never print the value, not even a fragment. Say that until the secret is gone the file stays outside the commits.
 
-**Waiting for you.** Open questions that need the owner's answer: a call the router could not classify (`status: pending-team-question` in a call note, with the reason it gave), a `notify_feedback` proposal waiting for a yes, anything the policy sent to `ask` and is still pending. One line each, with what happens on yes and on no.
+**Waiting for you.** Open questions that need the owner's answer: a call the router could not classify (`status: pending-team-question` in a call note, with the reason it gave), a `notify_feedback` proposal waiting for a yes, anything the policy sent to `ask` and is still pending, and the memory writes staged for approval, which stay pending until the owner approves them. One line each, with what happens on yes and on no. The staged memory writes appear only when a tool lists them: if no tool does, leave that line out instead of guessing what is waiting.
 
 ## Tone and length
 
