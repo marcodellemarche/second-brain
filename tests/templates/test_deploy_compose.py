@@ -517,6 +517,13 @@ def test_the_instance_services_are_absent_by_default(services: dict[str, Any]) -
     assert "mail" not in services
 
 
+def test_the_audio_worker_runs_its_own_image() -> None:
+    # torch and the XTTS checkpoint are not in the brain image: inheriting it would start the
+    # worker with no synthesiser at all.
+    worker = rendered_services(**TTS)["tts-worker"]
+    assert worker["image"] == TTS["tts_image"]
+
+
 def test_the_audio_worker_has_no_way_out_and_sees_the_queue() -> None:
     worker = rendered_services(**TTS)["tts-worker"]
     assert worker["networks"] == ["internal"]

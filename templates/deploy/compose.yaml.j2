@@ -233,6 +233,8 @@ services:
 {% if has_tts %}
   tts-worker:
     <<: *brain
+    # Not the brain image: XTTS and whisper live in their own, built from the tts/ folder.
+    image: {{ tts_image }}
     container_name: {{ instance_name }}-tts-worker
     command: ["python", "-m", "brain_personal.tts_worker"]
     # No network at all: the request already carries the text to read, so this container never
