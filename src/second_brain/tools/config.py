@@ -295,7 +295,9 @@ def _note_folders(root: Path) -> list[str] | None:
     except SchemaError as exc:
         log.warning("no vault schema, job note_path is not checked against the zones: %s", exc)
         return None
-    return sorted(schema.folder(zone) for zone in Zone if zone not in _NOTE_EXCLUDED_ZONES)
+    # Only the zones this vault actually has: the team zones are optional, so iterating the enum
+    # asks a personal vault for a folder it does not carry.
+    return sorted(schema.folder(zone) for zone in schema.zones if zone not in _NOTE_EXCLUDED_ZONES)
 
 
 def _calendar_backend(config: ToolsConfig) -> CalendarBackend:

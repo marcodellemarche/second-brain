@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ import pytest
 import yaml
 from pydantic import BaseModel
 
+from second_brain.cli.answers import TEMPLATES
 from second_brain.core.types import Autonomy, Effect, ToolSpec
 from second_brain.tools import registry as registry_module
 from second_brain.tools.config import (
@@ -398,8 +400,6 @@ def test_instance_entry_points_are_loaded(
             def handler(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
                 return {"ok": True}
 
-            from second_brain.core.types import Autonomy, Effect, ToolSpec
-
             spec = ToolSpec(
                 name="ask_team",
                 description="Ask the team.",
@@ -593,3 +593,20 @@ def test_the_calendar_takes_exactly_one_token_source(tmp_path: Path) -> None:
     config = load({**base["calendar"], "service_account_file": "k"})
     assert config.calendar is not None
     assert config.calendar.service_account_file is not None
+
+
+def test_the_note_folders_are_the_zones_the_vault_has(tmp_path: Path) -> None:
+    # A personal vault has no systems/incidents/decisions/runbooks: iterating the Zone enum would
+    # ask it for a folder it does not carry and refuse to start.
+    from second_brain.core.schema import load_schema
+    from second_brain.tools.config import _note_folders
+
+    vault = tmp_path / "vault"
+    shutil.copytree(TEMPLATES / "vault" / "en", vault)
+    folders = _note_folders(vault)
+
+    assert folders is not None
+    schema = load_schema(vault)
+    assert set(folders) <= set(schema.zones.values())
+    for absent in ("systems", "incidents", "decisions", "runbooks"):
+        assert absent not in folders
