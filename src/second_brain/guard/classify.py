@@ -48,6 +48,10 @@ BUILTIN: dict[str, ToolClass] = {
     "terminal": ToolClass(Effect.INTERNAL, Autonomy.AUTO),
     "memory": ToolClass(Effect.INTERNAL, Autonomy.NOTIFY),
     "skill_manage": ToolClass(Effect.INTERNAL, Autonomy.NOTIFY),
+    # Skills come from the image and the staged skill dir, both written only with an approval.
+    "skills_list": ToolClass(Effect.READ, Autonomy.AUTO),
+    "skill_view": ToolClass(Effect.READ, Autonomy.AUTO),
+    "todo_list": ToolClass(Effect.INTERNAL, Autonomy.AUTO),
     "session_search": ToolClass(Effect.READ, Autonomy.AUTO),
     "delegate_task": ToolClass(Effect.INTERNAL, Autonomy.AUTO),
     "send_message": ToolClass(Effect.VISIBLE, Autonomy.NEVER),
