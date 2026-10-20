@@ -112,7 +112,7 @@ class VaultConfig(BaseModel):
     immutable: list[str] = Field(default_factory=lambda: ["raw"])
     # 0o644 keeps a note readable by everyone and writable by its owner, which is right for a vault
     # only the brain writes. A vault shared with another service (a Nextcloud data directory) needs
-    # 0o664, so that service can modify a note the brain created.
+    # 0o666: Apache drops supplementary groups, so a group-writable file is not enough there.
     file_mode: int = Field(default=0o644, ge=0o600, le=0o666)
     trash_dir: str = ".trash"
     author_name: str = "brain"

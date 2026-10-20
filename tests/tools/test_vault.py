@@ -921,8 +921,8 @@ def test_a_shared_vault_writes_files_the_other_writer_can_change(tmp_path: Path)
     _git(repo, "init", "-q")
     _git(repo, "config", "user.name", "tester")
     _git(repo, "config", "user.email", "tester@localhost")
-    vault = Vault(VaultConfig(root=repo, quiet_seconds=0, file_mode=0o664))
+    vault = Vault(VaultConfig(root=repo, quiet_seconds=0, file_mode=0o666))
 
     vault.write("note.md", "body\n", _provenance())
 
-    assert stat.S_IMODE((repo / "note.md").stat().st_mode) == 0o664
+    assert stat.S_IMODE((repo / "note.md").stat().st_mode) == 0o666

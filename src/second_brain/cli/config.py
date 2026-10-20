@@ -154,9 +154,11 @@ def tools_config(answers: Answers) -> ToolsConfig:
         vault=VaultConfig(
             root=VAULT_IN_CONTAINER,
             immutable=[vault_schema(answers.language).folder(Zone.RAW)],
-            # A shared vault is written by another service too, which has to be able to change a
-            # note the brain created.
-            file_mode=0o664 if answers.vault_group_gid is not None else 0o644,
+            # A shared vault is written by another service too. 0o664 would be enough if that
+            # service could join the group, but Apache drops supplementary groups when it switches
+            # to www-data, so the file has to be world-writable. The folder lives inside the other
+            # service's own data directory, which only that service and root can enter.
+            file_mode=0o666 if answers.vault_group_gid is not None else 0o644,
         ),
         token_file=SECRETS_IN_CONTAINER / TOOLS_TOKEN,
         listen=Listen(host="0.0.0.0", port=8765),
