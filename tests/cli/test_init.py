@@ -726,3 +726,34 @@ def test_the_command_prints_the_keypair_warnings(
     out = capsys.readouterr().out
     assert "WARNING" in out
     assert "terminal_host_key" in out
+
+
+def test_guard_config_carries_the_language(tmp_path: Path, answers_file: Path) -> None:
+    from second_brain.cli.config import guard_config
+
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["language"] = "it"
+    path = tmp_path / "italian.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    italian = Answers.from_yaml(path)
+    assert guard_config(italian, _registry(italian)).language == "it"
+    english = Answers.from_yaml(answers_file)
+    assert guard_config(english, _registry(english)).language == "en"
+
+
+def test_the_rendered_hermes_config_speaks_the_instance_language(tmp_path: Path, answers_file: Path) -> None:
+    from second_brain.cli.config import template_values
+
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["language"] = "it"
+    path = tmp_path / "italian.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    italian = Answers.from_yaml(path)
+    assert template_values(italian, _registry(italian), _generated(italian))["language_code"] == "it"
+
+    directory = tmp_path / "italian-instance"
+    init(italian, directory)
+    hermes = yaml.safe_load((directory / "config" / "hermes" / "config.yaml").read_text(encoding="utf-8"))
+    assert hermes["display"]["language"] == "it"
+    guard = GuardConfig.from_yaml(directory / "config" / "brain-guard.yaml")
+    assert guard.language == "it"

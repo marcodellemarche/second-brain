@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -52,6 +53,8 @@ class GuardConfig(BaseModel):
     mcp_tools: dict[str, McpToolPolicy] = Field(default_factory=dict)
     admin_senders: tuple[str, ...] = ()
     search_tools: frozenset[str] = frozenset(DEFAULT_SEARCH_TOOLS)
+    # The language the owner reads, so the approval card is written in it and not in policy codes.
+    language: Literal["it", "en"] = "en"
 
     @classmethod
     def load(cls, environ: Mapping[str, str] | None = None) -> GuardConfig:

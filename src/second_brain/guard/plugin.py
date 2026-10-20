@@ -46,6 +46,91 @@ AUDIT_FILE = "audit.jsonl"
 # Tools whose decisive argument is a URL, and is therefore literal only if the user typed it.
 URL_TOOLS = frozenset({"web_extract", "browser_navigate"})
 ARGS_PREVIEW_CHARS = 200
+# The two calendar tools that always ask, whatever the session looks like.
+CALENDAR_WRITE_TOOLS = frozenset({"calendar_main_write", "calendar_invite"})
+# The argument that says what a call is about, per tool. Anything else falls back to the preview.
+APPROVAL_ARGUMENTS: dict[str, tuple[str, ...]] = {
+    "web_search": ("query",),
+    "research_enqueue": ("question",),
+    "archive_discard": ("path",),
+    "notify": ("text",),
+}
+# The card, in the language the owner reads. `other` is a tool with no argument worth naming.
+APPROVAL_TEXTS: dict[str, dict[str, str]] = {
+    "it": {
+        "calendar": "Calendario: {value}",
+        "main": "principale",
+        "assistant": "assistente",
+        "title": "Titolo: {value}",
+        "start": "Inizio: {value}",
+        "attendees": "Invitati: {value}",
+        "web_search": "Ricerca sul web: {value}",
+        "web_extract": "Lettura di questa pagina: {value}",
+        "research_enqueue": "Ricerca in background su: {value}",
+        "archive_discard": "Sposto nell'archivio degli scarti: {value}",
+        "notify": "Messaggio che ti mando: {value}",
+        "other": "Strumento {name}, con questi argomenti: {args}",
+    },
+    "en": {
+        "calendar": "Calendar: {value}",
+        "main": "main",
+        "assistant": "assistant",
+        "title": "Title: {value}",
+        "start": "Start: {value}",
+        "attendees": "Attendees: {value}",
+        "web_search": "Web search for: {value}",
+        "web_extract": "Reading this page: {value}",
+        "research_enqueue": "Background research on: {value}",
+        "archive_discard": "Moving to the discard folder: {value}",
+        "notify": "Message I will send you: {value}",
+        "other": "Tool {name}, with these arguments: {args}",
+    },
+}
+# One plain sentence per reason `decide` can return. The empty key is the fallback.
+APPROVAL_REASONS: dict[str, dict[str, str]] = {
+    "it": {
+        "rule of two": (
+            "Te lo chiedo perché in questa conversazione ho letto sia note tue private sia testi "
+            "scritti da altri: una richiesta verso l'esterno potrebbe portare fuori qualcosa."
+        ),
+        "visible effect": (
+            "Te lo chiedo perché questa azione la vedono altre persone, e non voglio farla "
+            "senza che tu lo sappia."
+        ),
+        "visible action in a session that read untrusted content": (
+            "Te lo chiedo perché in questa conversazione ho letto testi scritti da altri, e "
+            "questa azione la vedono altre persone."
+        ),
+        "visible action the user did not ask for": (
+            "Te lo chiedo perché questa azione la vedono altre persone e non me l'hai chiesta tu."
+        ),
+        "tool requires approval": ("Te lo chiedo perché questo strumento richiede sempre un tuo permesso."),
+        "tool is never allowed": "Questo strumento non è mai permesso.",
+        "no rule applies": "Te lo chiedo perché nessuna regola copre questa chiamata.",
+        "": "Te lo chiedo perché non riesco a decidere da solo se questa chiamata va bene.",
+    },
+    "en": {
+        "rule of two": (
+            "I'm asking because this conversation has read both your private notes and text "
+            "written by others: a request that leaves the system could carry something out."
+        ),
+        "visible effect": (
+            "I'm asking because other people will see this action, and I don't want to do it "
+            "without you knowing."
+        ),
+        "visible action in a session that read untrusted content": (
+            "I'm asking because this conversation has read text written by others, and other "
+            "people will see this action."
+        ),
+        "visible action the user did not ask for": (
+            "I'm asking because other people will see this action and you did not ask for it."
+        ),
+        "tool requires approval": "I'm asking because this tool always needs your permission.",
+        "tool is never allowed": "This tool is never allowed.",
+        "no rule applies": "I'm asking because no rule covers this call.",
+        "": "I'm asking because I cannot tell on my own whether this call is fine.",
+    },
+}
 MAX_PENDING_VERDICTS = 256
 NO_VERDICT_MESSAGE = "brain_guard made no decision for this call, so it was not run. Try the call again."
 
@@ -238,7 +323,7 @@ class Guard:
         if verdict.decision.action == "block":
             return {"action": "block", "message": verdict.message or verdict.decision.reason}
         if verdict.decision.action == "ask":
-            message = _approval_text(tool_name, call_args, verdict.decision)
+            message = _approval_text(tool_name, call_args, verdict.decision, self.config.language)
             directive = {"action": "approve", "message": message}
             if tool_call_id:
                 # One approval covers this call only, never the same tool for the rest of the session.
@@ -319,7 +404,11 @@ class Guard:
         verdict: Verdict,
     ) -> None:
         # The exact text the human is shown, so the audit says what was asked, not only that.
-        prompt = _approval_text(tool_name, args, verdict.decision) if verdict.decision.action == "ask" else ""
+        prompt = (
+            _approval_text(tool_name, args, verdict.decision, self.config.language)
+            if verdict.decision.action == "ask"
+            else ""
+        )
         self.audit.append(
             {
                 "event": "decision",
@@ -427,7 +516,12 @@ def _dumps(value: Any) -> str:
 
 def _preview(args: dict[str, Any], limit: int) -> str:
     """The arguments as one short line, so the audit and the approval text stay readable."""
-    text = " ".join(_dumps(args).split())
+    return _short(_dumps(args), limit)
+
+
+def _short(text: str, limit: int = ARGS_PREVIEW_CHARS) -> str:
+    """One line, cut with an ellipsis when it is longer than the card can show."""
+    text = " ".join(text.split())
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
@@ -477,11 +571,54 @@ def _scheduled(task_id: str, session_id: str) -> str:
     return f"session:{session_id}" if session_id else ""
 
 
-def _approval_text(tool_name: str, args: dict[str, Any], decision: Decision) -> str:
-    """What the human sees when asked: the tool, the arguments, and why the guard is asking."""
-    text = f"{tool_name} ({_preview(args, ARGS_PREVIEW_CHARS)}): {decision.reason}"
+def _approval_text(tool_name: str, args: dict[str, Any], decision: Decision, language: str = "en") -> str:
+    """What the human sees when asked: what will happen, in plain words, and why the guard asks."""
+    reasons = APPROVAL_REASONS.get(language, APPROVAL_REASONS["en"])
+    reason = reasons.get(decision.reason) or reasons[""]
+    return "\n".join([*_approval_lines(tool_name, args, language), reason])
+
+
+def _approval_lines(tool_name: str, args: dict[str, Any], language: str) -> list[str]:
+    """The lines above the reason: the one or two arguments that say what the call is about."""
+    texts = APPROVAL_TEXTS.get(language, APPROVAL_TEXTS["en"])
+    name = _policy_name(tool_name)
+    lines: list[str] = []
     calendar = _target_calendar(tool_name, args)
-    return f"Calendar: {calendar.upper()}\n{text}" if calendar else text
+    if calendar:
+        lines.append(texts["calendar"].format(value=texts[calendar].upper()))
+    if name in CALENDAR_WRITE_TOOLS:
+        for key in ("title", "start", "attendees"):
+            value = _argument(args, key)
+            if value:
+                lines.append(texts[key].format(value=_short(value)))
+        return lines or _fallback_line(name, args, texts)
+    if name == "web_extract":
+        urls = " ".join(_arg_urls(args))
+        if urls:
+            return [*lines, texts[name].format(value=_short(urls))]
+    keys = APPROVAL_ARGUMENTS.get(name)
+    value = _argument(args, *keys) if keys else ""
+    if value:
+        return [*lines, texts[name].format(value=_short(value))]
+    return _fallback_line(name, args, texts)
+
+
+def _fallback_line(name: str, args: dict[str, Any], texts: dict[str, str]) -> list[str]:
+    """A tool with no argument worth naming: its name and the compact preview."""
+    return [texts["other"].format(name=name, args=_preview(args, ARGS_PREVIEW_CHARS))]
+
+
+def _argument(args: dict[str, Any], *names: str) -> str:
+    """The first named argument that carries text, whether it arrives as a string or a list."""
+    for name in names:
+        value = args.get(name)
+        if isinstance(value, str) and value.strip():
+            return value
+        if isinstance(value, list):
+            items = [item for item in value if isinstance(item, str) and item.strip()]
+            if items:
+                return ", ".join(items)
+    return ""
 
 
 def _target_calendar(tool_name: str, args: dict[str, Any]) -> str | None:

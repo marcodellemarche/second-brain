@@ -32,6 +32,7 @@ VALUES: dict[str, str] = {
     "owner_slack_id": "U0000000001",
     "owner_name": "Sample Owner",
     "language": "Italian",
+    "language_code": "it",
     "languages": "Italian, English",
     "channel": "Telegram",
     "deliver_platform": "telegram",
@@ -59,6 +60,10 @@ def config() -> dict[str, Any]:
     loaded = yaml.safe_load(text)
     assert isinstance(loaded, dict)
     return loaded
+
+
+def test_display_language_is_the_instance_language(config: dict[str, Any]) -> None:
+    assert config["display"]["language"] == VALUES["language_code"]
 
 
 def test_every_placeholder_has_a_value() -> None:

@@ -36,7 +36,7 @@ def test_child_inherits_both_flags_and_still_needs_an_approval(guard: plugin.Gua
     )
     assert decision is not None
     assert decision["action"] == "approve"
-    assert "rule of two" in decision["message"]
+    assert "private notes and text written by others" in decision["message"]
 
 
 def test_a_flag_set_on_the_parent_after_the_child_started_still_applies(guard: plugin.Guard) -> None:

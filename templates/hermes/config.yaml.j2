@@ -16,6 +16,11 @@ model:
 fallback_providers: []
 timezone: "{{ timezone }}"
 
+# Hermes' own strings, approval cards and buttons included, follow the instance language. The
+# approval text the guard writes comes from the guard config and is already in that language.
+display:
+  language: "{{ language_code }}"
+
 nous:
   guest: false
 model_catalog:

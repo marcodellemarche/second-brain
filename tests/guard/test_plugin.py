@@ -83,6 +83,19 @@ def guard(tmp_path: Path, hermes_config: Path) -> plugin.Guard:
     return plugin.Guard(config)
 
 
+@pytest.fixture
+def guard_it(tmp_path: Path, hermes_config: Path) -> plugin.Guard:
+    config = GuardConfig.model_validate(
+        {
+            **CONFIG,
+            "guard_dir": str(tmp_path / "guard"),
+            "hermes_config_path": str(hermes_config),
+            "language": "it",
+        }
+    )
+    return plugin.Guard(config)
+
+
 def test_register_registers_every_hook(monkeypatch: pytest.MonkeyPatch, config_path: Path) -> None:
     monkeypatch.setenv("BRAIN_GUARD_CONFIG", str(config_path))
     ctx = FakeCtx()
@@ -283,7 +296,7 @@ def test_external_tool_asks_after_untrusted_and_private_reads(guard: plugin.Guar
     decision = guard.pre_tool_call(tool_name="web_search", args={"query": "x"}, session_id="s1")
     assert decision is not None
     assert decision["action"] == "approve"
-    assert "rule of two" in decision["message"]
+    assert "private notes" in decision["message"]
 
 
 def test_external_tool_allowed_with_only_one_flag(guard: plugin.Guard) -> None:
@@ -315,7 +328,7 @@ def test_visible_tool_asks_when_not_literal(guard: plugin.Guard) -> None:
     )
     assert decision is not None
     assert decision["action"] == "approve"
-    assert "did not ask for" in decision["message"]
+    assert "you did not ask for it" in decision["message"]
 
 
 def test_visible_tool_asks_when_the_session_read_untrusted_content(guard: plugin.Guard) -> None:
@@ -325,7 +338,7 @@ def test_visible_tool_asks_when_the_session_read_untrusted_content(guard: plugin
     )
     assert decision is not None
     assert decision["action"] == "approve"
-    assert "untrusted" in decision["message"]
+    assert "text written by others" in decision["message"]
 
 
 def test_policy_tightens_a_tool(guard: plugin.Guard) -> None:
@@ -339,7 +352,7 @@ def test_policy_tightens_a_tool(guard: plugin.Guard) -> None:
     )
     assert decision is not None
     assert decision["action"] == "approve"
-    assert "requires approval" in decision["message"]
+    assert "always needs your permission" in decision["message"]
 
 
 def test_policy_cannot_loosen_never(guard: plugin.Guard) -> None:
@@ -358,8 +371,8 @@ def test_ask_directive_is_bound_to_the_call(guard: plugin.Guard) -> None:
     )
     assert decision is not None
     assert decision["rule_key"] == "brain_guard:call-1"
-    assert "web_search" in decision["message"]
-    assert "rule of two" in decision["message"]
+    assert "a long query" in decision["message"]
+    assert "private notes" in decision["message"]
 
 
 def test_approval_text_truncates_the_arguments(guard: plugin.Guard) -> None:
@@ -373,12 +386,81 @@ def test_approval_text_truncates_the_arguments(guard: plugin.Guard) -> None:
 
 def test_approval_text_names_the_target_calendar_first() -> None:
     decision = Decision(action="ask", reason="visible effect")
-    main = plugin._approval_text("mcp__brain__calendar_main_write", {"action": "create"}, decision)
+    main = plugin._approval_text("mcp__brain__calendar_main_write", {"action": "create"}, decision, "en")
     assert main.startswith("Calendar: MAIN\n")
-    invite = plugin._approval_text("mcp__brain__calendar_invite", {"calendar": "assistant"}, decision)
+    invite = plugin._approval_text("mcp__brain__calendar_invite", {"calendar": "assistant"}, decision, "en")
     assert invite.startswith("Calendar: ASSISTANT\n")
+    italian = plugin._approval_text("mcp__brain__calendar_main_write", {"action": "create"}, decision, "it")
+    assert italian.startswith("Calendario: PRINCIPALE\n")
     other = plugin._approval_text("web_search", {"query": "x"}, decision)
     assert not other.startswith("Calendar:")
+
+
+def test_approval_text_is_italian_and_names_the_query(guard_it: plugin.Guard) -> None:
+    guard_it.store.mark_untrusted("s1")
+    guard_it.store.mark_private("s1")
+    decision = guard_it.pre_tool_call(
+        tool_name="web_search", args={"query": "sindaco di Firenze attuale"}, session_id="s1"
+    )
+    assert decision is not None
+    message = decision["message"]
+    assert message.splitlines()[0] == "Ricerca sul web: sindaco di Firenze attuale"
+    assert "sia note tue private sia testi scritti da altri" in message
+    assert "rule of two" not in message
+    assert "{" not in message
+
+
+def test_approval_text_is_english_and_names_the_query(guard: plugin.Guard) -> None:
+    guard.store.mark_untrusted("s1")
+    guard.store.mark_private("s1")
+    decision = guard.pre_tool_call(
+        tool_name="web_search", args={"query": "current mayor of Firenze"}, session_id="s1"
+    )
+    assert decision is not None
+    message = decision["message"]
+    assert message.splitlines()[0] == "Web search for: current mayor of Firenze"
+    assert "both your private notes and text written by others" in message
+    assert "rule of two" not in message
+
+
+def test_approval_text_names_the_argument_each_tool_is_about() -> None:
+    decision = Decision(action="ask", reason="tool requires approval")
+    extract = plugin._approval_text("web_extract", {"url": "https://example.com/a"}, decision, "en")
+    assert "https://example.com/a" in extract
+    research = plugin._approval_text("mcp__brain__research_enqueue", {"question": "q" * 400}, decision, "en")
+    assert "..." in research
+    discard = plugin._approval_text(
+        "mcp__brain__archive_discard", {"path": "invoices/2019.pdf"}, decision, "en"
+    )
+    assert "invoices/2019.pdf" in discard
+    notify = plugin._approval_text("mcp__brain__notify", {"text": "deadline on Friday"}, decision, "en")
+    assert "deadline on Friday" in notify
+
+
+def test_approval_text_for_a_calendar_write_names_title_and_start() -> None:
+    decision = Decision(action="ask", reason="tool requires approval")
+    text = plugin._approval_text(
+        "mcp__brain__calendar_invite",
+        {
+            "calendar": "assistant",
+            "title": "Dentist",
+            "start": "2026-03-02T09:00:00+01:00",
+            "attendees": ["a@example.com", "b@example.com"],
+        },
+        decision,
+        "it",
+    )
+    lines = text.splitlines()
+    assert lines[0] == "Calendario: ASSISTENTE"
+    assert "Titolo: Dentist" in lines
+    assert "Inizio: 2026-03-02T09:00:00+01:00" in lines
+    assert "Invitati: a@example.com, b@example.com" in lines
+
+
+def test_approval_text_falls_back_to_the_name_and_preview() -> None:
+    decision = Decision(action="ask", reason="tool requires approval")
+    text = plugin._approval_text("mcp__brain__not_declared", {"a": 1}, decision, "it")
+    assert text.splitlines()[0] == 'Strumento not_declared, con questi argomenti: {"a": 1}'
 
 
 def test_pre_tool_call_blocks_an_unknown_mcp_tool(guard: plugin.Guard) -> None:
@@ -435,8 +517,8 @@ def test_approval_text_is_audited_verbatim(guard: plugin.Guard) -> None:
     row = _last_decision(guard)
     assert row["action"] == "ask"
     assert row["prompt"] == decision["message"]
-    assert row["prompt"].startswith("web_search (")
-    assert "rule of two" in row["prompt"]
+    assert row["prompt"].startswith("Web search for: where is the key\n")
+    assert "private notes" in row["prompt"]
 
 
 def test_allow_decision_has_no_prompt(guard: plugin.Guard) -> None:

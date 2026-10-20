@@ -201,6 +201,7 @@ def guard_config(answers: Answers, registry: Registry) -> GuardConfig:
         media_dir=str(answers.media_dir),
         mcp_tools=export_guard_classes(registry),
         admin_senders=(answers.owner_id,),
+        language=answers.language,
     )
 
 
@@ -355,6 +356,7 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "slack_home_channel": answers.slack.home_channel if answers.slack is not None else "",
         "owner_name": answers.owner_name,
         "language": answers.language_name,
+        "language_code": answers.language,
         "languages": answers.languages,
         "channel": answers.channel,
         "deliver_platform": answers.channel.lower(),
