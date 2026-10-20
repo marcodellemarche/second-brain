@@ -307,3 +307,14 @@ def test_only_the_digest_of_the_scheduled_routes_is_delivered(config: dict[str, 
 
 def test_web_search_uses_searxng_and_no_keyless_tier(config: dict[str, Any]) -> None:
     assert config["web"] == {"search_backend": "searxng", "keyless_fallback": False, "keyless_rescue": False}
+
+
+def test_the_research_prompt_names_the_job_the_outbox_looks_for(config: dict[str, Any]) -> None:
+    from second_brain.tools.outbox import job_id_from_prompt
+
+    routes = config["platforms"]["webhook"]["extra"]["routes"]
+    job_id = "0123456789abcdef0123456789abcdef"
+    prompt = routes["background-research"]["prompt"].format(
+        job_id=job_id, title="A title", question="A question?"
+    )
+    assert job_id_from_prompt(prompt) == job_id

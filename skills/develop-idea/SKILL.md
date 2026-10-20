@@ -21,7 +21,7 @@ A refusal is the answer. `unknown_kind` or `wrong_tool` means the kind does not 
 
 ## Side two: the background run
 
-The prompt of this run starts with "Background job.", then the title and the question. There is no web here and no conversation: the vault through `vault_read` and `vault_write`, and the rest of brain_tools, is all you have.
+The prompt of this run starts with "Background job <id>.", then the title and the question. There is no web here and no conversation: the vault through `vault_read` and `vault_write`, and the rest of brain_tools, is all you have.
 
 1. Read the idea note at `note_path` and keep the `sha256` it returns.
 2. Read the notes it connects to: search `ideas`, `topics`, `knowledge` and `projects` for its subject and its tags, and read the ones that really bear on it. A handful, not the vault.

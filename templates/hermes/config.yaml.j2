@@ -237,11 +237,11 @@ platforms:
         # route would get brain_tools back. A vault route is the opposite and names `brain`.
         background-research:
           secret: "${WEBHOOK_SECRET_RESEARCH}"
-          prompt: "Background research job. {title}\n\n{question}"
+          prompt: "Background research job {job_id}. {title}\n\n{question}"
           toolsets: [web, no_mcp]
         background-idea:
           secret: "${WEBHOOK_SECRET_IDEA}"
-          prompt: "Background job. {title}\n\n{question}"
+          prompt: "Background job {job_id}. {title}\n\n{question}"
           toolsets: [file, skills, brain]
         # The scheduler fires these at their local times, because Hermes cron is off. Each one
         # keeps `mirror_to_session` off: a mirrored delivery is written into the chat as a user

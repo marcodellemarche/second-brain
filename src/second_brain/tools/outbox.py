@@ -227,7 +227,9 @@ class OutboxReceiver:
             return Receipt(400, "bad_json", f"the body is not JSON: {exc}")
         result = _read_result(payload, self._store, self._kinds)
         if isinstance(result, str):
-            log.debug("delivery ignored: %s", result)
+            # A research route's reply that is not recognised is a lost result, not routine noise.
+            level = logging.WARNING if JOB_PROMPT_PREFIX.strip().encode() in body else logging.DEBUG
+            log.log(level, "delivery ignored: %s", result)
             return Receipt(200, "ignored", result)
         job, _reply, body_fields = result
         delivery = body_fields.get("delivery_id")
