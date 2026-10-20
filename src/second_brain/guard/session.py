@@ -13,6 +13,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+# A forwarded message is tainted for the turn that follows it, not for the rest of the evening.
+FORWARD_TTL_SECONDS = 600.0
+
 
 def call_key(tool: str, args: dict[str, Any]) -> str:
     """Stable key for a tool call: same tool and same args in any key order hash the same."""
@@ -43,6 +46,8 @@ class SessionStore:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._sessions: dict[str, SessionState] = {}
+        # Keyed by sender, not by session: the dispatch hook and the turn do not share a session id.
+        self._forwards: dict[str, float] = {}
 
     def get(self, sid: str) -> SessionState:
         with self._lock:
@@ -154,9 +159,31 @@ class SessionStore:
         with self._lock:
             return self.get(sid).empty_searches
 
+    def note_forward(self, sender: str, now: float | None = None) -> None:
+        """Remember that this sender's next message is forwarded text written by someone else."""
+        stamp = now if now is not None else time.monotonic()
+        with self._lock:
+            self._prune_forwards(stamp)
+            self._forwards[sender] = stamp
+
+    def consume_forward(self, sender: str, now: float | None = None) -> bool:
+        """True once for a forward still pending for this sender, and it is then gone."""
+        if not sender:
+            return False
+        stamp = now if now is not None else time.monotonic()
+        with self._lock:
+            self._prune_forwards(stamp)
+            return self._forwards.pop(sender, None) is not None
+
     def forget(self, sid: str) -> None:
         with self._lock:
             self._sessions.pop(sid, None)
+
+    def _prune_forwards(self, now: float) -> None:
+        """Drop forwards nothing consumed: a stale one must not taint a later typed message."""
+        for sender, stamp in list(self._forwards.items()):
+            if now - stamp > FORWARD_TTL_SECONDS:
+                del self._forwards[sender]
 
     def _chain(self, sid: str) -> list[SessionState]:
         """Sessions from `sid` up to the root, each at most once. Caller holds the lock."""
