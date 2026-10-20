@@ -51,6 +51,10 @@ NO_VERDICT_MESSAGE = "brain_guard made no decision for this call, so it was not 
 
 URL_RE = re.compile(r"https?://[^\s\"'<>)\]}\\]+")
 VAULT_PATH_RE = re.compile(r"[^\s\"'<>:|,]+\.(?:md|txt|ya?ml|json|csv)\b")
+# Tools whose `path` argument names a vault path: what they return is classified by where it lives.
+PATH_TOOLS = frozenset({"read_file", "search_files", "vault_read"})
+# A bound on the strings walked inside one JSON result, so a huge result cannot stall the hook.
+MAX_NOTE_TEXTS = 200
 FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(?P<body>.*?)\n---[ \t]*(?:\n|\Z)", re.DOTALL)
 TRUST_RE = re.compile(r"^trust:[ \t]*(?P<value>[^\s#]+)", re.MULTILINE)
 UNTRUSTED_OPEN = '<untrusted-content source="{}">'
@@ -97,6 +101,8 @@ class Guard:
     ) -> None:
         """Remember who is talking, which session is the parent, and the URLs the user gave."""
         self.store.set_identity(session_id, sender_id, platform)
+        # A new turn: whatever was in flight has answered or been dropped by Hermes.
+        self.store.reset_pending_searches(session_id)
         if parent_session_id:
             self.store.link_child(session_id, parent_session_id)
         if isinstance(user_message, str):
@@ -148,7 +154,7 @@ class Guard:
 
         untrusted = tool_class.taints_untrusted
         private = tool_class.taints_private
-        if tool_name in {"read_file", "search_files"}:
+        if tool_name in PATH_TOOLS or _policy_name(tool_name) in PATH_TOOLS:
             path_untrusted, path_private = path_taint(
                 str(call_args.get("path", "")),
                 self.config.vault_root,
@@ -157,7 +163,7 @@ class Guard:
             )
             untrusted = untrusted or path_untrusted
             private = private or path_private
-        if _is_untrusted_note(text):
+        if any(_is_untrusted_note(candidate) for candidate in _note_texts(text)):
             untrusted = True
 
         if untrusted:
@@ -222,6 +228,8 @@ class Guard:
         )
         verdict = self.evaluate(tool_name, call_args, session_id, budget=budget)
         self.audit_decision(tool_name, call_args, session_id, tool_call_id, verdict)
+        if tool_name in self.config.search_tools and verdict.decision.action != "block":
+            self.store.start_search(session_id)
         if _is_brain_tool(tool_name):
             # Handed to stamp_guard: the approval it writes must be the one this verdict earned,
             # not one recomputed after a concurrent tool result changed the flags.
@@ -485,6 +493,30 @@ def _target_calendar(tool_name: str, args: dict[str, Any]) -> str | None:
         return "main"
     calendar = args.get("calendar")
     return calendar if isinstance(calendar, str) and calendar else None
+
+
+def _note_texts(text: str) -> list[str]:
+    """The text, plus every string inside it when it is JSON: an MCP result wraps the note."""
+    found = [text]
+    pending: list[Any] = []
+    try:
+        pending.append(json.loads(text))
+    except ValueError:
+        return found
+    while pending and len(found) < MAX_NOTE_TEXTS:
+        item = pending.pop()
+        if isinstance(item, str):
+            found.append(item.lstrip())
+            if item.lstrip().startswith(("{", "[")):
+                try:
+                    pending.append(json.loads(item))
+                except ValueError:
+                    pass
+        elif isinstance(item, dict):
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return found
 
 
 def _is_untrusted_note(text: str) -> bool:

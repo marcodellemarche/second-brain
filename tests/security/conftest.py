@@ -20,6 +20,7 @@ CONFIG: dict[str, Any] = {
     "private_prefixes": ["_brain", "documents"],
     "untrusted_prefixes": ["raw"],
     "mcp_tools": {
+        "vault_read": {"effect": "read", "autonomy": "auto", "taints_private": True},
         "vault_write": {"effect": "internal", "autonomy": "auto"},
         "vault_delete": {"effect": "internal", "autonomy": "auto"},
         "ask_team": {"effect": "external", "autonomy": "ask"},
