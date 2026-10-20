@@ -4,9 +4,9 @@ This is the schema of the team brain: one shared vault, written only through pul
 
 `raw/` holds other people's words: transcripts, imported pages, forwarded files. It is immutable after it lands and counts as untrusted, so a page derived from `raw/` carries `trust: untrusted`. Everything else is trusted unless it is marked otherwise.
 
-Frontmatter is always in English: `type`, `created`, `updated`, `tags`, `domain`, `share`, `sources`, `confidence`, `contested`, `trust`, `status`, `date`, `start`, `participants`, `organizer`, `event`, `audio`, `transcript`, `category`, `parties`, `issued`, `expires`, `original`, `original_sha256`, `project`, `jira`, `due`, `index`.
+Frontmatter is always in English: `type`, `created`, `updated`, `tags`, `domain`, `share`, `sources`, `confidence`, `contested`, `trust`, `status`, `date`, `start`, `participants`, `organizer`, `event`, `audio`, `transcript`, `category`, `parties`, `issued`, `expires`, `original`, `original_sha256`, `project`, `jira`, `due`, `index`, `job`.
 
-`types` and `tags` are closed taxonomies: a new value is added here, in the same pull request that needs it. Pages under `archive/` carry `index: false` and stay out of automatic recall and out of the lint.
+`types` is a closed taxonomy: a new value is added here, in the same pull request that needs it. `tags` lists the broad areas; a tag outside the list is fine when it is lowercase kebab-case (`api-gateway`), usually the slug of a topic or system page. Two tags that say the same thing (singular and plural, with or without a dash) become one. Pages under `archive/` carry `index: false` and stay out of automatic recall and out of the lint.
 
 This vault has no `_brain/`: agent memory belongs to a person, not to a team. It has no `documents/` either: personal documents never enter a shared repository.
 

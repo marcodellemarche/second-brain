@@ -49,6 +49,8 @@ The user also edits the vault in an editor, and file sync drops those changes in
 
 Git is also the undo. `vault_undo` applies the inverse of a change, and it refuses with `conflict` when a later change makes the inverse impossible to apply cleanly. The other error codes are `outside_vault`, `zone_denied`, `quiet_window`, `hash_mismatch`, `secret_detected`, `not_found`, `exists` and `git_failed`.
 
+There is no `_meta/log.md` and no `_meta/index.md` to keep up to date: the history of the vault is its git log, read with `vault_log`.
+
 ### Sidecars
 
 The sidecars are separate containers on the internal network. Each one opens no port, mounts the vault read-only or not at all, and talks to Hermes only through a signed webhook.

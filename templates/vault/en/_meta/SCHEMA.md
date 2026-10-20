@@ -4,9 +4,9 @@ This vault is a brain's memory: your notes, pages the agent writes, raw sources 
 
 `raw/` holds other people's words: transcripts, mail, web pages, forwarded files. It is immutable after it lands and counts as untrusted, so a page derived from `raw/` carries `trust: untrusted`. Everything else is trusted unless it is marked otherwise.
 
-Frontmatter is always in English: `type`, `created`, `updated`, `tags`, `domain`, `share`, `sources`, `confidence`, `contested`, `trust`, `status`, `date`, `start`, `participants`, `organizer`, `event`, `audio`, `transcript`, `category`, `parties`, `issued`, `expires`, `original`, `original_sha256`, `project`, `jira`, `due`, `index`. Folders, file names and prose follow the vault's language instead.
+Frontmatter is always in English: `type`, `created`, `updated`, `tags`, `domain`, `share`, `sources`, `confidence`, `contested`, `trust`, `status`, `date`, `start`, `participants`, `organizer`, `event`, `audio`, `transcript`, `category`, `parties`, `issued`, `expires`, `original`, `original_sha256`, `project`, `jira`, `due`, `index`, `job`. Folders, file names and prose follow the vault's language instead.
 
-`types` and `tags` are closed taxonomies: a new value is added here, with a change that goes through an approval. Pages under `archive/` carry `index: false` and stay out of automatic recall and out of the lint.
+`types` is a closed taxonomy: a new value is added here, with a change that goes through an approval. `tags` lists the broad areas; a tag outside the list is fine when it is lowercase kebab-case (`api-gateway`, `house-hunt`), usually the slug of a topic page. Two tags that say the same thing (singular and plural, with or without a dash) become one. Pages under `archive/` carry `index: false` and stay out of automatic recall and out of the lint.
 
 The pages the agent keeps about itself in `_brain/` are named in `brain_pages`: code and skills use the logical names (`commitments`, `initiative`, ...), so renaming a page is a change here alone.
 

@@ -4,9 +4,9 @@ Questo vault è la memoria di un brain: note tue, pagine scritte dall'agente, fo
 
 `raw/` contiene parole di altri: trascritti, mail, pagine web, file inoltrati. È immutabile dopo l'ingresso e vale come non fidato, quindi una pagina derivata da `raw/` porta `trust: untrusted`. Tutto il resto è fidato finché non lo si marca diversamente.
 
-Il frontmatter è sempre in inglese, anche quando il vault è in italiano: `type`, `created`, `updated`, `tags`, `domain`, `share`, `sources`, `confidence`, `contested`, `trust`, `status`, `date`, `start`, `participants`, `organizer`, `event`, `audio`, `transcript`, `category`, `parties`, `issued`, `expires`, `original`, `original_sha256`, `project`, `jira`, `due`, `index`. Cartelle, nomi dei file e testo seguono invece la lingua del vault.
+Il frontmatter è sempre in inglese, anche quando il vault è in italiano: `type`, `created`, `updated`, `tags`, `domain`, `share`, `sources`, `confidence`, `contested`, `trust`, `status`, `date`, `start`, `participants`, `organizer`, `event`, `audio`, `transcript`, `category`, `parties`, `issued`, `expires`, `original`, `original_sha256`, `project`, `jira`, `due`, `index`, `job`. Cartelle, nomi dei file e testo seguono invece la lingua del vault.
 
-`types` e `tags` sono tassonomie chiuse: se serve un valore nuovo si aggiunge qui, con una modifica che passa da una conferma. Le pagine in `archivio/` portano `index: false` e restano fuori dal richiamo automatico e dal lint.
+`types` è una tassonomia chiusa: se serve un valore nuovo si aggiunge qui, con una modifica che passa da una conferma. `tags` elenca le aree generali; un tag fuori lista va bene se è minuscolo e con i trattini (`api-gateway`, `casa-nuova`), di solito lo slug di una pagina di argomento. Due tag che dicono la stessa cosa (singolare e plurale, trattino o no) si riducono a uno. Le pagine in `archivio/` portano `index: false` e restano fuori dal richiamo automatico e dal lint.
 
 Le pagine che l'agente tiene su di sé in `_brain/` sono nominate in `brain_pages`: il codice e le skill usano i nomi logici (`commitments`, `initiative`, ...), quindi rinominare una pagina è una modifica solo qui.
 

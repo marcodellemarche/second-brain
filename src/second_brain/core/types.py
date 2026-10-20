@@ -98,6 +98,7 @@ FRONTMATTER_KEYS: frozenset[str] = frozenset(
         "jira",
         "due",
         "index",
+        "job",
     }
 )
 

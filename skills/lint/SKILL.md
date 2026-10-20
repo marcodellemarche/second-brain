@@ -11,7 +11,7 @@ The lint reports, it does not fix. Finding a problem is the whole job: no note i
 
 ## Before anything
 
-Read `_meta/SCHEMA.md` first and resolve every zone through its `zones` block. Folders follow the vault's language, frontmatter stays in English. Take the closed `types` and `tags` lists from the same page, plus the frontmatter keys it allows. Never assume a folder name from this page. A `_brain/<name>` page in this skill is a logical name: the real file is the one the schema's `brain_pages` block names, for example `_brain/commitments` is `_brain/impegni.md` in an Italian vault.
+Read `_meta/SCHEMA.md` first and resolve every zone through its `zones` block. Folders follow the vault's language, frontmatter stays in English. Take the closed `types` list, the rule for `tags` and the frontmatter keys it allows from the same page. Never assume a folder name from this page. A `_brain/<name>` page in this skill is a logical name: the real file is the one the schema's `brain_pages` block names, for example `_brain/commitments` is `_brain/impegni.md` in an Italian vault.
 
 Notes under the `archive` zone and any note with `index: false` are outside the lint: skip them, do not report them.
 
@@ -34,7 +34,7 @@ On the notes in the chunk, in this order:
 
 - **Orphans.** A note with no incoming wiki link and not in the `inbox` zone. Report the path; a note nobody links is a note nobody will find.
 - **Broken wiki links.** A `[[target]]` that resolves to no note in the vault. Report the source path and the target as written.
-- **Frontmatter outside the schema.** Keys that are not in the schema's list, a `type` that is not in `types`, a `tag` that is not in `tags`. Report path, key and the value found.
+- **Frontmatter outside the schema.** Keys that are not in the schema's list, a `type` that is not in `types`, a tag that breaks the schema's rule for tags (not lowercase kebab-case, or a near duplicate of another tag in use, such as a plural or a different separator). Report path, key and the value found.
 - **Stale info.** A `valid until`, an `expires` or a `due` already in the past while the note still says open, current or pending in its body or its `status`. Report path, the date and the state the note claims.
 - **Contradictions.** Two notes in the same chunk that state different things about the same subject. Only when both are in the chunk: this is a check on what you read tonight, not a search across the vault. List the pair with the two statements side by side and nothing else. Never decide which one is right, and never edit either.
 - **Conflict copies.** A file name containing `conflicted copy` or `(conflict`, case-insensitive, from a sync client. Report the pair, the copy and the original it shadows. Never merge them, never delete the copy: which side is right is the owner's call.

@@ -74,7 +74,7 @@ original_sha256: the sha256 returned by archive_store
 ---
 ```
 
-Add `tags` from the closed list in `_meta/SCHEMA.md` when one clearly applies, and leave out any key that has no value instead of writing an empty one. The body is a few lines: what the document is, what it is for, and anything the owner will want to know without opening the scan (the renewal terms, the reference of the contract). No full transcription: the original is in the archive.
+Add `tags`, following the rule for tags in `_meta/SCHEMA.md`, when one clearly applies, and leave out any key that has no value instead of writing an empty one. The body is a few lines: what the document is, what it is for, and anything the owner will want to know without opening the scan (the renewal terms, the reference of the contract). No full transcription: the original is in the archive.
 
 `original` is the archive-relative path exactly as `archive_store` returned it, and `original_sha256` is its checksum. Those two are the only link between the card and the file, so a card without them is useless.
 

@@ -98,14 +98,10 @@ def test_meta_and_brain_pages_are_present(template: Path, language: str) -> None
         "en": ["profile.md", "commitments.md", "positions.md", "preferences.md", "initiative.md"],
         "it": ["profilo.md", "impegni.md", "posizioni.md", "preferenze.md", "iniziativa.md"],
     }[language]
-    assert (template / "_meta" / "index.md").is_file()
-    assert (template / "_meta" / "log.md").is_file()
+    assert not (template / "_meta" / "index.md").exists()
+    assert not (template / "_meta" / "log.md").exists()
     for name in [*names, "policy.md"]:
         assert (template / "_brain" / name).is_file(), name
-
-
-def test_log_has_the_line_format(template: Path) -> None:
-    assert "## [YYYY-MM-DD] <op> | <title>" in (template / "_meta" / "log.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("zone", sorted(PERSONAL_ZONES))
@@ -202,9 +198,7 @@ def test_the_first_yaml_block_wins(vault: Path) -> None:
 
 
 def template_pages(template: Path) -> list[Path]:
-    return sorted(
-        path for path in template.rglob("*.md") if path.name != "SCHEMA.md" and path.name != "log.md"
-    )
+    return sorted(path for path in template.rglob("*.md") if path.name != "SCHEMA.md")
 
 
 def frontmatter(path: Path) -> dict[str, Any] | None:
