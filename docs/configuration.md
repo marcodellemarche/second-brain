@@ -22,6 +22,7 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `model_context_length` | `131072` | Context window the Hermes config is rendered with, at least 1024. |
 | `tools` | all off | Which optional tool groups exist. See below. |
 | `job_kinds` | none | Background job kinds the model may queue. See below. |
+| `brain_tools_mounts` | `[]` | `host` and `container` of a folder an instance tool reads. Both absolute, no `..`, always mounted read-only, and not `/vault`, `/data`, `/run/secrets` or a path inside them. |
 | `schedule.digest` | `["08:00", "20:00"]` | Local times of the digest, one entry per time. |
 | `schedule.lint` | `"03:30"` | Local time of the nightly lint. |
 | `schedule.brief` | `["07:00", "13:00"]` | Local times of the brief before a call. |

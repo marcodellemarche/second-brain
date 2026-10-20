@@ -901,3 +901,42 @@ def test_an_inline_secret_in_the_extensions_is_refused(tmp_path: Path, answers_f
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with pytest.raises(AnswersError, match="secrets are never in this file"):
         Answers.from_yaml(path)
+
+
+def test_an_instance_mount_lands_on_brain_tools_read_only(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(
+        tmp_path,
+        answers_file,
+        brain_tools_mounts=[{"host": "/srv/cinema", "container": "/srv/cinema"}],
+    )
+    instance = tmp_path / "instance"
+    init(answers, instance)
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert "/srv/cinema:/srv/cinema:ro" in compose["services"]["brain-tools"]["volumes"]
+
+
+def test_a_relative_mount_path_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError, match="absolute"):
+        _answers_with(
+            tmp_path,
+            answers_file,
+            brain_tools_mounts=[{"host": "cinema", "container": "/srv/cinema"}],
+        )
+
+
+def test_a_mount_path_that_climbs_out_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError, match="climb"):
+        _answers_with(
+            tmp_path,
+            answers_file,
+            brain_tools_mounts=[{"host": "/srv/cinema/../etc", "container": "/srv/cinema"}],
+        )
+
+
+def test_a_mount_over_a_brain_path_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError, match="container may not be"):
+        _answers_with(
+            tmp_path,
+            answers_file,
+            brain_tools_mounts=[{"host": "/srv/notes", "container": "/vault/notes"}],
+        )

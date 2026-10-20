@@ -28,6 +28,7 @@ from second_brain.tools.notify import NotifyConfig
 Language = Literal["it", "en"]
 LANGUAGE_NAMES: dict[str, str] = {"it": "Italian", "en": "English"}
 TEMPLATES = Path(__file__).resolve().parents[3] / "templates"
+RESERVED_CONTAINER_PATHS: tuple[Path, ...] = (Path("/vault"), Path("/data"), Path("/run/secrets"))
 
 
 class AnswersError(RuntimeError):
@@ -148,6 +149,35 @@ class ToolsAnswers(BaseModel):
         return value
 
 
+class MountAnswers(BaseModel):
+    """A host folder an instance tool reads, mounted read-only inside brain_tools.
+
+    The paths the brain owns already have a place in the container, and a mount on top of one of
+    them would shadow it, so those are refused.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    host: Path
+    container: Path
+
+    @field_validator("host", "container")
+    @classmethod
+    def _plain_absolute(cls, value: Path) -> Path:
+        path = _absolute_path(value)
+        if ".." in path.parts:
+            raise ValueError(f"must not climb out of itself, got {value}")
+        return path
+
+    @field_validator("container")
+    @classmethod
+    def _not_a_brain_path(cls, value: Path) -> Path:
+        for reserved in RESERVED_CONTAINER_PATHS:
+            if value == reserved or reserved in value.parents:
+                raise ValueError(f"container may not be {reserved} or inside it, got {value}")
+        return value
+
+
 class JobKindAnswers(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -182,6 +212,9 @@ class Answers(BaseModel):
     )
     tools: ToolsAnswers = Field(default_factory=ToolsAnswers)
     job_kinds: dict[str, JobKindAnswers] = Field(default_factory=dict)
+    # Read-only host folders for instance tools: the vault, the data dir and the secrets are the
+    # brain's own, and a tool that writes belongs in the core.
+    brain_tools_mounts: list[MountAnswers] = Field(default_factory=list)
     schedule: ScheduleAnswers = Field(default_factory=ScheduleAnswers)
     calls: CallsAnswers = Field(default_factory=CallsAnswers)
 

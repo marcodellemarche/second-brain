@@ -315,12 +315,15 @@ def brain_tools_extra_volumes(answers: Answers) -> list[str]:
     """The host paths brain_tools needs mounted at the same path inside the container.
 
     The archive config carries host paths, and the tool moves files between them, so the archive
-    root has to be there under its own name rather than under `/vault`.
+    root has to be there under its own name rather than under `/vault`. The mounts from the
+    answers are always read-only: a tool that has to write belongs in the core.
     """
+    volumes: list[str] = []
     archive = answers.archive_config
-    if archive is None:
-        return []
-    return [f"{archive.root}:{archive.root}"]
+    if archive is not None:
+        volumes.append(f"{archive.root}:{archive.root}")
+    volumes.extend(f"{mount.host}:{mount.container}:ro" for mount in answers.brain_tools_mounts)
+    return volumes
 
 
 def instance_credentials(registry: Registry) -> dict[str, str]:
