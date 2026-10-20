@@ -33,6 +33,8 @@ class SessionState:
     started: float = field(default_factory=time.monotonic)
     call_counts: dict[str, int] = field(default_factory=dict)
     empty_searches: int = 0
+    # Searches allowed whose result has not come back: parallel calls are all decided first.
+    pending_searches: int = 0
 
 
 class SessionStore:
@@ -127,7 +129,20 @@ class SessionStore:
         with self._lock:
             state = self.get(sid)
             state.empty_searches = 0 if new_items > 0 else state.empty_searches + 1
+            state.pending_searches = max(0, state.pending_searches - 1)
             return state.empty_searches
+
+    def start_search(self, sid: str) -> None:
+        with self._lock:
+            self.get(sid).pending_searches += 1
+
+    def pending_searches(self, sid: str) -> int:
+        with self._lock:
+            return self.get(sid).pending_searches
+
+    def reset_pending_searches(self, sid: str) -> None:
+        with self._lock:
+            self.get(sid).pending_searches = 0
 
     def empty_searches(self, sid: str) -> int:
         with self._lock:

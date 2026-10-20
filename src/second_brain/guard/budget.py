@@ -33,7 +33,9 @@ def check_budget(
     steps, started = store.next_step(sid)
     repeats = store.record_call(sid, tool, args)
     elapsed = now - started
-    empty_searches = store.empty_searches(sid)
+    # A search still in flight counts as empty until it answers, or a batch of parallel searches
+    # would all pass before the first result is seen.
+    empty_searches = store.empty_searches(sid) + store.pending_searches(sid)
 
     if steps > policy.max_steps:
         return _stop(
@@ -55,7 +57,8 @@ def check_budget(
     if tool in search_tools and empty_searches >= policy.max_empty_searches:
         return _stop(
             "max_empty_searches",
-            f"The last {empty_searches} searches found nothing new. Stop searching: answer "
+            f"The last {empty_searches} searches found nothing new or have not answered yet. Stop "
+            "searching: answer "
             "now with what you already have and say what you could not find.",
         )
     return BudgetVerdict(ok=True, reason="", message_to_model="")
