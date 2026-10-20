@@ -268,3 +268,7 @@ def test_a_file_name_is_not_a_secret(note: str) -> None:
 )
 def test_a_keyword_followed_by_prose_is_not_an_assignment(note: str) -> None:
     assert scan(note) == []
+
+
+def test_a_camel_case_identifier_is_not_a_secret() -> None:
+    assert scan("`TestBucketsHardDeletionOnProjectHardDeletion` keeps covering the case.") == []

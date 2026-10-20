@@ -82,6 +82,15 @@ _RELATIVE_PATH_RE = re.compile(r"(?<![\w/])[\w.-]+(?:/[\w.-]+){2,}/?", re.MULTIL
 _LOWERCASE_SEGMENT = re.compile(r"[a-z0-9_.]+")
 _UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 # A file name can be long and mixed case; the extension at the end of the token gives it away.
+_CAMEL_CASE_RE = re.compile(r"[A-Za-z][a-z0-9]+(?:[A-Z][a-z0-9]+){2,}")
+_DIGITS_IN_SEGMENT = re.compile(r"[A-Za-z]+[0-9]|[0-9]+[A-Za-z]")
+
+
+def _is_wordlike(value: str) -> bool:
+    """True when every CamelCase segment is a plain word: identifiers read like this, keys do not."""
+    return not _DIGITS_IN_SEGMENT.search(value)
+
+
 _FILE_NAME_RE = re.compile(
     r"^\S+\.(?:pdf|md|markdown|txt|json|ya?ml|toml|csv|tsv|png|jpe?g|gif|webp|heic|svg|mp4|mov|wav|mp3|"
     r"excalidraw|base|sh|py|go|rs|ts|tsx|js|jsx|html|css|sql|patch|diff|docx?|xlsx?|pptx?)$",
@@ -126,6 +135,10 @@ def _looks_like_digest(text: str, start: int) -> bool:
 def _looks_like_path(value: str, text: str = "", start: int = 0, end: int = 0) -> bool:
     """A lowercase slug, a relative path, a UUID or a file name reads as high entropy but is structure."""
     if _UUID_RE.fullmatch(value):
+        return True
+    if _CAMEL_CASE_RE.fullmatch(value) and _is_wordlike(value):
+        # `TestBucketsHardDeletionOnProjectHardDeletion` is an identifier, not a key: a key mixes
+        # digits into its segments.
         return True
     if text:
         # The match may be one segment of a longer file name: look at the token around it.
