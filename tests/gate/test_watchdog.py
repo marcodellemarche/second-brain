@@ -266,3 +266,127 @@ def test_health_endpoint_404_for_other_paths(health) -> None:
     _, _, server = health
     status, _ = server.get("/check")
     assert status == 404
+
+
+# --- the Hermes start time is read again on every tick ----------------------------------------
+
+
+class StartSource:
+    """What `docker_started_at` answers, with a knob for the "not running" and "boom" cases."""
+
+    def __init__(self, started_at: float | None) -> None:
+        self.started_at = started_at
+        self.raises = False
+        self.calls = 0
+
+    def __call__(self) -> float | None:
+        self.calls += 1
+        if self.raises:
+            raise OSError("the docker socket went away")
+        return self.started_at
+
+
+def _watchdog_from_source(
+    path: Path, *, now: float, source: StartSource, stop: FakeStop | None = None
+) -> Watchdog:
+    return Watchdog(
+        path,
+        max_age=MAX_AGE,
+        stop_action=stop or FakeStop(),
+        grace=GRACE,
+        clock=FakeClock(now),
+        started_at_source=source,
+    )
+
+
+def test_the_grace_counts_from_the_hermes_start_not_the_watchdog_start(tmp_path: Path) -> None:
+    stop = FakeStop()
+    path = _beat(tmp_path / "heartbeat.json", 1010.0)
+    # Hermes started 10s ago while the watchdog has been up for 100s: nothing to stop yet.
+    source = StartSource(1090.0)
+    watchdog = _watchdog_from_source(path, now=1100.0, source=source, stop=stop)
+    assert watchdog.tick() is False
+    assert stop.calls == 0
+
+    source.started_at = 1000.0
+    assert watchdog.tick(now=1000.0 + GRACE + 1) is False
+    assert stop.calls == 1
+
+
+def test_nothing_is_stopped_while_hermes_is_not_running(tmp_path: Path) -> None:
+    stop = FakeStop()
+    source = StartSource(None)
+    watchdog = _watchdog_from_source(tmp_path / "heartbeat.json", now=1070.0, source=source, stop=stop)
+    assert watchdog.tick() is False
+    assert watchdog.tick() is False
+    assert stop.calls == 0
+    assert watchdog.stopped is False
+
+
+def test_a_new_hermes_start_re_arms_the_stop(tmp_path: Path) -> None:
+    stop = FakeStop()
+    path = _beat(tmp_path / "heartbeat.json", 1000.0)
+    source = StartSource(1000.0)
+    watchdog = _watchdog_from_source(path, now=1070.0, source=source, stop=stop)
+    assert watchdog.tick() is False
+    assert stop.calls == 1
+
+    # Someone restarted Hermes by hand: the stale heartbeat is past the new grace, stop it again.
+    source.started_at = 1100.0
+    watchdog.clock = FakeClock(1170.0)
+    assert watchdog.tick() is False
+    assert stop.calls == 2
+    assert watchdog.started_at == 1100.0
+
+
+def test_a_new_start_time_inside_the_grace_does_not_stop(tmp_path: Path) -> None:
+    stop = FakeStop()
+    source = StartSource(1000.0)
+    watchdog = _watchdog_from_source(tmp_path / "heartbeat.json", now=1070.0, source=source, stop=stop)
+    watchdog.tick()
+    assert stop.calls == 1
+
+    source.started_at = 1110.0
+    watchdog.clock = FakeClock(1120.0)
+    assert watchdog.tick() is False
+    assert stop.calls == 1
+    assert watchdog.stopped is False
+
+
+def test_a_failing_source_keeps_the_last_start_time(tmp_path: Path) -> None:
+    stop = FakeStop()
+    path = _beat(tmp_path / "heartbeat.json", 1000.0)
+    source = StartSource(1000.0)
+    watchdog = _watchdog_from_source(path, now=1010.0, source=source, stop=stop)
+    assert watchdog.tick() is True
+
+    source.raises = True
+    watchdog.clock = FakeClock(1070.0)
+    assert watchdog.tick() is False
+    assert watchdog.started_at == 1000.0
+    assert stop.calls == 1
+
+
+def test_a_failing_source_after_hermes_stopped_does_not_re_arm(tmp_path: Path) -> None:
+    stop = FakeStop()
+    source = StartSource(None)
+    watchdog = _watchdog_from_source(tmp_path / "heartbeat.json", now=1070.0, source=source, stop=stop)
+    watchdog.tick()
+    source.raises = True
+    watchdog.tick()
+    assert stop.calls == 0
+
+
+def test_stop_ends_run(tmp_path: Path) -> None:
+    watchdog = Watchdog(
+        tmp_path / "heartbeat.json",
+        max_age=MAX_AGE,
+        stop_action=FakeStop(),
+        grace=GRACE,
+        started_at_source=StartSource(None),
+    )
+    thread = threading.Thread(target=watchdog.run, kwargs={"interval": 0.01}, daemon=True)
+    thread.start()
+    watchdog.stop()
+    thread.join(timeout=5)
+    assert not thread.is_alive()

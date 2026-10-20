@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import signal
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -274,6 +275,11 @@ def main() -> None:  # pragma: no cover - process entry point
         importer=None,
     )
     log.info("job runner on %s, %d kind(s)", section.jobs.store_path, len(routes))
+
+    def _stop(*_args: object) -> None:
+        runner.stop()
+
+    signal.signal(signal.SIGTERM, _stop)
     runner.run_forever()
 
 

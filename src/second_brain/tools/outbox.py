@@ -179,9 +179,11 @@ class OutboxReceiver:
     """Verify one Hermes outbound delivery and keep the ones that are a research result.
 
     The signature is checked first and with the secret read on every request, so a rotated secret
-    needs no restart. Everything that is not the finished turn of a research route is refused: the
-    endpoint is on the internal network and outside the MCP bearer token, so the signature is the
-    only thing that says a delivery comes from Hermes.
+    needs no restart. The outbound hook fires on every finished turn, so a correctly signed delivery
+    that is not a research result is normal and is answered with 200 `ignored`. A wrong event header
+    is a 403: that one says the hook is configured wrong. The endpoint is on the internal network and
+    outside the MCP bearer token, so the signature is the only thing that says a delivery comes from
+    Hermes.
     """
 
     def __init__(
@@ -225,7 +227,8 @@ class OutboxReceiver:
             return Receipt(400, "bad_json", f"the body is not JSON: {exc}")
         result = _read_result(payload, self._store, self._kinds)
         if isinstance(result, str):
-            return Receipt(403, "not_a_research_result", result)
+            log.debug("delivery ignored: %s", result)
+            return Receipt(200, "ignored", result)
         job, _reply, body_fields = result
         delivery = body_fields.get("delivery_id")
         name = (

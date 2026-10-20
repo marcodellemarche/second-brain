@@ -28,6 +28,7 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
+import signal
 import stat
 import subprocess
 import time
@@ -307,6 +308,11 @@ def main() -> None:  # pragma: no cover - process entry point
         poll_seconds=section.poll_seconds,
     )
     log.info("vault watcher on %s, route %s", watcher.root, section.route)
+
+    def _stop(*_args: object) -> None:
+        watcher.stop()
+
+    signal.signal(signal.SIGTERM, _stop)
     watcher.run_forever()
 
 

@@ -354,9 +354,23 @@ def test_send_is_required(watch_dir: Path) -> None:
         CallRouter(watch_dir, _config(), None)  # type: ignore[arg-type]
 
 
-def test_the_watch_dir_must_exist(tmp_path: Path, send: FakeSend) -> None:
+def test_a_missing_watch_dir_is_accepted_and_waited_for(tmp_path: Path, send: FakeSend) -> None:
+    router = CallRouter(tmp_path / "missing", _config(), send)
+    assert router.poll_once() == []
+    assert send.calls == []
+
+    folder = tmp_path / "missing"
+    folder.mkdir()
+    _note(folder / "call.md", f"participants: [a@{TEAM}, b@{TEAM}]\norganizer: a@{TEAM}\n")
+    assert [event["path"] for event in router.poll_once()] == ["call.md"]
+    assert [call["route"] for call in send.calls] == ["personal"]
+
+
+def test_a_path_that_is_not_a_directory_is_refused(tmp_path: Path, send: FakeSend) -> None:
+    file = tmp_path / "calls.md"
+    file.write_text("x\n", encoding="utf-8")
     with pytest.raises(ValueError):
-        CallRouter(tmp_path / "missing", _config(), send)
+        CallRouter(file, _config(), send)
 
 
 def test_a_useless_poll_interval_is_refused(watch_dir: Path, send: FakeSend) -> None:

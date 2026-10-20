@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import tempfile
 import time
 from collections.abc import Callable, Mapping
@@ -270,6 +271,11 @@ def main() -> None:  # pragma: no cover - process entry point
         poll_seconds=section.poll_seconds,
     )
     log.info("scheduler on %s, %d entr(ies)", section.schedule.timezone, len(section.schedule.entries))
+
+    def _stop(*_args: object) -> None:
+        scheduler.stop()
+
+    signal.signal(signal.SIGTERM, _stop)
     scheduler.run_forever()
 
 

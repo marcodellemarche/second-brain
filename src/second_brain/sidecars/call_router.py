@@ -24,6 +24,7 @@ The router only notices and sends: the note is not read beyond its frontmatter, 
 from __future__ import annotations
 
 import logging
+import signal
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -120,7 +121,10 @@ class Decision:
 
 
 class CallRouter:
-    """Poll the capture folder and tell the personal brain's ingest route about every new call."""
+    """Poll the capture folder and tell the personal brain's ingest route about every new call.
+
+    A missing capture folder is not an error: it is empty until it appears.
+    """
 
     def __init__(
         self,
@@ -137,8 +141,10 @@ class CallRouter:
         if poll_seconds <= 0:
             raise ValueError("poll_seconds must be positive")
         resolved = Path(watch_dir).resolve()
-        if not resolved.is_dir():
+        if resolved.exists() and not resolved.is_dir():
             raise ValueError(f"watch_dir is not a directory: {watch_dir}")
+        if not resolved.is_dir():
+            log.warning("capture folder %s does not exist yet, waiting for it", resolved)
         self._watch_dir = resolved
         self._config = config
         self._send = send
@@ -228,6 +234,8 @@ class CallRouter:
         self._stopped = True
 
     def _scan(self) -> dict[str, tuple[int, int]]:
+        if not self._watch_dir.is_dir():
+            return {}
         entries: dict[str, tuple[int, int]] = {}
         for candidate in sorted(self._watch_dir.rglob("*")):
             if not candidate.is_file() or candidate.is_symlink():
@@ -298,6 +306,11 @@ def main() -> None:  # pragma: no cover - process entry point
         poll_seconds=section.poll_seconds,
     )
     log.info("call router on %s, route %s", router.watch_dir, section.route)
+
+    def _stop(*_args: object) -> None:
+        router.stop()
+
+    signal.signal(signal.SIGTERM, _stop)
     router.run_forever()
 
 

@@ -257,20 +257,32 @@ def test_an_unreadable_secret_refuses_instead_of_accepting(
     [
         {"platform": "telegram"},
         {"event": "on_session_end"},
+        {"user_message": "What is the weather?"},
     ],
 )
-def test_a_delivery_from_a_route_that_is_not_research_is_refused(
+def test_a_signed_delivery_that_is_not_a_research_result_is_ignored(
     outbox_dir: Path, secret_file: Path, store: JobStore, overrides: dict[str, str]
 ) -> None:
+    """The outbound hook fires on every turn: a signed non-research delivery is normal, not an error."""
     job_id = _dispatched_job(store)
     body = _body(_delivery(job_id, **overrides))
     receipt = _receiver(outbox_dir, secret_file, store).handle(_signed(body), body)
-    assert receipt.status == 403
-    assert receipt.code == "not_a_research_result"
+    assert receipt.status == 200
+    assert receipt.code == "ignored"
+    assert receipt.message
     assert _stored(outbox_dir) == []
 
 
-def test_a_job_kind_without_the_web_is_refused(outbox_dir: Path, secret_file: Path, store: JobStore) -> None:
+def test_a_wrong_event_header_is_still_refused(outbox_dir: Path, secret_file: Path, store: JobStore) -> None:
+    job_id = _dispatched_job(store)
+    body = _body(_delivery(job_id))
+    headers = _signed(body) | {"X-Hermes-Event": "on_session_end"}
+    receipt = _receiver(outbox_dir, secret_file, store).handle(headers, body)
+    assert (receipt.status, receipt.code) == (403, "wrong_event")
+    assert _stored(outbox_dir) == []
+
+
+def test_a_job_kind_without_the_web_is_ignored(outbox_dir: Path, secret_file: Path, store: JobStore) -> None:
     job_id = store.enqueue(
         "develop_idea", JobPayload(title="An idea", question="Develop it."), "user-1", "s1"
     )
@@ -278,24 +290,27 @@ def test_a_job_kind_without_the_web_is_refused(outbox_dir: Path, secret_file: Pa
     store.dispatch(job_id)
     body = _body(_delivery(job_id))
     receipt = _receiver(outbox_dir, secret_file, store).handle(_signed(body), body)
-    assert receipt.status == 403
+    assert receipt.status == 200
     assert "not a research job" in receipt.message
+    assert _stored(outbox_dir) == []
 
 
-def test_a_delivery_for_an_unknown_job_is_refused(
+def test_a_delivery_for_an_unknown_job_is_ignored(
     outbox_dir: Path, secret_file: Path, store: JobStore
 ) -> None:
     body = _body(_delivery("0" * 32))
     receipt = _receiver(outbox_dir, secret_file, store).handle(_signed(body), body)
-    assert receipt.status == 403
+    assert receipt.status == 200
     assert "no job" in receipt.message
+    assert _stored(outbox_dir) == []
 
 
-def test_a_reply_that_is_not_ours_is_refused(outbox_dir: Path, secret_file: Path, store: JobStore) -> None:
+def test_a_reply_that_is_not_ours_is_ignored(outbox_dir: Path, secret_file: Path, store: JobStore) -> None:
     job_id = _dispatched_job(store)
     body = _body(_delivery(job_id, user_message="What is the weather?"))
     receipt = _receiver(outbox_dir, secret_file, store).handle(_signed(body), body)
-    assert receipt.status == 403
+    assert (receipt.status, receipt.code) == (200, "ignored")
+    assert _stored(outbox_dir) == []
 
 
 def test_the_job_id_is_read_from_the_first_line_of_the_prompt() -> None:
@@ -543,3 +558,17 @@ def test_the_outbox_is_not_behind_the_mcp_bearer_token(
 
 def test_a_receipt_reports_its_own_success() -> None:
     assert Receipt(202, "stored", "ok").status == 202
+
+
+def test_the_endpoint_answers_200_to_a_turn_that_is_not_a_research_result(
+    outbox_dir: Path, secret_file: Path, store: JobStore
+) -> None:
+    """Every finished turn reaches the hook, so the app must not see a failure for the normal ones."""
+    job_id = _dispatched_job(store)
+    sink = _Sink()
+    endpoint = OutboxEndpoint(sink, _receiver(outbox_dir, secret_file, store))
+    body = _body(_delivery(job_id, platform="telegram"))
+    status, answer = _call(endpoint, OUTBOX_PATH, body, _signed(body))
+    assert status == 200
+    assert answer["ok"] is True and answer["code"] == "ignored"
+    assert _stored(outbox_dir) == []

@@ -15,6 +15,7 @@ import http.server
 import json
 import logging
 import os
+import signal
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -314,6 +315,11 @@ def main() -> None:  # pragma: no cover - process entry point
         urllib.parse.urlsplit(config.upstream).netloc,
         config.health_url,
     )
+
+    def _stop(*_args: object) -> None:
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _stop)
     server.serve_forever()
 
 

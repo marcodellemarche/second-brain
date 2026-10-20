@@ -2,10 +2,12 @@
 
 The watchdog is the last line of defence: if the plugin is not loaded, the model must not be
 reachable. It answers `GET /ok` for the model gate (fail closed on any doubt) and, when the
-heartbeat stays stale past the grace period, stops the Hermes container once through the Docker
-socket API.
+heartbeat stays stale past the grace period, stops the Hermes container once per Hermes run through
+the Docker socket API.
 
-The heartbeat timestamp is compared against the container start time as well, so a file left over
+The start time of the container is read again on every tick, so the grace period counts from the
+Hermes start and not from the watchdog start, and a Hermes restarted without a working guard is
+stopped again. The heartbeat timestamp is compared against that start time too, so a file left over
 from a previous run cannot keep a guard-less Hermes alive.
 """
 
@@ -17,6 +19,7 @@ import json
 import logging
 import os
 import re
+import signal
 import socket
 import threading
 import time
@@ -129,6 +132,7 @@ class Watchdog:
         grace: float = DEFAULT_GRACE,
         clock: Callable[[], float] = time.time,
         started_at: float | None = None,
+        started_at_source: Callable[[], float | None] | None = None,
     ) -> None:
         self.heartbeat_path = Path(heartbeat_path)
         self.max_age = float(max_age)
@@ -136,7 +140,32 @@ class Watchdog:
         self.stop_action = stop_action
         self.clock = clock
         self.started_at = clock() if started_at is None else started_at
+        self.started_at_source = started_at_source
         self.stopped = False
+        self._stop_requested = False
+        self._running = True
+
+    def _refresh_start_time(self) -> bool:
+        """Read the container start time. False when Hermes is not running."""
+        if self.started_at_source is None:
+            return True
+        try:
+            started = self.started_at_source()
+        except Exception:
+            log.warning("cannot read the Hermes start time, keeping the last one", exc_info=True)
+            return self._running
+        running = started is not None
+        if running != self._running:
+            self._running = running
+            log.info("hermes is %s", "running" if running else "not running, nothing to stop")
+        if not running:
+            return False
+        if started != self.started_at:
+            if self.stopped:
+                log.info("hermes started again at %.0f, watching it again", started)
+            self.started_at = started
+            self.stopped = False
+        return True
 
     def _evaluate(self, now: float) -> tuple[bool, str]:
         if not is_fresh(self.heartbeat_path, self.max_age, now):
@@ -172,6 +201,8 @@ class Watchdog:
     def tick(self, now: float | None = None) -> bool:
         """One watchdog iteration. Returns True when the guard looks alive."""
         moment = self.clock() if now is None else now
+        if not self._refresh_start_time():
+            return False
         fresh, reason = self._evaluate(moment)
         if fresh:
             return True
@@ -189,10 +220,16 @@ class Watchdog:
         return False
 
     def run(self, interval: float = DEFAULT_INTERVAL) -> None:
-        """Check forever, calling the stop action once when the grace period has passed."""
-        while True:
+        """Check forever, calling the stop action once per Hermes run past the grace period."""
+        while not self._stop_requested:
             self.tick()
+            if self._stop_requested:
+                return
             time.sleep(interval)
+
+    def stop(self) -> None:
+        """End `run` at the next iteration, so the process can go away cleanly."""
+        self._stop_requested = True
 
 
 def _make_handler(
@@ -266,19 +303,19 @@ def main() -> None:  # pragma: no cover - process entry point
     interval = float(os.environ.get("WATCHDOG_INTERVAL", DEFAULT_INTERVAL))
     listen = os.environ.get("WATCHDOG_LISTEN", DEFAULT_HEALTH_LISTEN)
 
-    try:
-        started_at = docker_started_at(socket_path, container)
-    except (OSError, DockerError):
-        log.exception("cannot read the %s start time, using now", container)
-        started_at = None
-
     watchdog = Watchdog(
         heartbeat,
         max_age=max_age,
         stop_action=lambda: docker_stop(socket_path, container),
         grace=grace,
-        started_at=started_at,
+        started_at_source=lambda: docker_started_at(socket_path, container),
     )
+
+    def _stop(*_args: object) -> None:
+        watchdog.stop()
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _stop)
     serve_health(watchdog, listen)
     log.info("watchdog watching %s, health on %s", heartbeat, listen)
     watchdog.run(interval)
