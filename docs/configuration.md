@@ -32,6 +32,7 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `calls.capture_dir` | the inbox calls folder | Vault-relative folder the call router watches. |
 | `calls.team_domains` | `[]` | Email domains that make a call a team call. `sb check` refuses them in a `personal` brain, where there is nowhere to route them, and expects them in a `team` one, which is where those calls land. |
 | `calls.personal_markers` | `[]` | Strings in the event or the domain that keep a call personal. |
+| `policy` | empty | Copied into the guard config as it is: per-tool `autonomy` overrides and the run budget. It can only tighten what a tool declares, and a tool name the registry does not have is refused. |
 
 Every time in `schedule` is `HH:MM`, 24 hours, and is validated before anything is written.
 
@@ -212,9 +213,9 @@ A field whose name is one of `token`, `access_token`, `refresh_token`, `client_s
 - `admin_senders`: the sender ids that are the owner. `sb check` fails when this is not exactly the owner, or when the Hermes config allows anyone else.
 - `search_tools`: the tools counted as searches by the budget, default `web_search`, `search_files`, `session_search`.
 - `mcp_tools`: one entry per brain_tools tool, with `effect` (`read`, `internal`, `visible`, `external`), `autonomy` (`auto`, `notify`, `ask`, `never`) and the two taints `taints_untrusted` and `taints_private`. The table is exported from the tools registry, not written by hand.
-- `policy`: per-tool autonomy overrides and the run budget.
+- `policy`: per-tool autonomy overrides and the run budget, rendered from the `policy` section of the answers file. `sb init` refuses a tool name the registry does not have.
 
-The policy section looks like this:
+The `policy` section of the answers file looks like this:
 
 ```yaml
 policy:

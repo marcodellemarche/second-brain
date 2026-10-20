@@ -241,16 +241,21 @@ def git_init(root: Path) -> None:
 
 def guard_config(answers: Answers, registry: Registry) -> GuardConfig:
     """The guard config: the tool table exported from the registry, plus the vault paths."""
+    exported = export_guard_classes(registry)
+    for name in answers.policy.tools:
+        if name not in exported:
+            raise AnswersError(f"policy names an unknown tool: {name}")
     schema = vault_schema(answers.language)
     return GuardConfig(
         vault_root=str(VAULT_IN_CONTAINER),
         guard_dir="/guard",
         hermes_config_path="/etc/hermes/config.yaml",
+        policy=answers.policy,
         private_prefixes=(schema.folder("_brain"), schema.folder("documents")),
         untrusted_prefixes=(schema.folder("raw"),),
         shape=answers.shape,
         media_dir=str(answers.media_dir),
-        mcp_tools=export_guard_classes(registry),
+        mcp_tools=exported,
         admin_senders=(answers.owner_id,),
         language=answers.language,
     )

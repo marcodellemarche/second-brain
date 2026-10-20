@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from second_brain.core.policy import PolicyConfig
 from second_brain.core.schema import SchemaError, load_schema
 from second_brain.tools.archive import ArchiveConfig
 from second_brain.tools.config import _reject_secret_fields
@@ -377,6 +378,8 @@ class Answers(BaseModel):
         ge=0,
         description="gid of the group that owns the vault, when a second service writes it too.",
     )
+    # Per-tool autonomy overrides and the run budget, copied into the guard config as it is.
+    policy: PolicyConfig = Field(default_factory=PolicyConfig)
     schedule: ScheduleAnswers = Field(default_factory=ScheduleAnswers)
     calls: CallsAnswers = Field(default_factory=CallsAnswers)
     # A team brain takes candidates from another brain through a folder the owner moves them into.

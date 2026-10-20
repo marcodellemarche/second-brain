@@ -1259,3 +1259,41 @@ def test_a_skill_named_like_a_scheduled_task_is_refused(tmp_path: Path, answers_
 def test_a_skill_name_the_scheduler_cannot_use_is_refused(tmp_path: Path, answers_file: Path) -> None:
     with pytest.raises(AnswersError):
         _scheduled_answers(tmp_path, answers_file, {"skills": {"Bad Name": ["03:00"]}})
+
+
+# --- the policy section ----------------------------------------------------------------------
+
+
+def test_a_policy_section_reaches_the_guard_config(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(
+        tmp_path,
+        answers_file,
+        policy={"tools": {"weather": {"autonomy": "ask"}}, "max_steps": 12},
+    )
+    instance = tmp_path / "policy-instance"
+    init(answers, instance)
+
+    rendered = yaml.safe_load((instance / "config" / "brain-guard.yaml").read_text(encoding="utf-8"))
+    assert rendered["policy"]["tools"]["weather"]["autonomy"] == "ask"
+    assert rendered["policy"]["max_steps"] == 12
+    guard = GuardConfig.from_yaml(instance / "config" / "brain-guard.yaml")
+    assert guard.policy.tools["weather"].autonomy is Autonomy.ASK
+
+
+def test_an_answers_file_without_a_policy_renders_the_defaults(instance: Path) -> None:
+    rendered = yaml.safe_load((instance / "config" / "brain-guard.yaml").read_text(encoding="utf-8"))
+    assert rendered["policy"]["tools"] == {}
+    assert rendered["policy"]["max_steps"] == 25
+    assert GuardConfig.from_yaml(instance / "config" / "brain-guard.yaml").policy.max_steps == 25
+
+
+def test_a_policy_naming_an_unknown_tool_stops_init(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(
+        tmp_path,
+        answers_file,
+        policy={"tools": {"no_such_tool": {"autonomy": "ask"}}},
+    )
+    instance = tmp_path / "unknown-tool-instance"
+    with pytest.raises(AnswersError, match="unknown tool: no_such_tool"):
+        init(answers, instance)
+    assert not (instance / "config" / "brain-guard.yaml").exists()
