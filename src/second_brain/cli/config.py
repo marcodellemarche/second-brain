@@ -398,6 +398,9 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "brain_tools_outbox_url": "http://brain-tools:8765/outbox",
         "egress_proxy_url": "http://egress:3128",
         "owner_telegram_id": answers.owner_id,
+        # The owner's id on whichever platform this brain answers on: the webhook routes and the
+        # admin scopes are the same list whether that is Telegram or Slack.
+        "owner_id": answers.owner_id,
         "owner_slack_id": answers.owner_id,
         "slack_home_channel": answers.slack.home_channel if answers.slack is not None else "",
         "owner_name": answers.owner_name,
@@ -405,6 +408,8 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "language_code": answers.language,
         "languages": answers.languages,
         "channel": answers.channel,
+        # A template decides between the Telegram block and the Slack one with this flag.
+        "is_slack": answers.slack is not None,
         "deliver_platform": answers.channel.lower(),
         "example_note_path": f"{schema.folder('knowledge')}/example.md",
         "egress_hosts": egress_hosts(answers, registry),

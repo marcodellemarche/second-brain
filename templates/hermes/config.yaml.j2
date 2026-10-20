@@ -185,6 +185,27 @@ mcp_servers:
 platforms:
   api_server:
     enabled: false
+{% if is_slack %}
+  # A team brain answers on Slack over Socket Mode: no public URL, and the two tokens
+  # (SLACK_BOT_TOKEN xoxb-, SLACK_APP_TOKEN xapp-) are in the env, never in this file. The config is
+  # read-only, so the home channel is set here from the start. One session per person in a shared
+  # thread, or two colleagues in one thread would talk to the same conversation.
+  slack:
+    enabled: true
+    allow_from: ["{{ owner_slack_id }}"]
+    group_allow_from: ["{{ owner_slack_id }}"]
+    allow_admin_from: ["{{ owner_slack_id }}"]
+    group_allow_admin_from: ["{{ owner_slack_id }}"]
+    allowed_channels: ["{{ slack_home_channel }}"]
+    require_mention: true
+    unauthorized_dm_behavior: ignore
+    user_allowed_commands: []
+    group_user_allowed_commands: []
+    home_channel:
+      platform: slack
+      chat_id: "{{ slack_home_channel }}"
+      name: "{{ owner_name }}"
+{% else %}
   telegram:
     enabled: true
     # Long polling through the egress proxy: no public URL, no webhook.
@@ -208,6 +229,7 @@ platforms:
       platform: telegram
       chat_id: "{{ owner_telegram_id }}"
       name: "{{ owner_name }}"
+{% endif %}
   # Signed webhook routes for our sidecars. Each route has its own secret and its own toolsets:
   # `toolsets` per route is the only place a background run's reach is decided, and the model
   # cannot create or edit a route.
@@ -221,8 +243,8 @@ platforms:
       port: 8644
       max_body_bytes: 1048576
       # Webhook chats are not DMs, so the "group" scope keys are the ones that apply here.
-      allow_admin_from: ["{{ owner_telegram_id }}"]
-      group_allow_admin_from: ["{{ owner_telegram_id }}"]
+      allow_admin_from: ["{{ owner_id }}"]
+      group_allow_admin_from: ["{{ owner_id }}"]
       user_allowed_commands: []
       group_user_allowed_commands: []
       # The route's reply stays at the default `deliver: log`: a job writes its result note through
@@ -271,28 +293,17 @@ platforms:
           toolsets: [file, skills, brain]
           skills: [brief]
 
-# Slack Socket Mode, for a team brain. No public URL either: SLACK_BOT_TOKEN (xoxb-) and
-# SLACK_APP_TOKEN (xapp-) live in the env, and the home channel is set from the start because the
-# config is read-only. Add this block under the `platforms:` key above (do not repeat the key, or
-# the Telegram and webhook entries above are lost).
-#   slack:
-#     enabled: true
-#     allow_from: ["{{ owner_slack_id }}"]
-#     group_allow_from: ["{{ owner_slack_id }}"]
-#     allow_admin_from: ["{{ owner_slack_id }}"]
-#     group_allow_admin_from: ["{{ owner_slack_id }}"]
-#     allowed_channels: ["{{ slack_home_channel }}"]
-#     require_mention: true
-#     home_channel:
-#       platform: slack
-#       chat_id: "{{ slack_home_channel }}"
-#       name: "{{ owner_name }}"
-# One session per person in a shared thread is a top-level key, not a platform one:
-# thread_sessions_per_user: true
+{% if is_slack %}
+thread_sessions_per_user: true
+{% endif %}
 
 # The model does not delegate either: `delegation` is not in any list below, so a background run
 # is always a separate signed run with its own toolsets, never a child of the conversation. The
 # webhook default has no `web`: a route reaches the internet only when its own `toolsets` say so.
 platform_toolsets:
+{% if is_slack %}
+  slack: [file, web, memory, skills, todo, brain]
+{% else %}
   telegram: [file, web, memory, skills, todo, brain]
+{% endif %}
   webhook: [file, skills, brain]

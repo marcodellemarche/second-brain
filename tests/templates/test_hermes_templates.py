@@ -13,6 +13,8 @@ from typing import Any
 import pytest
 import yaml
 
+from second_brain.cli.render import render_text
+
 TEMPLATES = Path(__file__).resolve().parents[2] / "templates" / "hermes"
 
 OWNER_ID = "100000001"
@@ -29,6 +31,8 @@ VALUES: dict[str, str] = {
     "brain_tools_outbox_url": "http://brain-tools:8765/outbox",
     "egress_proxy_url": "http://egress:3128",
     "owner_telegram_id": OWNER_ID,
+    "owner_id": OWNER_ID,
+    "is_slack": False,
     "owner_slack_id": "U0000000001",
     "owner_name": "Sample Owner",
     "language": "Italian",
@@ -43,15 +47,12 @@ _PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*(\|\s*lower\s*)?\}\}")
 
 
 def render(template: Path, values: dict[str, str]) -> str:
-    """Substitute every `{{ name }}`; an unknown name fails the test instead of rendering empty."""
+    """Render with the real renderer, so the `{% if %}` and `{% for %}` blocks are the product's.
 
-    def replace(match: re.Match[str]) -> str:
-        name = match.group(1)
-        assert name in values, f"{template.name} uses an unknown placeholder {name!r}"
-        value = values[name]
-        return value.lower() if match.group(2) else value
-
-    return _PLACEHOLDER.sub(replace, template.read_text(encoding="utf-8"))
+    The renderer is the one `sb init` uses, so this file cannot disagree with it about what a
+    template means. An unknown placeholder raises, which is what the assertions below rely on.
+    """
+    return render_text(template.read_text(encoding="utf-8"), values, source=template.name)
 
 
 @pytest.fixture(scope="module")
@@ -248,8 +249,35 @@ def test_the_product_skills_come_from_the_read_only_mount(config: dict[str, Any]
     assert config["skills"]["external_dirs"] == []
 
 
-def test_slack_is_commented_out_for_a_team_brain(config: dict[str, Any]) -> None:
+def test_a_telegram_brain_has_no_slack_platform(config: dict[str, Any]) -> None:
     assert "slack" not in config["platforms"]
+    assert "telegram" in config["platforms"]
+
+
+def test_a_slack_brain_answers_on_slack_and_not_on_telegram() -> None:
+    values = dict(VALUES, channel="Slack", deliver_platform="slack", is_slack=True)
+    loaded = yaml.safe_load(render(TEMPLATES / "config.yaml.j2", values))
+    assert "telegram" not in loaded["platforms"]
+    slack = loaded["platforms"]["slack"]
+    assert slack["enabled"] is True
+    assert slack["home_channel"] == {
+        "platform": "slack",
+        "chat_id": VALUES["slack_home_channel"],
+        "name": VALUES["owner_name"],
+    }
+    # One session per person in a shared thread, and the webhook admin is the same owner.
+    assert loaded["thread_sessions_per_user"] is True
+    assert loaded["platform_toolsets"]["slack"][:2] == ["file", "web"]
+    assert "telegram" not in loaded["platform_toolsets"]
+    webhook = loaded["platforms"]["webhook"]["extra"]
+    assert webhook["allow_admin_from"] == [VALUES["owner_id"]]
+    assert webhook["group_allow_admin_from"] == [VALUES["owner_id"]]
+
+
+def test_a_telegram_brain_has_no_thread_sessions_key(config: dict[str, Any]) -> None:
+    # The key only means something on a platform with threads: on Telegram it would be noise.
+    assert "thread_sessions_per_user" not in config
+    assert config["platform_toolsets"]["telegram"][:2] == ["file", "web"]
 
 
 def test_soul_calls_other_content_data_and_forbids_python() -> None:
