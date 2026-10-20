@@ -26,8 +26,8 @@ ENV HF_HOME=/opt/models/hf
 # it once at install time into models/ so the image builds and runs offline.
 COPY models/ /opt/models/hf/
 
-# The Hermes config loads the core skills from here through skills.external_dirs.
-COPY skills /opt/second-brain/skills
+# Hermes checks TERMINAL_CWD inside its own container, although the shell runs in the terminal one.
+RUN mkdir -p /workspace
 
 # Hermes runs as uid 23001 and the guard volume takes its initial owner from this directory.
 RUN mkdir -p /guard && chown 23001:23001 /guard

@@ -15,6 +15,8 @@ cache deny all
 access_log /var/log/squid/access.log
 pid_filename none
 coredump_dir /tmp
+# Docker gives a container 10s to stop: squid's own default of 30s makes that a kill.
+shutdown_lifetime 3 seconds
 
 acl SSL_ports port 443
 acl CONNECT method CONNECT

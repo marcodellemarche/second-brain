@@ -7,12 +7,14 @@ directory is then created, refusing an existing one unless `--force`, and the va
 copied only into a directory that does not exist or is empty, whatever `--force` says.
 
 `--force` re-renders the config and the compose file. It never touches `secrets/`: rotating a live
-token or a model key is not something a re-render can decide.
+token or a model key is not something a re-render can decide. The product skills are copied on
+every run, `--force` or not: they are product code, and compose mounts them read-only.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,6 +52,9 @@ from second_brain.cli.secrets import (
 VAULT_GITIGNORE = ".gitkeep"
 OWNERS_SCRIPT = "owners.sh"
 OWNERS_MODE = 0o755
+SKILLS_DIR = "skills"
+SCAFFOLD_AUTHOR = "sb-init"
+SCAFFOLD_MESSAGE = "scaffold: vault created by sb init"
 BRAIN_UID = 23002
 HERMES_UID = 23001
 
@@ -99,6 +104,7 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
         _write(target, content)
         result.created.append(relative)
     os.chmod(instance / OWNERS_SCRIPT, OWNERS_MODE)
+    _copy_skills(instance, result)
 
     _ensure_host_dirs(answers)
     if not result.vault_skipped:
@@ -147,7 +153,54 @@ def _copy_vault(answers: Answers, result: InitResult) -> None:
     capture = answers.vault_dir / capture_dir(answers)
     capture.mkdir(parents=True, exist_ok=True)
     (capture / VAULT_GITIGNORE).write_text("", encoding="utf-8")
+    _commit_scaffold(answers.vault_dir)
     result.vault_created = True
+
+
+def _copy_skills(instance: Path, result: InitResult) -> None:
+    """Copy the product skills into the instance, overwriting whatever is there.
+
+    They are product code, not user data, so a rerun refreshes them: compose mounts the folder
+    read-only into Hermes, which is what keeps a skill write approved from the chat away from them.
+    """
+    source = TEMPLATES.parent / SKILLS_DIR
+    copied = 0
+    for path in sorted(source.rglob("*")):
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        relative = Path(SKILLS_DIR) / path.relative_to(source)
+        target = instance / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(path.read_bytes())
+        copied += 1
+    if copied:
+        result.created.append(f"{SKILLS_DIR}/")
+
+
+def _commit_scaffold(vault: Path) -> None:
+    """Commit the scaffold so the human-commit timer does not read it as the owner's edits.
+
+    The vault ops refuse to undo a commit the brain did not author, so this one is inert history.
+    """
+    subprocess.run(["git", "-C", str(vault), "add", "-A"], capture_output=True, text=True, check=False)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(vault),
+            "-c",
+            f"user.name={SCAFFOLD_AUTHOR}",
+            "-c",
+            f"user.email={SCAFFOLD_AUTHOR}@localhost",
+            "commit",
+            "-q",
+            "-m",
+            SCAFFOLD_MESSAGE,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _write(path: Path, content: str) -> None:

@@ -19,7 +19,7 @@ Rendered by `sb init` and mounted read-only. Each hardening key is here because 
 - `memory.write_approval: true` and `skills.write_approval: true` stage a memory or skill change for a human instead of applying it inline.
 - `skills.create_dir` points outside the vault: the vault is written only through brain_tools, which is the only writer with the secret scanner and the undo.
 - `skills.inline_shell: false` stops a `!` command snippet inside a skill from running before anyone reads it.
-- `skills.external_dirs: []` means no shared skills directory from outside the image, so the skill surface is exactly what we ship.
+- `skills.external_dirs: []` means no shared skills directory from outside the image: the product skills are mounted read-only at `/opt/data/skills/second-brain`, which is the one path Hermes scans, and a key set here would never be read.
 - `curator.enabled: false` and `auxiliary.background_review.enabled: false` turn off the two background agents that write with the parent's session id.
 - `auxiliary.title_generation.enabled: false` drops one more model call whose output nobody reads.
 - `auxiliary.compression.provider: main` keeps compaction on the same model as the conversation, so no second endpoint is involved.

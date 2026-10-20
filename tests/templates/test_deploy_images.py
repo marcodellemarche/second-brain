@@ -68,9 +68,17 @@ def test_hermes_image_installs_our_package_without_dependencies() -> None:
     assert "pip install --no-cache-dir firecrawl-anydoc" in text
 
 
-def test_hermes_image_ships_the_core_skills() -> None:
-    # The Hermes config loads them through skills.external_dirs.
-    assert "COPY skills /opt/second-brain/skills" in dockerfile("Dockerfile.hermes")
+def test_hermes_image_does_not_bake_the_skills() -> None:
+    # The skills are a read-only mount under /opt/data/skills/second-brain: a copy here would be a
+    # second, unread source.
+    text = dockerfile("Dockerfile.hermes")
+    assert "COPY skills" not in text
+    assert "/opt/second-brain/skills" not in text
+
+
+def test_hermes_image_creates_the_terminal_cwd_it_checks() -> None:
+    # Hermes looks at TERMINAL_CWD inside its own container, although the shell is elsewhere.
+    assert "mkdir -p /workspace" in dockerfile("Dockerfile.hermes")
 
 
 def test_hermes_image_creates_the_guard_dir_for_its_uid() -> None:
@@ -97,6 +105,8 @@ def test_terminal_image_is_key_only() -> None:
 
 def test_terminal_image_runs_sshd_as_the_agent_user() -> None:
     text = dockerfile("Dockerfile.terminal")
+    # The tmpfs mounts of /home/agent and the workspace carry this uid, so it is fixed here.
+    assert "--uid 1000" in text
     # Nothing to chown as root at runtime: the host key is made here and owned by agent.
     assert "ssh-keygen -t ed25519 -N '' -f /etc/ssh/agent_host_ed25519_key" in text
     assert "chown agent:agent /etc/ssh/agent_host_ed25519_key*" in text

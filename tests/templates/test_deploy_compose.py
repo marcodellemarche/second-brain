@@ -265,7 +265,28 @@ def test_the_terminal_sees_the_vault_and_only_the_public_key(services: dict[str,
     assert "./secrets/terminal_ssh_key.pub:/etc/ssh/authorized_keys/agent:ro" in mounts
     # The private key stays with Hermes.
     assert not [mount for mount in mounts if mount.endswith("terminal_ssh_key")]
-    assert services["terminal"]["tmpfs"] == ["/tmp", "/home/agent", VALUES["terminal_cwd"]]
+    assert services["terminal"]["tmpfs"] == [
+        "/tmp",
+        "/home/agent:uid=1000,gid=1000,mode=0700",
+        f"{VALUES['terminal_cwd']}:uid=1000,gid=1000,mode=0700",
+    ]
+
+
+def test_the_terminal_writable_paths_belong_to_the_agent_user(services: dict[str, Any]) -> None:
+    # The container is read-only and a tmpfs comes up root-owned, so agent could write nowhere.
+    for entry in services["terminal"]["tmpfs"]:
+        if ":" not in entry:
+            continue
+        path, _, options = entry.partition(":")
+        assert "uid=1000" in options, path
+        assert "gid=1000" in options, path
+
+
+def test_the_product_skills_are_mounted_read_only_under_the_hermes_home(services: dict[str, Any]) -> None:
+    # Hermes scans /opt/data/skills/<category>/<skill>, and a read-only mount is what keeps a skill
+    # write approved from the chat away from product code.
+    assert "./skills:/opt/data/skills/second-brain:ro" in _mounts(services["hermes"])
+    assert not [mount for mount in _mounts(services["hermes"]) if "/opt/second-brain" in mount]
 
 
 def test_the_terminal_healthcheck_does_not_need_nc(services: dict[str, Any]) -> None:
@@ -310,6 +331,11 @@ def test_squid_has_no_plain_http_and_no_cache(squid: str) -> None:
     assert "cache deny all" in squid
 
 
+def test_squid_shuts_down_inside_the_docker_timeout(squid: str) -> None:
+    # Its own default is 30s, and Docker kills the container after 10s.
+    assert "shutdown_lifetime 3 seconds" in squid
+
+
 def test_searxng_is_private_and_speaks_json() -> None:
     settings = yaml.safe_load(render(DEPLOY / "searxng" / "settings.yml.j2", VALUES))
     assert settings["server"]["public_instance"] is False
@@ -343,6 +369,8 @@ def test_the_scheduler_fires_the_scheduled_tasks(services: dict[str, Any]) -> No
     assert scheduler["secrets"] == ["webhook_schedule"]
     assert scheduler["mem_limit"] == "128m"
     assert scheduler["pids_limit"] == 64
+    # Its poll sleeps up to 30s, longer than the 10s Docker waits before a kill.
+    assert scheduler["stop_grace_period"] == "40s"
     # The task is a skill: the scheduler has no vault of its own to read.
     assert not [mount for mount in _mounts(scheduler) if "/vault" in mount]
 

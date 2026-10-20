@@ -80,8 +80,9 @@ memory:
 # written only through brain_tools.
 skills:
   inline_shell: false
-  # The product skills ship in the Hermes image, read-only.
-  external_dirs: [/opt/second-brain/skills]
+  # The product skills are not listed here: Hermes reads this key from its user config only, so
+  # they come from the read-only mount at /opt/data/skills/second-brain instead.
+  external_dirs: []
   write_approval: true
   create_dir: "{{ skills_dir }}"
 

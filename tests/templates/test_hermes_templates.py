@@ -237,8 +237,10 @@ def test_the_brain_mcp_server_takes_its_token_from_the_env(config: dict[str, Any
     assert brain["tools"] == {"prompts": False, "resources": False}
 
 
-def test_the_product_skills_load_from_the_image(config: dict[str, Any]) -> None:
-    assert config["skills"]["external_dirs"] == ["/opt/second-brain/skills"]
+def test_the_product_skills_come_from_the_read_only_mount(config: dict[str, Any]) -> None:
+    # Hermes reads external_dirs from its user config only, so a path here is never read: the
+    # skills are a read-only mount at /opt/data/skills/second-brain instead.
+    assert config["skills"]["external_dirs"] == []
 
 
 def test_slack_is_commented_out_for_a_team_brain(config: dict[str, Any]) -> None:

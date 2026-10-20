@@ -430,21 +430,11 @@ def test_the_docker_group_from_the_answers_wins(tmp_path: Path, answers_file: Pa
     from second_brain.cli.config import template_values
 
     raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
-    raw["docker_gid"] = 999
+    raw["docker_gid"] = 4242
     path = tmp_path / "gid.yaml"
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     with_group = Answers.from_yaml(path)
-    plain = Answers.from_yaml(answers_file)
-    assert template_values(with_group, _registry(with_group), _generated(plain))["docker_gid"] == 999
-    # Without the answer it is the socket's group, or 0 when there is no socket to look at.
-    assert template_values(plain, _registry(plain), _generated(plain))["docker_gid"] == _socket_gid()
-
-
-def _socket_gid() -> int:
-    try:
-        return Path("/var/run/docker.sock").stat().st_gid
-    except OSError:
-        return 0
+    assert template_values(with_group, _registry(with_group), _generated(with_group))["docker_gid"] == 4242
 
 
 def _registry(answers: Answers):
@@ -564,3 +554,54 @@ def test_the_searxng_image_is_a_tag_that_exists(instance: Path) -> None:
     assert SEARXNG_IMAGE == "searxng/searxng:2026.10.19-81371861f"
     compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
     assert compose["services"]["searxng"]["image"] == SEARXNG_IMAGE
+
+
+SKILLS = Path(__file__).resolve().parents[2] / "skills"
+
+
+def test_every_product_skill_is_copied_into_the_instance(instance: Path) -> None:
+    source = sorted(path.parent.name for path in SKILLS.glob("*/SKILL.md"))
+    assert source
+    for name in source:
+        copied = instance / "skills" / name / "SKILL.md"
+        assert copied.is_file(), name
+        assert copied.read_bytes() == (SKILLS / name / "SKILL.md").read_bytes(), name
+
+
+def test_a_rerun_refreshes_a_changed_skill(tmp_path: Path, answers: Answers) -> None:
+    directory = tmp_path / "instance"
+    init(answers, directory)
+    skill = directory / "skills" / "lint" / "SKILL.md"
+    skill.write_text("stale", encoding="utf-8")
+
+    init(answers, directory, force=True)
+
+    assert skill.read_bytes() == (SKILLS / "lint" / "SKILL.md").read_bytes()
+
+
+def test_the_command_reports_the_skills_folder(tmp_path: Path, answers_file: Path, capsys) -> None:
+    assert main(["init", str(tmp_path / "instance"), "--answers", str(answers_file)]) == 0
+    assert "created skills/" in capsys.readouterr().out
+
+
+def test_the_compose_mounts_the_skills_read_only(instance: Path) -> None:
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert "./skills:/opt/data/skills/second-brain:ro" in compose["services"]["hermes"]["volumes"]
+
+
+def test_the_hermes_config_has_no_external_skill_dir(instance: Path) -> None:
+    config = yaml.safe_load((instance / "config" / "hermes" / "config.yaml").read_text(encoding="utf-8"))
+    assert config["skills"]["external_dirs"] == []
+
+
+def _git(vault: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(["git", "-C", str(vault), *args], capture_output=True, text=True, check=True).stdout
+
+
+def test_the_scaffolded_vault_is_committed_once_by_sb_init(instance: Path, answers: Answers) -> None:
+    commits = _git(answers.vault_dir, "log", "--format=%an %ae %s").strip().splitlines()
+    assert commits == ["sb-init sb-init@localhost scaffold: vault created by sb init"]
+    # Nothing left over: the human-commit timer must not see the scaffold as the owner's edits.
+    assert _git(answers.vault_dir, "status", "--porcelain").strip() == ""

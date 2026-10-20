@@ -13,7 +13,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Key-only access: authorized_keys is mounted by the host operator, so there is no password to set.
-RUN useradd --create-home --shell /bin/bash agent \
+# The uid is fixed because the tmpfs mounts of /home/agent and the workspace are written as this
+# one, and a container running read-only cannot chown them afterwards.
+RUN useradd --uid 1000 --create-home --shell /bin/bash agent \
     && mkdir -p /run/sshd /etc/ssh/authorized_keys \
     && chown agent:agent /etc/ssh/authorized_keys
 
