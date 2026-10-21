@@ -187,3 +187,8 @@ def test_main_prints_each_offending_line(repo: Path, capsys: pytest.CaptureFixtu
 def test_main_reports_a_missing_repository(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["verify-repo", str(tmp_path)]) == 2
     assert "not a git repository" in capsys.readouterr().err
+
+
+def test_accented_and_emoji_names_inside_the_vault_pass(repo: Path) -> None:
+    _commit(repo, {"vault/daily/2026-10-19-lunedì.md": "x", "vault/call/🚲 💃🏻.md": "y"}, "notes", BRAIN)
+    assert verify_repo(repo) == []

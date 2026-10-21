@@ -55,4 +55,7 @@ def _inside(entry: str, prefix: str) -> bool:
 
 
 def _git(path: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", "-C", str(path), *args], capture_output=True, text=True, check=False)
+    # Unquoted paths: git otherwise escapes `lunedì.md` as `"luned\303\254.md"`, and a quoted
+    # path never starts with the prefix.
+    command = ["git", "-c", "core.quotePath=false", "-C", str(path), *args]
+    return subprocess.run(command, capture_output=True, text=True, check=False)
