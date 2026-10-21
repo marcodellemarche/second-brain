@@ -206,11 +206,16 @@ class CallRouter:
         for path in sorted(current):
             if self._seen.get(path) == current[path]:
                 continue
-            frontmatter = read_frontmatter(self._watch_dir / path)
-            route = self.route(frontmatter)
-            if self._deliver(path, route):
+            decision = self.decide(read_frontmatter(self._watch_dir / path))
+            payload = {
+                "kind": "call_arrived",
+                "path": path,
+                "route": decision.route,
+                "reason": decision.reason,
+            }
+            if self._deliver(payload):
                 self._seen[path] = current[path]
-                sent.append({"kind": "call_arrived", "path": path, "route": route})
+                sent.append(payload)
             else:
                 # Still unseen, so the next poll tries again: the note is not lost to one outage.
                 self._seen.pop(path, None)
@@ -250,8 +255,8 @@ class CallRouter:
             entries[candidate.relative_to(self._watch_dir).as_posix()] = (info.st_size, info.st_mtime_ns)
         return entries
 
-    def _deliver(self, path: str, route: Route) -> bool:
-        payload = {"kind": "call_arrived", "path": path, "route": route}
+    def _deliver(self, payload: dict[str, Any]) -> bool:
+        path, route = payload["path"], payload["route"]
         try:
             status = self._send(payload)
         except (WebhookError, OSError, ValueError) as exc:

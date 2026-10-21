@@ -179,6 +179,12 @@ def test_the_webhook_routes_exist_and_admin_is_the_owner(config: dict[str, Any])
         assert "{text}" not in route["prompt"]
 
 
+def test_the_ingest_route_shows_the_model_every_field_of_the_event(config: dict[str, Any]) -> None:
+    # The call router's route and reason are not fields of the other vault events, so only the
+    # raw body carries them without leaving a literal `{route}` in a mail or file event.
+    assert "{__raw__}" in config["platforms"]["webhook"]["extra"]["routes"]["ingest"]["prompt"]
+
+
 def test_research_routes_have_web_only(config: dict[str, Any]) -> None:
     routes = config["platforms"]["webhook"]["extra"]["routes"]
     research = routes["background-research"]["toolsets"]

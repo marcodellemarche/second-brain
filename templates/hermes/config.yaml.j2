@@ -250,13 +250,14 @@ platforms:
       # The route's reply stays at the default `deliver: log`: a job writes its result note through
       # brain_tools, so nothing is pushed to a chat from here. A route prompt is rendered from the
       # JSON body the sidecar signs (`{kind}` and `{path}` for vault events, `{title}` and
-      # `{question}` for a job, `{task}`, `{due}` and `{weekday}` for a scheduled task), so it never
-      # needs the whole payload.
+      # `{question}` for a job, `{task}`, `{due}` and `{weekday}` for a scheduled task). Hermes
+      # leaves a field the body lacks as a literal `{name}`, so the ingest route, shared by events
+      # with different fields, takes the whole small body with `{__raw__}` instead.
       routes:
         # Vault events: a note moved, a transcript landed, a call note to route. No web.
         ingest:
           secret: "${WEBHOOK_SECRET_INGEST}"
-          prompt: "{kind}: {path}"
+          prompt: "{kind}: {path}\n\n{__raw__}"
           toolsets: [file, skills, brain]
         # Job kinds. A research route sees the web and nothing else: no vault, no brain_tools,
         # so the question it was given is all it has. `no_mcp` is required, not decorative: a route

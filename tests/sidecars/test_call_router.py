@@ -249,14 +249,22 @@ def test_read_frontmatter_never_reads_the_body(tmp_path: Path) -> None:
     assert read_frontmatter(path) == {"organizer": f"ann@{TEAM}"}
 
 
+TEAM_EVENT = {
+    "kind": "call_arrived",
+    "path": "meeting.md",
+    "route": "team",
+    "reason": "3 people, all in team domains",
+}
+
+
 # --- polling --------------------------------------------------------------------------------
 
 
 def test_notes_waiting_at_startup_are_sent(watch_dir: Path, send: FakeSend) -> None:
     _note(watch_dir / "meeting.md", f"participants: [a@{TEAM}, b@{TEAM}, c@{TEAM}]\norganizer: a@{TEAM}\n")
     router = CallRouter(watch_dir, _config(), send, clock=ManualClock())
-    assert router.poll_once() == [{"kind": "call_arrived", "path": "meeting.md", "route": "team"}]
-    assert send.calls == [{"kind": "call_arrived", "path": "meeting.md", "route": "team"}]
+    assert router.poll_once() == [TEAM_EVENT]
+    assert send.calls == [TEAM_EVENT]
     assert router.poll_once() == []
     assert len(send.calls) == 1
 
@@ -265,16 +273,16 @@ def test_a_new_call_is_sent_with_its_route(watch_dir: Path, send: FakeSend) -> N
     router = CallRouter(watch_dir, _config(), send, clock=ManualClock())
     router.poll_once()
     _note(watch_dir / "meeting.md", f"participants: [a@{TEAM}, b@{TEAM}, c@{TEAM}]\norganizer: a@{TEAM}\n")
-    assert router.poll_once() == [{"kind": "call_arrived", "path": "meeting.md", "route": "team"}]
-    assert send.calls == [{"kind": "call_arrived", "path": "meeting.md", "route": "team"}]
+    assert router.poll_once() == [TEAM_EVENT]
+    assert send.calls == [TEAM_EVENT]
 
 
-def test_the_payload_carries_only_the_kind_the_path_and_the_route(watch_dir: Path, send: FakeSend) -> None:
+def test_the_payload_carries_the_route_and_its_reason(watch_dir: Path, send: FakeSend) -> None:
     router = CallRouter(watch_dir, _config(), send, clock=ManualClock())
     router.poll_once()
     _note(watch_dir / "meeting.md", f"participants: [a@{TEAM}, b@{TEAM}, c@{TEAM}]\norganizer: a@{TEAM}\n")
     router.poll_once()
-    assert sorted(send.calls[-1]) == ["kind", "path", "route"]
+    assert sorted(send.calls[-1]) == ["kind", "path", "reason", "route"]
 
 
 def test_a_call_in_a_subfolder_keeps_a_relative_path(watch_dir: Path, send: FakeSend) -> None:
@@ -325,7 +333,7 @@ def test_a_refused_call_is_sent_again_on_the_next_poll(watch_dir: Path, send: Fa
     _note(watch_dir / "call.md", f"participants: [a@{TEAM}, b@{TEAM}]\norganizer: a@{TEAM}\n")
     assert router.poll_once() == []
     send.status = 202
-    assert router.poll_once() == [{"kind": "call_arrived", "path": "call.md", "route": "personal"}]
+    assert [(event["path"], event["route"]) for event in router.poll_once()] == [("call.md", "personal")]
 
 
 def test_an_unreachable_hermes_does_not_raise(watch_dir: Path) -> None:
