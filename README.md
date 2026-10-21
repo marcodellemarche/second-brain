@@ -123,3 +123,7 @@ Every behaviour change comes with tests, and every security rule comes with a te
 ## Status
 
 Version 0.1.0. It runs every day for a personal brain and a team brain, but interfaces and file formats can still change between versions.
+
+## License
+
+[MIT](LICENSE).
