@@ -36,6 +36,7 @@ from second_brain.tools.outbox import (
     Receipt,
 )
 from second_brain.tools.registry import Registry
+from second_brain.tools.remote import RemoteError, VaultRemote
 from second_brain.tools.staging import StagingImporter
 from second_brain.tools.vault import Provenance, Vault, VaultError
 
@@ -45,6 +46,7 @@ INTEGRITY_VALUES: tuple[str, ...] = ("trusted", "untrusted")
 
 OUTBOX_IMPORT_SECONDS = 30.0
 STAGING_IMPORT_SECONDS = 60.0
+REMOTE_SYNC_SECONDS = 300.0
 
 ASGIApp = Callable[..., Awaitable[None]]
 
@@ -318,6 +320,8 @@ def main() -> None:
     if config.staging is not None:
         importer = config.staging.importer(vault, load_schema(vault.root))
         start_staging_timer(importer, config.staging.poll_seconds or STAGING_IMPORT_SECONDS)
+    if config.remote is not None:
+        start_remote_timer(config.remote.remote(vault), config.remote.poll_seconds or REMOTE_SYNC_SECONDS)
     log.info("brain_tools serving %d tools on %s:%d", len(registry.specs()), host, port)
     uvicorn.run(build_app(registry, token, outbox), host=host, port=port, log_level="info")
 
@@ -390,6 +394,43 @@ def start_staging_timer(importer: StagingImporter, seconds: float) -> threading.
             import_staging_once(importer)
 
     thread = threading.Thread(target=loop, name="brain_tools-staging-import", daemon=True)
+    thread.start()
+    return thread
+
+
+def sync_remote_once(remote: VaultRemote) -> str | None:
+    """One tick of the sync. A failure is logged, never raised: the server keeps serving."""
+    try:
+        result = remote.sync_once()
+    except RemoteError as exc:
+        log.error("could not sync the vault with the remote: %s", exc)
+        return None
+    except Exception:
+        log.exception("could not sync the vault with the remote")
+        return None
+    log.info(
+        "synced the vault with the remote: pushed %s, pulled %d, conflicts %d, refused %d",
+        (result.pushed or "nothing")[:12],
+        len(result.pulled),
+        len(result.conflicts),
+        len(result.refused),
+    )
+    for path in result.conflicts:
+        log.warning("not pulled, both sides changed it: %s", path)
+    for path in result.refused:
+        log.warning("not pulled, the vault refused it: %s", path)
+    return result.pushed
+
+
+def start_remote_timer(remote: VaultRemote, seconds: float) -> threading.Thread:
+    """Publish the vault and bring the team's changes back, in the background."""
+
+    def loop() -> None:
+        while True:
+            time.sleep(seconds)
+            sync_remote_once(remote)
+
+    thread = threading.Thread(target=loop, name="brain_tools-remote-sync", daemon=True)
     thread.start()
     return thread
 

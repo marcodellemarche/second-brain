@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
 from second_brain.tools.vault import Provenance, Vault, VaultError
 
 # A push the remote refuses because it moved on is normal: the next sync starts again from the
@@ -74,6 +76,40 @@ def _detail(result: subprocess.CompletedProcess[str]) -> str:
         if stripped.startswith("CONFLICT"):
             return stripped
     return result.stderr.strip() or result.stdout.strip() or "no output"
+
+
+class RemoteConfig(BaseModel):
+    """The repo the vault is published into: the token is a file, and the clone lives under /data."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    url: str = Field(min_length=1)
+    branch: str = Field(default="main", min_length=1)
+    prefix: str = Field(default="vault", min_length=1)
+    pull: bool = False
+    token_file: Path
+    workdir: Path = Field(default=Path("/data/remote"))
+    state_file: Path = Field(default=Path("/data/remote.json"))
+    poll_seconds: float = Field(default=300, gt=0)
+
+    @field_validator("url")
+    @classmethod
+    def _https(cls, value: str) -> str:
+        if not value.startswith("https://") or len(value) == len("https://"):
+            raise ValueError(f"the remote URL must be https, got {value!r}")
+        return value
+
+    def remote(self, vault: Vault) -> VaultRemote:
+        return VaultRemote(
+            vault,
+            self.workdir,
+            self.url,
+            self.token_file,
+            branch=self.branch,
+            prefix=self.prefix,
+            pull=self.pull,
+            state_file=self.state_file,
+        )
 
 
 class VaultRemote:

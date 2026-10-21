@@ -15,6 +15,7 @@ import pytest
 from second_brain.tools.core_vault import vault_tools
 from second_brain.tools.outbox import ImportResult
 from second_brain.tools.registry import Registry
+from second_brain.tools.remote import RemoteError, SyncResult
 from second_brain.tools.server import (
     BearerAuth,
     build_server,
@@ -23,6 +24,8 @@ from second_brain.tools.server import (
     import_outbox_once,
     start_human_commit_timer,
     start_outbox_timer,
+    start_remote_timer,
+    sync_remote_once,
     tool_callable,
 )
 from second_brain.tools.vault import Vault, VaultConfig
@@ -348,3 +351,69 @@ def test_the_outbox_timer_is_a_daemon_thread_with_its_own_name() -> None:
     assert thread.daemon is True
     assert thread.name == "brain_tools-outbox-import"
     assert thread.is_alive() is True
+
+
+class _FakeRemote:
+    def __init__(self, result: Any = None, error: Exception | None = None) -> None:
+        self._result = result or SyncResult(pushed=None, pulled=[], conflicts=[], refused=[])
+        self._error = error
+        self.syncs = 0
+
+    def sync_once(self) -> SyncResult:
+        self.syncs += 1
+        if self._error is not None:
+            raise self._error
+        return self._result
+
+
+def test_sync_remote_once_reports_what_it_pushed() -> None:
+    remote = _FakeRemote(
+        SyncResult(
+            pushed="a" * 40,
+            pulled=["notes/one.md"],
+            conflicts=["notes/two.md"],
+            refused=["notes/three.md: not_found"],
+        )
+    )
+
+    assert sync_remote_once(remote) == "a" * 40  # type: ignore[arg-type]
+    assert remote.syncs == 1
+
+
+def test_sync_remote_once_survives_a_remote_error() -> None:
+    remote = _FakeRemote(error=RemoteError("git push failed: rejected"))
+
+    assert sync_remote_once(remote) is None  # type: ignore[arg-type]
+    assert remote.syncs == 1
+
+
+def test_sync_remote_once_survives_any_other_error() -> None:
+    remote = _FakeRemote(error=RuntimeError("the clone is on fire"))
+
+    assert sync_remote_once(remote) is None  # type: ignore[arg-type]
+    assert remote.syncs == 1
+
+
+def test_the_remote_timer_calls_one_sync_per_tick() -> None:
+    remote = _FakeRemote()
+
+    thread = start_remote_timer(remote, 0.01)  # type: ignore[arg-type]
+    deadline = time.monotonic() + 5
+    while remote.syncs < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert thread.daemon is True
+    assert thread.name == "brain_tools-remote-sync"
+    assert remote.syncs >= 2
+
+
+def test_the_remote_timer_keeps_going_after_a_remote_error() -> None:
+    remote = _FakeRemote(error=RemoteError("the token file is empty"))
+
+    thread = start_remote_timer(remote, 0.01)  # type: ignore[arg-type]
+    deadline = time.monotonic() + 5
+    while remote.syncs < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert thread.is_alive() is True
+    assert remote.syncs >= 2

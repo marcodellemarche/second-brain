@@ -29,6 +29,7 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `vault_group_gid` | none | gid of the group that owns the vault when another service writes it too (a Nextcloud data folder). Every brain service joins the group and notes are written group-writable. |
 | `stack_limits` | none | `slice` (a systemd slice name), `memory_mb`, `cpus`: a ceiling for the whole stack. Every service gets `cgroup_parent: <slice>`, and `sb init` writes `systemd/<slice>` for the operator to install in `/etc/systemd/system`, so the kernel enforces the total. |
 | `staging` | none | `host_dir`, an absolute host folder, and `poll_seconds` (`60`). Where the owner moves candidates from another brain: brain_tools imports each text note into the inbox as `type: capture` with `trust: untrusted`, refuses anything that looks like a secret, and moves the file to `done/` or `failed/`. Mounted read-write at `/staging`, only into brain-tools. |
+| `vault_remote` | none | `url`, an `https://` URL of a git repo, plus `branch` (`main`), `prefix` (`vault`), `pull` (`false`) and `poll_seconds` (`300`). brain_tools pushes the vault into `<prefix>/` of that branch every `poll_seconds`; with `pull: true` it also brings back what was merged there. It never pushes a file outside the prefix, so the code in the same repo is safe, and `secrets/vault_remote_token` should be scoped to that one repo. |
 | `schedule.digest` | `["08:00", "20:00"]` | Local times of the digest, one entry per time. |
 | `schedule.lint` | `"03:30"` | Local time of the nightly lint. |
 | `schedule.brief` | `["07:00", "13:00"]` | Local times of the brief before a call. |
@@ -204,6 +205,7 @@ No file in `secrets/` is written twice, not by a second `sb init` and not with `
 - `notify`: `store_path`, `initiative_path`, `default_daily`, `timezone`.
 - `outbox`: `dir`, `secret_file` and `research_followup_kind`, rendered only when there is a kind without web access.
 - `staging`: `dir` and `poll_seconds`, rendered only when the answers have a `staging` section.
+- `remote`: `url`, `branch`, `prefix`, `pull`, `token_file`, `workdir`, `state_file` and `poll_seconds`, rendered only when the answers have a `vault_remote` section. The clone lives under `/data`, so it survives a restart.
 
 A field whose name is one of `token`, `access_token`, `refresh_token`, `client_secret`, `secret`, `password`, `api_key` is refused anywhere in the file. The way to give a tool a secret is a `*_file` field pointing at the file under `/run/secrets`.
 

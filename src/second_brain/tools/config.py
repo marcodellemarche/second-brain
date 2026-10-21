@@ -34,6 +34,7 @@ from second_brain.tools.links import LinkConfig, link_tools
 from second_brain.tools.notify import NotifyConfig, notify_tools
 from second_brain.tools.outbox import OutboxConfig
 from second_brain.tools.registry import ExtensionError, ExtensionSettings, Registry, Tool
+from second_brain.tools.remote import RemoteConfig
 from second_brain.tools.staging import StagingConfig
 from second_brain.tools.vault import Vault, VaultConfig
 from second_brain.tools.weather import weather_tools
@@ -157,6 +158,8 @@ class ToolsConfig(BaseModel):
     outbox: OutboxConfig | None = None
     # The folder the owner moves candidates from another brain into. Absent, nothing is imported.
     staging: StagingConfig | None = None
+    # The repo the vault is published into, and what is merged there. Absent, nothing syncs.
+    remote: RemoteConfig | None = None
     # Entry point name to that instance package's settings. Free-form on purpose: the core does not
     # know what an instance tool needs, it only refuses a secret value in there.
     extensions: dict[str, dict[str, Any]] = Field(default_factory=dict)

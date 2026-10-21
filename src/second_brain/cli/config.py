@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from second_brain.cli.secrets import (
     OUTBOX_SECRET,
     SEARXNG_KEY,
     TOOLS_TOKEN,
+    VAULT_REMOTE_TOKEN,
     WEBHOOK_IDEA,
     WEBHOOK_INGEST,
     WEBHOOK_RESEARCH,
@@ -59,6 +61,7 @@ from second_brain.tools.export import export_guard_classes
 from second_brain.tools.jobs import JobKind
 from second_brain.tools.outbox import OutboxConfig
 from second_brain.tools.registry import Registry
+from second_brain.tools.remote import RemoteConfig
 from second_brain.tools.staging import StagingConfig
 from second_brain.tools.vault import VaultConfig
 
@@ -138,6 +141,22 @@ def staging_config(answers: Answers) -> StagingConfig | None:
     return StagingConfig(dir=STAGING_IN_CONTAINER, poll_seconds=answers.staging.poll_seconds)
 
 
+def remote_config(answers: Answers) -> RemoteConfig | None:
+    """The repo the vault is published into, or None when this brain has no remote."""
+    if answers.vault_remote is None:
+        return None
+    return RemoteConfig(
+        url=answers.vault_remote.url,
+        branch=answers.vault_remote.branch,
+        prefix=answers.vault_remote.prefix,
+        pull=answers.vault_remote.pull,
+        token_file=SECRETS_IN_CONTAINER / VAULT_REMOTE_TOKEN,
+        workdir=DATA_IN_CONTAINER / "remote",
+        state_file=DATA_IN_CONTAINER / "remote.json",
+        poll_seconds=answers.vault_remote.poll_seconds,
+    )
+
+
 def tools_config(answers: Answers) -> ToolsConfig:
     """The tools config this instance runs with. Secrets are paths, never values."""
     tools = answers.tools
@@ -177,6 +196,7 @@ def tools_config(answers: Answers) -> ToolsConfig:
         notify=answers.notify_config(DATA_IN_CONTAINER),
         outbox=outbox_config(answers),
         staging=staging_config(answers),
+        remote=remote_config(answers),
         extensions={**tools.extensions, **instance_sections(answers)},
     )
 
@@ -350,6 +370,11 @@ def egress_hosts(answers: Answers, registry: Registry) -> list[str]:
     # though no tool declares it: the sidecar is not a tool.
     if answers.tools.mail is not None:
         hosts.append(answers.tools.mail.imap_host)
+    # The sync reaches the git repo through the proxy, and git is not a tool that declares hosts.
+    if answers.vault_remote is not None:
+        remote_host = urllib.parse.urlparse(answers.vault_remote.url).hostname
+        if remote_host:
+            hosts.append(remote_host)
     for spec in registry.specs():
         hosts += list(spec.hosts)
     ordered: dict[str, None] = {}
@@ -440,7 +465,10 @@ def mail_rules_path(answers: Answers) -> Path | None:
 
 def optional_secrets(answers: Answers) -> list[str]:
     """The secret files that exist only when their tool group is on."""
-    return [CALENDAR_TOKEN] if answers.tools.calendar is not None else []
+    names = [CALENDAR_TOKEN] if answers.tools.calendar is not None else []
+    if answers.vault_remote is not None:
+        names.append(VAULT_REMOTE_TOKEN)
+    return names
 
 
 def all_secrets(answers: Answers, registry: Registry) -> list[str]:

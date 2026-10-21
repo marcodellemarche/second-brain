@@ -22,7 +22,7 @@ from second_brain.tools.config import (
     build_registry,
 )
 from second_brain.tools.registry import ExtensionError, ExtensionSettings, Tool
-from second_brain.tools.vault import Provenance
+from second_brain.tools.vault import Provenance, Vault, VaultConfig
 
 CALENDAR = {
     "assistant_calendar_id": "assistant-calendar@example.test",
@@ -610,3 +610,47 @@ def test_the_note_folders_are_the_zones_the_vault_has(tmp_path: Path) -> None:
     assert set(folders) <= set(schema.zones.values())
     for absent in ("systems", "incidents", "decisions", "runbooks"):
         assert absent not in folders
+
+
+def test_a_remote_section_builds_a_vault_remote(vault_root: Path, tmp_path: Path) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["remote"] = {
+        "url": "https://github.com/example/brain.git",
+        "branch": "main",
+        "prefix": "notes",
+        "pull": True,
+        "token_file": "/run/secrets/vault_remote_token",
+        "poll_seconds": 60,
+    }
+    config = ToolsConfig.from_yaml(_write(tmp_path, payload))
+
+    assert config.remote is not None
+    assert config.remote.url == "https://github.com/example/brain.git"
+    assert config.remote.prefix == "notes"
+    assert config.remote.pull is True
+    assert config.remote.poll_seconds == 60
+    remote = config.remote.remote(Vault(VaultConfig(root=vault_root)))
+    assert remote.prefix == "notes"
+
+
+def test_a_remote_section_defaults_to_the_data_volume(vault_root: Path, tmp_path: Path) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["remote"] = {
+        "url": "https://github.com/example/brain.git",
+        "token_file": "/run/secrets/vault_remote_token",
+    }
+    remote = ToolsConfig.from_yaml(_write(tmp_path, payload)).remote
+
+    assert remote is not None
+    assert (remote.branch, remote.prefix, remote.pull) == ("main", "vault", False)
+    assert remote.workdir == Path("/data/remote")
+    assert remote.state_file == Path("/data/remote.json")
+    assert remote.poll_seconds == 300
+
+
+def test_a_remote_url_that_is_not_https_is_refused(vault_root: Path, tmp_path: Path) -> None:
+    payload = _minimal(vault_root, tmp_path)
+    payload["remote"] = {"url": "http://example.test/brain.git", "token_file": "/run/secrets/token"}
+
+    with pytest.raises(ToolsConfigError, match="must be https"):
+        ToolsConfig.from_yaml(_write(tmp_path, payload))

@@ -46,6 +46,8 @@ CALENDAR_TOKEN = "calendar_token"
 # The Gmail app password and the address it belongs to: only the mail sidecar reads them.
 MAIL_USER = "mail_user"
 MAIL_APP_PASSWORD = "mail_app_password"
+# The token that pushes the vault into the remote repo: only brain-tools reads it.
+VAULT_REMOTE_TOKEN = "vault_remote_token"
 
 # The generated values, in the order the README lists them.
 GENERATED = (
@@ -79,6 +81,11 @@ EXTERNAL: tuple[tuple[str, str], ...] = (
         MAIL_APP_PASSWORD,
         "A Google app password for that address, not the account password. Create one at "
         "myaccount.google.com/apppasswords; revoke it there when it is no longer needed.",
+    ),
+    (
+        VAULT_REMOTE_TOKEN,
+        "A GitHub token that can push to the repo of `vault_remote.url`, contents read and write "
+        "on that repo only. Only brain-tools reads it.",
     ),
     (
         TERMINAL_SSH_KEY,
@@ -117,6 +124,7 @@ def plan(
     channel: str,
     calendar: bool,
     mail: bool = False,
+    vault_remote: bool = False,
     instance_credentials: Mapping[str, str] | None = None,
 ) -> SecretsPlan:
     """Every secret this instance needs. A Slack brain has no Telegram token and the other way round.
@@ -135,6 +143,8 @@ def plan(
         external.append(CALENDAR_TOKEN)
     if mail:
         external += [MAIL_USER, MAIL_APP_PASSWORD]
+    if vault_remote:
+        external.append(VAULT_REMOTE_TOKEN)
     instance_tools = dict(instance_credentials or {})
     # One file per name: two instance tools sharing a service share its key, a name that is
     # already a secret of this brain is that same file, and a generated one is already there.

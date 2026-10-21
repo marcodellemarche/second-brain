@@ -242,6 +242,31 @@ class StagingAnswers(BaseModel):
         return _absolute_path(value)
 
 
+class VaultRemoteAnswers(BaseModel):
+    """The repo the vault is published into: one folder of it, and the token in a secret file.
+
+    The vault stays the local git repository it is. brain_tools merges its commits into `<prefix>/`
+    of the branch, and with `pull: true` it also writes back what was merged there. Nothing outside
+    the prefix is ever touched, so the code that lives in the same repo is safe.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(description="https URL of the git repo the vault is published into.")
+    branch: str = Field(default="main", min_length=1)
+    prefix: str = Field(default="vault", min_length=1)
+    pull: bool = Field(default=False, description="Also write back what was merged under the prefix.")
+    poll_seconds: float = Field(default=300, gt=0, le=86400)
+
+    @field_validator("url")
+    @classmethod
+    def _https(cls, value: str) -> str:
+        text = value.strip()
+        if not text.startswith("https://") or len(text) == len("https://"):
+            raise ValueError(f"vault_remote.url must start with https://, got {value!r}")
+        return text
+
+
 class CallsAnswers(BaseModel):
     """Where the call notes land and who counts as the team in a call."""
 
@@ -401,6 +426,8 @@ class Answers(BaseModel):
     calls: CallsAnswers = Field(default_factory=CallsAnswers)
     # A team brain takes candidates from another brain through a folder the owner moves them into.
     staging: StagingAnswers | None = None
+    # The repo the vault is published into, and what is merged back from it.
+    vault_remote: VaultRemoteAnswers | None = None
 
     @field_validator("instance_skills_dir")
     @classmethod

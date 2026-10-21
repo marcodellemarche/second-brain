@@ -47,6 +47,7 @@ from second_brain.cli.secrets import (
     TERMINAL_SSH_KEY,
     TERMINAL_SSH_PUBKEY,
     TOOLS_TOKEN,
+    VAULT_REMOTE_TOKEN,
     WEBHOOK_IDEA,
     WEBHOOK_INGEST,
     WEBHOOK_RESEARCH,
@@ -103,6 +104,7 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
                 channel=answers.channel,
                 calendar=answers.tools.calendar is not None,
                 mail=answers.tools.mail is not None,
+                vault_remote=answers.vault_remote is not None,
                 instance_credentials=credentials,
             ),
         )
@@ -346,6 +348,8 @@ def _owners_script(answers: Answers, credentials: dict[str, str]) -> str:
     brain_secrets += [WEBHOOK_INGEST, WEBHOOK_RESEARCH, WEBHOOK_IDEA, WEBHOOK_SCHEDULE]
     if answers.tools.calendar is not None:
         brain_secrets.append(CALENDAR_TOKEN)
+    if answers.vault_remote is not None:
+        brain_secrets.append(VAULT_REMOTE_TOKEN)
     for name in credentials:
         if name not in brain_secrets:
             brain_secrets.append(name)

@@ -1326,3 +1326,67 @@ def test_without_stack_limits_nothing_is_put_under_a_slice(instance: Path) -> No
 def test_a_slice_name_that_is_not_a_slice_is_refused(tmp_path: Path, answers_file: Path) -> None:
     with pytest.raises(AnswersError, match="slice"):
         _answers_with(tmp_path, answers_file, stack_limits={**STACK_LIMITS, "slice": "brain-team"})
+
+
+def test_a_vault_remote_lands_in_the_tools_config(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(
+        tmp_path,
+        answers_file,
+        vault_remote={"url": "https://github.com/example/brain.git", "pull": True},
+    )
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    tools = yaml.safe_load((instance / "config/brain-tools.yaml").read_text(encoding="utf-8"))
+    assert tools["remote"]["url"] == "https://github.com/example/brain.git"
+    assert tools["remote"]["pull"] is True
+    assert tools["remote"]["token_file"] == "/run/secrets/vault_remote_token"
+    assert tools["remote"]["workdir"] == "/data/remote"
+    assert tools["remote"]["state_file"] == "/data/remote.json"
+
+
+def test_the_vault_remote_host_is_allowed_through_the_proxy(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(
+        tmp_path,
+        answers_file,
+        vault_remote={"url": "https://github.com/example/brain.git"},
+    )
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    squid = (instance / "config" / "squid.conf").read_text(encoding="utf-8")
+    assert "acl allowed_egress dstdomain github.com" in squid
+
+
+def test_the_vault_remote_token_is_listed_and_mounted(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(
+        tmp_path,
+        answers_file,
+        vault_remote={"url": "https://github.com/example/brain.git"},
+    )
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    assert (instance / "secrets" / "vault_remote_token").is_file()
+    readme = (instance / "secrets" / "README.md").read_text(encoding="utf-8")
+    assert "`vault_remote_token`" in readme
+    assert "contents read and write on that repo only" in readme
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert "vault_remote_token" in compose["services"]["brain-tools"]["secrets"]
+    owners = (instance / "owners.sh").read_text(encoding="utf-8")
+    assert 'chown 23002:23002 "secrets/vault_remote_token"' in owners
+
+
+def test_a_vault_remote_url_that_is_not_https_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError, match="https://"):
+        _answers_with(tmp_path, answers_file, vault_remote={"url": "http://github.com/example/brain.git"})
+
+
+def test_without_a_vault_remote_nothing_changes(instance: Path) -> None:
+    tools = yaml.safe_load((instance / "config/brain-tools.yaml").read_text(encoding="utf-8"))
+    assert "remote" not in tools
+    assert not (instance / "secrets" / "vault_remote_token").exists()
+    squid = (instance / "config" / "squid.conf").read_text(encoding="utf-8")
+    assert "github.com" not in squid
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert "vault_remote_token" not in compose["services"]["brain-tools"]["secrets"]
