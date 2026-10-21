@@ -155,6 +155,11 @@ class VaultRemote:
             head = self._rev(token, f"origin/{self._branch}")
             if last is not None and head is not None and last != head:
                 self._pull_remote(token, last, head, pulled, conflicts, refused)
+        if conflicts:
+            # The push writes the vault's own tree under the prefix, so it would erase the team's
+            # side of a conflict. Nothing moves until a person settles it, and the same commits are
+            # compared again on the next run.
+            return SyncResult(pushed=None, pulled=pulled, conflicts=conflicts, refused=refused)
         pushed = self._push(token, has_branch, conflicts)
         remote = pushed if pushed is not None else self._rev(token, f"origin/{self._branch}")
         self._write_state(remote)
@@ -421,34 +426,24 @@ class VaultRemote:
         return self._run(token, "cat-file", "-e", f"HEAD:{self._prefix}").returncode == 0
 
     def _merge_vault(self, token: str, conflicts: list[str]) -> bool:
-        """Merge the vault under the prefix. Returns False when the merge stopped on a conflict."""
+        """Put the vault's tree under the prefix. Returns False when git refused the merge.
+
+        Not a three-way merge: the pull already brought the team's changes into the vault, so the
+        vault is the version to publish. A delete in the vault moves the file into its trash, and a
+        three-way merge reads that as a rename that conflicts with the same file deleted upstream.
+        The `ours` merge keeps both histories, and `read-tree` replaces the prefix with the vault.
+        """
         message = f"Merge the vault into {self._prefix}/"
         if self._rev(token, "HEAD") is None:
             return self._merge_into_unborn(token, message, conflicts)
-        if not self._prefix_in_head(token):
-            result = self._run(
-                token,
-                "merge",
-                "-s",
-                "ours",
-                "--no-commit",
-                "--allow-unrelated-histories",
-                "FETCH_HEAD",
-            )
-            if result.returncode == 0:
-                result = self._run(token, "read-tree", "--prefix", f"{self._prefix}/", "-u", "FETCH_HEAD")
-            if result.returncode != 0:
-                self._stop_merge(token, result, conflicts)
-                return False
-            self._git(token, "commit", "--quiet", "-m", message)
-            return True
         result = self._run(
             token,
             "merge",
+            "-s",
+            "ours",
             "--no-commit",
             "--no-ff",
-            "-X",
-            f"subtree={self._prefix}",
+            "--allow-unrelated-histories",
             "FETCH_HEAD",
         )
         if result.returncode != 0:
@@ -456,6 +451,15 @@ class VaultRemote:
             return False
         if self._rev(token, "MERGE_HEAD") is None:
             return True
+        if self._prefix_in_head(token):
+            result = self._run(token, "rm", "-r", "-q", "--", f"{self._prefix}/")
+            if result.returncode != 0:
+                self._stop_merge(token, result, conflicts)
+                return False
+        result = self._run(token, "read-tree", "--prefix", f"{self._prefix}/", "-u", "FETCH_HEAD")
+        if result.returncode != 0:
+            self._stop_merge(token, result, conflicts)
+            return False
         self._git(token, "commit", "--quiet", "-m", message)
         return True
 

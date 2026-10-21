@@ -207,6 +207,27 @@ def test_pull_deletes_the_file_the_remote_deleted(
     assert (root / "notes/b.md").exists()
 
 
+def test_a_delete_pulled_from_the_remote_is_pushed_back_without_a_conflict(
+    vault: Vault, sync: VaultRemote, remote: Path, root: Path, token_file: Path
+) -> None:
+    # Long enough for git to see the trash move as a rename, the way a real note is.
+    vault.write(
+        "notes/a.md", "---\ntype: capture\n---\n\nA note long enough to look renamed.\n", _provenance()
+    )
+    sync.sync_once()
+    _colleague(remote, remote.parent / "code", "delete a", remove=["vault/notes/a.md"])
+    pulling = _sync(vault, root.parent, remote, token_file, pull=True)
+
+    first = pulling.sync_once()
+    second = pulling.sync_once()
+
+    assert first.pulled == ["notes/a.md"]
+    assert first.conflicts == []
+    assert first.pushed is not None
+    assert second.conflicts == []
+    assert second.pulled == []
+
+
 def test_a_file_changed_on_both_sides_is_a_conflict(
     vault: Vault, sync: VaultRemote, remote: Path, root: Path, token_file: Path
 ) -> None:
@@ -223,6 +244,34 @@ def test_a_file_changed_on_both_sides_is_a_conflict(
     assert result.pulled == []
     assert (root / "notes/a.md").read_text() == "hello brain\n"
     assert _git(remote, "show", "main:vault/notes/a.md") == "hello team"
+
+
+def test_a_conflict_blocks_the_push_until_it_is_settled(
+    vault: Vault, sync: VaultRemote, remote: Path, root: Path, token_file: Path
+) -> None:
+    vault.write("notes/a.md", "hello\n", _provenance())
+    sync.sync_once()
+    _colleague(
+        remote, remote.parent / "code", "edit from the team", write={"vault/notes/a.md": "hello team\n"}
+    )
+    vault.write("notes/a.md", "hello brain\n", _provenance())
+    vault.write("notes/b.md", "unrelated\n", _provenance())
+    pulling = _sync(vault, root.parent, remote, token_file, pull=True)
+
+    first = pulling.sync_once()
+    second = pulling.sync_once()
+
+    # Publishing now would put the brain's version over the team's: nothing moves, and the same
+    # conflict is found again on the next run instead of being forgotten.
+    assert first.pushed is None
+    assert second.conflicts == ["notes/a.md"]
+    assert _git(remote, "show", "main:vault/notes/a.md") == "hello team"
+
+    vault.write("notes/a.md", "hello team\n", _provenance())
+    settled = pulling.sync_once()
+    assert settled.conflicts == []
+    assert settled.pushed is not None
+    assert _git(remote, "show", "main:vault/notes/b.md") == "unrelated"
 
 
 def test_the_guard_refuses_a_merge_that_touches_the_code(
