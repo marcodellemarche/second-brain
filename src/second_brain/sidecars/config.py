@@ -18,7 +18,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from second_brain.sidecars.call_router import RouterConfig
+from second_brain.sidecars.call_router import DEFAULT_SETTLE_SECONDS, RouterConfig
 from second_brain.sidecars.scheduler import ScheduleConfig
 from second_brain.sidecars.webhook import SendEvent, sender_for
 from second_brain.tools.config import JobsConfig
@@ -69,6 +69,7 @@ class CallRouterSection(BaseModel):
     watch_dir: str = Field(min_length=1)
     rules: RouterConfig = Field(default_factory=RouterConfig)
     poll_seconds: float = Field(default=10, gt=0)
+    settle_seconds: float = Field(default=DEFAULT_SETTLE_SECONDS, ge=0)
 
     @field_validator("route")
     @classmethod

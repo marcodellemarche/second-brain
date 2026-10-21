@@ -94,7 +94,12 @@ TEAM3 = [f"ann@{TEAM}", f"bob@{TEAM}", f"cid@{TEAM}"]
 @pytest.mark.parametrize(
     ("case", "frontmatter", "expected"),
     [
-        ("a 1:1 with a colleague stays personal", _call(participants=TEAM3[:2]), "personal"),
+        ("a 1:1 with a colleague asks", _call(participants=TEAM3[:2]), "ask"),
+        (
+            "a 1:1 with someone outside stays personal",
+            _call(participants=[TEAM3[0], f"eve@{OTHER}"]),
+            "personal",
+        ),
         ("a call with one participant stays personal", _call(participants=TEAM3[:1]), "personal"),
         ("a call with nobody on it asks", _call(participants=[]), "ask"),
         ("a team meeting goes to the team", _call(), "team"),
@@ -306,7 +311,7 @@ def test_a_changed_note_is_sent_again(watch_dir: Path, send: FakeSend) -> None:
     router = CallRouter(watch_dir, _config(), send, clock=ManualClock())
     router.poll_once()
     path = watch_dir / "call.md"
-    _note(path, f"participants: [a@{TEAM}, b@{TEAM}]\norganizer: a@{TEAM}\n")
+    _note(path, f"participants: [a@{TEAM}, b@{OTHER}]\norganizer: a@{TEAM}\n")
     router.poll_once()
     _note(path, f"participants: [a@{TEAM}, b@{TEAM}, c@{TEAM}]\norganizer: a@{TEAM}\n")
     router.poll_once()
@@ -330,7 +335,7 @@ def test_a_refused_call_is_sent_again_on_the_next_poll(watch_dir: Path, send: Fa
     send.status = 503
     router = CallRouter(watch_dir, _config(), send, clock=ManualClock())
     router.poll_once()
-    _note(watch_dir / "call.md", f"participants: [a@{TEAM}, b@{TEAM}]\norganizer: a@{TEAM}\n")
+    _note(watch_dir / "call.md", f"participants: [a@{TEAM}, b@{OTHER}]\norganizer: a@{TEAM}\n")
     assert router.poll_once() == []
     send.status = 202
     assert [(event["path"], event["route"]) for event in router.poll_once()] == [("call.md", "personal")]
@@ -371,7 +376,7 @@ def test_a_missing_watch_dir_is_accepted_and_waited_for(tmp_path: Path, send: Fa
 
     folder = tmp_path / "missing"
     folder.mkdir()
-    _note(folder / "call.md", f"participants: [a@{TEAM}, b@{TEAM}]\norganizer: a@{TEAM}\n")
+    _note(folder / "call.md", f"participants: [a@{TEAM}, b@{OTHER}]\norganizer: a@{TEAM}\n")
     assert [event["path"] for event in router.poll_once()] == ["call.md"]
     assert [call["route"] for call in send.calls] == ["personal"]
 
@@ -404,7 +409,61 @@ def test_run_forever_polls_then_stops(watch_dir: Path, send: FakeSend) -> None:
     router = CallRouter(watch_dir, _config(), send, clock=time.time, poll_seconds=4.0)
     sleep = Stopper(2, router)
     router._sleep = sleep  # type: ignore[attr-defined]
-    _note(watch_dir / "call.md", f"participants: [a@{TEAM}, b@{TEAM}]\norganizer: a@{TEAM}\n")
+    _note(watch_dir / "call.md", f"participants: [a@{TEAM}, b@{OTHER}]\norganizer: a@{TEAM}\n")
     router.run_forever()
     assert [call["route"] for call in send.calls] == ["personal"]
     assert sleep.calls == [4.0, 4.0]
+
+
+@pytest.mark.parametrize(
+    ("case", "frontmatter", "expected"),
+    [
+        (
+            "a team marker makes a 1:1 with a colleague team work",
+            _call(participants=TEAM3[:2], event="DS9 design"),
+            "team",
+        ),
+        (
+            "a team marker needs everyone in the team",
+            _call(participants=[TEAM3[0], f"eve@{OTHER}"], event="DS9"),
+            "personal",
+        ),
+        (
+            "a team marker does not beat a personal one",
+            _call(participants=TEAM3[:2], event="DS9 doctor"),
+            "personal",
+        ),
+        (
+            "the emails win over the names",
+            _call(
+                participants=["Ann", "Bob", "Cid"],
+                participant_emails=TEAM3,
+                organizer="Ann",
+                organizer_email=TEAM3[0],
+            ),
+            "team",
+        ),
+        ("names without emails ask", _call(participants=["Ann", "Bob"], organizer="Ann"), "ask"),
+    ],
+)
+def test_the_team_markers_and_the_emails(
+    tmp_path: Path, case: str, frontmatter: dict[str, Any], expected: str
+) -> None:
+    router = _router(tmp_path, team_markers=["ds9"])
+    assert router.route(frontmatter) == expected, case
+
+
+def test_a_note_is_sent_only_once_it_settles(watch_dir: Path, send: FakeSend) -> None:
+    clock = ManualClock()
+    router = CallRouter(watch_dir, _config(), send, clock=clock, settle_seconds=30)
+    _note(watch_dir / "call.md", f"participants: [a@{TEAM}, b@{OTHER}]\n")
+    assert router.poll_once() == []
+    clock.advance(20)
+    _note(watch_dir / "call.md", f"participants: [a@{TEAM}, b@{OTHER}]\nevent: grew\n")
+    assert router.poll_once() == []
+    clock.advance(20)
+    assert router.poll_once() == []
+    clock.advance(15)
+    assert [event["path"] for event in router.poll_once()] == ["call.md"]
+    clock.advance(60)
+    assert router.poll_once() == []

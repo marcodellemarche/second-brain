@@ -35,6 +35,9 @@ VALUES: dict[str, Any] = {
     "searxng_image": "docker.io/searxng/searxng:2025.1.1",
     "model_upstream": "https://model.example.com/v1",
     "egress_hosts": HOSTS,
+    "egress_ips": [],
+    "has_egress_ips": False,
+    "egress_ports": [],
     "searxng_upstream_hosts": "duckduckgo.com wikipedia.org",
     "searxng_secret_key": "sample-secret-key-not-a-real-one",
     "docker_gid": 999,
@@ -564,3 +567,19 @@ def test_the_proxy_opens_imap_only_for_a_brain_with_mail() -> None:
     allowed = with_mail.index("http_access allow CONNECT allowed_egress")
     assert with_mail.index("acl SSL_ports port 993") < allowed
     assert with_mail.strip().endswith("http_access deny all")
+
+
+def test_the_proxy_opens_a_declared_port_and_matches_an_ip_by_address() -> None:
+    plain = render(DEPLOY / "squid.conf.j2", VALUES)
+    assert "port 6443" not in plain
+    assert "allowed_egress_ip" not in plain
+    squid = render(
+        DEPLOY / "squid.conf.j2",
+        {**VALUES, "egress_ports": [6443], "egress_ips": ["203.0.113.7"], "has_egress_ips": True},
+    )
+    assert "acl SSL_ports port 6443" in squid
+    assert "acl allowed_egress_ip dst 203.0.113.7" in squid
+    # Private ranges are still denied before either allow, and everything else after.
+    allow_ip = squid.index("http_access allow CONNECT allowed_egress_ip")
+    assert squid.index("http_access deny private_dst") < allow_ip
+    assert squid.strip().endswith("http_access deny all")

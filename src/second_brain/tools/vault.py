@@ -151,6 +151,17 @@ def _segments(path: str) -> list[str]:
     return [part for part in _PATH_SEPARATORS.split(path.strip()) if part not in ("", ".")]
 
 
+def is_empty_note(content: str) -> bool:
+    """Whether a note has nothing but frontmatter, headings and blank lines."""
+    lines = content.splitlines()
+    if lines and lines[0].strip() == "---":
+        closing = next((i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"), None)
+        if closing is None:
+            return False
+        lines = lines[closing + 1 :]
+    return all(not line.strip() or line.lstrip().startswith("#") for line in lines)
+
+
 def _parse_trailers(body: str) -> dict[str, str]:
     """Trailer lines sit at the end of the message body, so parsing stops at the first other line."""
     lines = [line for line in body.splitlines() if line.strip()]
@@ -280,6 +291,26 @@ class Vault:
             self._check_secrets(rel, content)
             self._atomic_write(target, content.encode("utf-8"))
             return self._commit(f"write: {rel}", provenance, [rel])
+
+    def fill(self, path: str, content: str, provenance: Provenance, expected_sha256: str) -> str:
+        """Complete a source note that landed with nothing but its frontmatter and title.
+
+        A source stays as it arrived, but an empty one carries no words to protect, and refusing
+        to complete it leaves the call without its transcript for good.
+        """
+        with self._lock:
+            held = self._commit_human_changes_locked().held_back
+            rel, target = self._resolve(path)
+            self._check_zone(rel, provenance)
+            self._check_held_back(rel, held)
+            if not target.is_file():
+                raise VaultError("not_found", f"{rel} does not exist")
+            if not is_empty_note(target.read_text(encoding="utf-8", errors="replace")):
+                raise VaultError("immutable", f"{rel} already has content and stays as it is")
+            self._check_concurrency(rel, target, expected_sha256)
+            self._check_secrets(rel, content)
+            self._atomic_write(target, content.encode("utf-8"))
+            return self._commit(f"fill: {rel}", provenance, [rel])
 
     def move(self, src: str, dst: str, provenance: Provenance) -> str:
         with self._lock:

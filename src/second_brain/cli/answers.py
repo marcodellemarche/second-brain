@@ -243,6 +243,24 @@ class StagingAnswers(BaseModel):
         return _absolute_path(value)
 
 
+class HandoffAnswers(BaseModel):
+    """The folder a call handed to the team brain is written into, on the personal brain's host.
+
+    The owner moves what lands there to the team brain's staging folder: `move_hint` is the command
+    the brain repeats to them after each hand-off. Absent, the brain has no team_handoff tool.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    host_dir: Path = Field(description="Host folder the handed-off calls are written into.")
+    move_hint: str = Field(default="", description="How the owner moves the folder to the team brain.")
+
+    @field_validator("host_dir")
+    @classmethod
+    def _absolute(cls, value: Path) -> Path:
+        return _absolute_path(value)
+
+
 class MemoryExportAnswers(BaseModel):
     """A copy of what the brain remembers, written into one vault page.
 
@@ -315,6 +333,8 @@ class CallsAnswers(BaseModel):
     )
     team_domains: list[str] = Field(default_factory=list)
     personal_markers: list[str] = Field(default_factory=list)
+    # Words in the event title that make a call among colleagues team work, a 1:1 included.
+    team_markers: list[str] = Field(default_factory=list)
 
     @field_validator("capture_dir")
     @classmethod
@@ -463,6 +483,8 @@ class Answers(BaseModel):
     calls: CallsAnswers = Field(default_factory=CallsAnswers)
     # A team brain takes candidates from another brain through a folder the owner moves them into.
     staging: StagingAnswers | None = None
+    # A personal brain hands team calls over through a folder the owner moves to the team brain.
+    handoff: HandoffAnswers | None = None
     # The repo the vault is published into, and what is merged back from it.
     vault_remote: VaultRemoteAnswers | None = None
     # A one-way copy of the memory the brain keeps for itself, so it has a history and can be read.

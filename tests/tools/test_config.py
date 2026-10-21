@@ -233,7 +233,7 @@ def test_empty_token_file_is_an_error(vault_root: Path, tmp_path: Path) -> None:
 # --- registry ------------------------------------------------------------------------------
 
 
-def test_minimal_registry_has_only_the_vault_tools(
+def test_minimal_registry_has_only_the_vault_and_call_tools(
     vault_root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = ToolsConfig.from_yaml(_write(tmp_path, _minimal(vault_root, tmp_path)))
@@ -244,6 +244,7 @@ def test_minimal_registry_has_only_the_vault_tools(
         "vault_move",
         "vault_delete",
         "vault_undo",
+        "call_transcript",
     }
 
 
@@ -258,6 +259,7 @@ def test_full_registry_has_every_group(
         "vault_move",
         "vault_delete",
         "vault_undo",
+        "call_transcript",
         "calendar_list",
         "calendar_create",
         "calendar_update",
@@ -287,6 +289,7 @@ def test_a_jobs_section_registers_one_tool_per_effect_class(
         "vault_move",
         "vault_delete",
         "vault_undo",
+        "call_transcript",
         "research_enqueue",
         "job_enqueue",
     }
@@ -370,6 +373,7 @@ def test_each_optional_section_is_independent(
         "vault_move",
         "vault_delete",
         "vault_undo",
+        "call_transcript",
         "nextcloud_link",
     }
 

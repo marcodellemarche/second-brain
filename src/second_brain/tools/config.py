@@ -28,6 +28,7 @@ from second_brain.tools.calendar import (
     ServiceAccountToken,
     calendar_tools,
 )
+from second_brain.tools.calls import HandoffConfig, call_tools
 from second_brain.tools.core_vault import vault_tools
 from second_brain.tools.jobs import JobKind, JobStore, job_tools
 from second_brain.tools.links import LinkConfig, link_tools
@@ -159,6 +160,8 @@ class ToolsConfig(BaseModel):
     outbox: OutboxConfig | None = None
     # The folder the owner moves candidates from another brain into. Absent, nothing is imported.
     staging: StagingConfig | None = None
+    # The folder a call handed to the team brain is written into. Absent, there is no team_handoff.
+    handoff: HandoffConfig | None = None
     # The repo the vault is published into, and what is merged there. Absent, nothing syncs.
     remote: RemoteConfig | None = None
     # A read-only copy of the brain's own memory, written to one vault page. Absent, no copy.
@@ -246,6 +249,8 @@ def build_registry(
     registry = Registry()
     vault = Vault(config.vault)
     for tool in vault_tools(vault):
+        registry.add(tool)
+    for tool in call_tools(vault, config.handoff):
         registry.add(tool)
     for tool in _optional_tools(config, calendar_backend):
         registry.add(tool)

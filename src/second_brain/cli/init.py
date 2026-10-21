@@ -401,10 +401,19 @@ def _owners_script(answers: Answers, credentials: dict[str, str]) -> str:
             "# The archive tool moves files in and out of here.",
             f"chown -R {BRAIN_UID}:{BRAIN_UID} '{answers.archive_dir}'",
         ]
+    if answers.handoff is not None:
+        lines += [
+            "",
+            "# team_handoff writes the calls for the team brain here; the owner moves them on.",
+            f"mkdir -p '{answers.handoff.host_dir}'",
+            f"chown -R {BRAIN_UID}:{BRAIN_UID} '{answers.handoff.host_dir}'",
+        ]
     # The vault and the archive are deliberately left out: they belong to the brain, and a blanket
     # `chown` over the instance directory would hand them back to the operator, which is exactly the
     # state git refuses to work in ("dubious ownership").
     keep_owned = ["secrets", answers.vault_dir.name, (answers.archive_dir or answers.vault_dir).name]
+    if answers.handoff is not None:
+        keep_owned.append(answers.handoff.host_dir.name)
     skip = " || ".join(f'[ "$entry" = "{name}" ]' for name in keep_owned)
     lines += [
         "",

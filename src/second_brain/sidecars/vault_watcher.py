@@ -11,7 +11,9 @@ What is never reported:
   `.trash`), plus the temporary files of a sync in progress (`.~*`, `*.part`);
 - a path the brain changed itself, recognised by a commit authored by `brain@localhost` in the last
   two polls, so the brain's own writes do not come back as a user edit;
-- a file whose content is not markdown, unless it is a sync conflict.
+- a file whose content is not markdown, unless it is a sync conflict;
+- anything under a folder another sidecar owns (`skip_dirs`): the call router reports the capture
+  folder of the calls itself, and a second event for the same note starts a second ingest run.
 
 A conflict copy (`*(conflicted copy*`, `*.sync-conflict-*`) is reported as soon as it appears: it is
 never ignored, because it is the one thing a human has to look at. A changed note waits until its
@@ -121,6 +123,7 @@ class VaultWatcher:
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
         recent_commits: RecentCommits | None = None,
+        skip_dirs: Iterable[str] = (),
     ) -> None:
         if send is None:
             raise ValueError("send is required")
@@ -133,6 +136,7 @@ class VaultWatcher:
             raise ValueError(f"root is not a directory: {root}")
         self._root = resolved
         self._ignore = tuple(DEFAULT_IGNORE if ignore is None else ignore)
+        self._skip_dirs = frozenset(part.strip("/") for part in skip_dirs if part.strip("/"))
         self._quiet_seconds = quiet_seconds
         self._send = send
         self._brain_email = brain_email
@@ -253,7 +257,12 @@ class VaultWatcher:
         """Size and mtime of every regular file worth watching. No content, no symlinks."""
         entries: dict[str, _Entry] = {}
         for dirpath, dirnames, filenames in os.walk(self._root, followlinks=False):
-            dirnames[:] = sorted(name for name in dirnames if not self._ignored(name))
+            parent = Path(dirpath).relative_to(self._root)
+            dirnames[:] = sorted(
+                name
+                for name in dirnames
+                if not self._ignored(name) and (parent / name).as_posix() not in self._skip_dirs
+            )
             for name in filenames:
                 full = Path(dirpath, name)
                 rel = full.relative_to(self._root).as_posix()
@@ -306,6 +315,7 @@ def main() -> None:  # pragma: no cover - process entry point
         send=config.sender(section.route),
         brain_email=section.brain_email,
         poll_seconds=section.poll_seconds,
+        skip_dirs=[config.call_router.watch_dir] if config.call_router is not None else [],
     )
     log.info("vault watcher on %s, route %s", watcher.root, section.route)
 

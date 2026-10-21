@@ -11,6 +11,7 @@ Paths in these files are the container's, never the host's: the vault is `/vault
 
 from __future__ import annotations
 
+import ipaddress
 import subprocess
 import tempfile
 import urllib.parse
@@ -49,6 +50,7 @@ from second_brain.sidecars.config import (
 )
 from second_brain.sidecars.scheduler import ScheduleConfig, ScheduleEntry
 from second_brain.sidecars.vault_watcher import DEFAULT_IGNORE
+from second_brain.tools.calls import HANDOFF_PATH, HandoffConfig
 from second_brain.tools.config import (
     CalendarToolsConfig,
     JobsConfig,
@@ -143,6 +145,13 @@ def staging_config(answers: Answers) -> StagingConfig | None:
     return StagingConfig(dir=STAGING_IN_CONTAINER, poll_seconds=answers.staging.poll_seconds)
 
 
+def handoff_config(answers: Answers) -> HandoffConfig | None:
+    """Where team calls are handed over, or None when this brain hands nothing over."""
+    if answers.handoff is None:
+        return None
+    return HandoffConfig(dir=Path(HANDOFF_PATH), move_hint=answers.handoff.move_hint)
+
+
 def remote_config(answers: Answers) -> RemoteConfig | None:
     """The repo the vault is published into, or None when this brain has no remote."""
     if answers.vault_remote is None:
@@ -210,6 +219,7 @@ def tools_config(answers: Answers) -> ToolsConfig:
         notify=answers.notify_config(DATA_IN_CONTAINER),
         outbox=outbox_config(answers),
         staging=staging_config(answers),
+        handoff=handoff_config(answers),
         remote=remote_config(answers),
         memory_export=memory_export_config(answers),
         extensions={**tools.extensions, **instance_sections(answers)},
@@ -340,6 +350,7 @@ def sidecars_config(answers: Answers) -> SidecarsConfig:
             rules=RouterConfig(
                 team_domains=calls.team_domains,
                 personal_markers=calls.personal_markers,
+                team_markers=calls.team_markers,
             ),
         ),
         job_runner=JobRunnerSection(jobs=jobs) if jobs is not None else None,
@@ -391,11 +402,38 @@ def egress_hosts(answers: Answers, registry: Registry) -> list[str]:
         if remote_host:
             hosts.append(remote_host)
     for spec in registry.specs():
-        hosts += list(spec.hosts)
+        hosts += [split_host(entry)[0] for entry in spec.hosts]
     ordered: dict[str, None] = {}
     for host in hosts:
         ordered.setdefault(host, None)
     return list(ordered)
+
+
+def split_host(entry: str) -> tuple[str, int]:
+    """A tool's host as `name` or `name:port`; the port is 443 when it is not given."""
+    host, sep, port = entry.rpartition(":")
+    if not sep or not port.isdigit():
+        return entry, 443
+    return host, int(port)
+
+
+def egress_ports(registry: Registry) -> list[int]:
+    """The ports other than 443 that a tool declared, opened for CONNECT next to 443."""
+    ports = {split_host(entry)[1] for spec in registry.specs() for entry in spec.hosts}
+    return sorted(port for port in ports if port != 443)
+
+
+def _is_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def split_egress(hosts: list[str]) -> tuple[list[str], list[str]]:
+    """Names for `dstdomain`, IP literals for `dst`: squid matches the two differently."""
+    return [host for host in hosts if not _is_ip(host)], [host for host in hosts if _is_ip(host)]
 
 
 def docker_gid(answers: Answers) -> int:
@@ -443,6 +481,8 @@ def brain_tools_extra_volumes(answers: Answers) -> list[str]:
     if answers.staging is not None:
         # Read-write: a file that was imported is moved to done/, a refused one to failed/.
         volumes.append(f"{answers.staging.host_dir}:{STAGING_IN_CONTAINER}")
+    if answers.handoff is not None:
+        volumes.append(f"{answers.handoff.host_dir}:{HANDOFF_PATH}")
     return volumes
 
 
@@ -562,7 +602,10 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "scheduled_skills": sorted(answers.schedule.skills),
         "deliver_platform": answers.channel.lower(),
         "example_note_path": f"{schema.folder('knowledge')}/example.md",
-        "egress_hosts": egress_hosts(answers, registry),
+        "egress_hosts": split_egress(egress_hosts(answers, registry))[0],
+        "egress_ips": split_egress(egress_hosts(answers, registry))[1],
+        "has_egress_ips": bool(split_egress(egress_hosts(answers, registry))[1]),
+        "egress_ports": egress_ports(registry),
         "searxng_upstream_hosts": " ".join(SEARXNG_UPSTREAM_HOSTS),
         "searxng_secret_key": generated[SEARXNG_KEY],
     }

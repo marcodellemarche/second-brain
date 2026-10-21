@@ -54,6 +54,7 @@ APPROVAL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "research_enqueue": ("question",),
     "archive_discard": ("path",),
     "notify": ("text",),
+    "team_handoff": ("path",),
 }
 # The card, in the language the owner reads. `other` is a tool with no argument worth naming.
 APPROVAL_TEXTS: dict[str, dict[str, str]] = {
@@ -69,6 +70,7 @@ APPROVAL_TEXTS: dict[str, dict[str, str]] = {
         "research_enqueue": "Ricerca in background su: {value}",
         "archive_discard": "Sposto nell'archivio degli scarti: {value}",
         "notify": "Messaggio che ti mando: {value}",
+        "team_handoff": "Passo al brain del team questa nota: {value}",
         "other": "Strumento {name}, con questi argomenti: {args}",
     },
     "en": {
@@ -83,6 +85,7 @@ APPROVAL_TEXTS: dict[str, dict[str, str]] = {
         "research_enqueue": "Background research on: {value}",
         "archive_discard": "Moving to the discard folder: {value}",
         "notify": "Message I will send you: {value}",
+        "team_handoff": "Handing this note over to the team brain: {value}",
         "other": "Tool {name}, with these arguments: {args}",
     },
 }

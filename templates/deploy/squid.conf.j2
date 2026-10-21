@@ -24,6 +24,10 @@ acl SSL_ports port 443
 # is still a CONNECT through this proxy, and `allowed_egress` still decides which host.
 acl SSL_ports port 993
 {% endif %}
+# A tool that declares `host:port` (a Kubernetes API on 6443) opens that port the same way.
+{% for port in egress_ports %}
+acl SSL_ports port {{ port }}
+{% endfor %}
 acl CONNECT method CONNECT
 # No plain HTTP at all: everything allowed here is an HTTPS endpoint.
 http_access deny !CONNECT
@@ -35,6 +39,12 @@ http_access deny CONNECT !SSL_ports
 acl allowed_egress dstdomain {{ host }}
 {% endfor %}
 acl allowed_egress dstdomain {{ searxng_upstream_hosts }}
+{% if has_egress_ips %}
+# A host given as an IP address is matched by address, which `dstdomain` does not do.
+{% endif %}
+{% for ip in egress_ips %}
+acl allowed_egress_ip dst {{ ip }}
+{% endfor %}
 
 # Package registries and OS mirrors, denied before the allowlist so a host that somehow ends up in
 # both is still refused. This is what stops the model from installing a package even with an
@@ -67,4 +77,7 @@ acl private_dst dst fe80::/10
 http_access deny package_registries
 http_access deny private_dst
 http_access allow CONNECT allowed_egress
+{% if has_egress_ips %}
+http_access allow CONNECT allowed_egress_ip
+{% endif %}
 http_access deny all

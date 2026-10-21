@@ -648,3 +648,19 @@ def test_run_forever_survives_a_failing_poll(
     watcher.run_forever()
     assert len(calls) == 2
     assert "poll failed" in caplog.text
+
+
+def test_the_folder_the_call_router_owns_is_never_reported(
+    root: Path, send: FakeSend, clock: ManualClock
+) -> None:
+    watcher = VaultWatcher(
+        root, quiet_seconds=QUIET, send=send, clock=clock, poll_seconds=5.0, skip_dirs=["inbox/calls/"]
+    )
+    _write(root / "inbox/calls/2026-10/call.md", "---\ndate: 2026-10-21\n---\n")
+    _write(root / "inbox/capture.md", "---\ntype: capture\n---\n")
+    watcher.poll_once()
+    clock.advance(QUIET)
+    assert watcher.poll_once() == [{"kind": "note_created", "path": "inbox/capture.md"}]
+    (root / "inbox/calls/2026-10/call.md").unlink()
+    clock.advance(QUIET)
+    assert watcher.poll_once() == []

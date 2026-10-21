@@ -80,7 +80,7 @@ A missing section is an empty mapping, so a package with no options needs nothin
 - `params`: a pydantic model, fully typed. No free-form passthrough to the remote service.
 - `effect`: `read`, `internal`, `visible` or `external`.
 - `autonomy`: `auto`, `notify`, `ask` or `never`.
-- `hosts`: the egress the tool needs. `sb init` adds them to the squid allowlist.
+- `hosts`: the egress the tool needs. `sb init` adds them to the squid allowlist. A host is a name or an IP address, with `:port` when it is not 443 (a Kubernetes API on 6443): the port is opened for CONNECT, and an IP address is matched by address.
 - `credentials`: names of secrets, resolved from files at runtime. Never values in config.
 - `taints_untrusted`: the result carries words written by someone else, such as mail, web pages or invite descriptions.
 - `taints_private`: the result carries private data.

@@ -9,14 +9,20 @@ The rules, in order:
 
 1. a personal marker in the event or the domain (`event`/`domain` contains one of the configured
    strings) makes the call personal, whatever the participants say;
-2. one or two participants are personal: a 1:1 is a conversation, not a meeting;
-3. every participant and the organizer in a team domain, and at least `team_min_participants`
-   people, make it a team call;
-4. everything else is `ask`, and the brain keeps it personal and asks the user in the digest.
+2. no participants at all is `ask`: the recorder matched no calendar event, so we know nothing;
+3. a participant known only by name is `ask`: a name carries no domain;
+4. one participant, or two with someone outside the team domains, is personal: a 1:1 is a
+   conversation;
+5. everyone in a team domain, and either a team marker in the event or at least
+   `team_min_participants` people (the organizer in a team domain too), make it a team call;
+6. everything else is `ask`, a 1:1 with a colleague included: it can be work or a personal talk,
+   and only the owner knows. The brain keeps it personal and asks in the digest.
 
-`participants` holds emails or names. A name carries no domain, so a call with a named participant
-can never satisfy rule 3: it ends in `ask`, which is the safe side. Missing fields are `ask` too,
-never an exception: no participants at all is not a 1:1, it is a note we know nothing about.
+The emails come from `participant_emails` and `organizer_email` when the recorder wrote them, and
+from `participants` and `organizer` otherwise.
+
+A note is sent once it has not changed for `settle_seconds`: the recorder writes it in more than
+one step, and every write would otherwise start an ingest run of its own.
 
 The router only notices and sends: the note is not read beyond its frontmatter, nothing is written.
 """
@@ -40,6 +46,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_POLL_SECONDS = 10.0
 DEFAULT_TEAM_MIN_PARTICIPANTS = 3
+DEFAULT_SETTLE_SECONDS = 30.0
 FRONTMATTER_OPEN = "---"
 
 Route = Literal["team", "personal", "ask"]
@@ -63,6 +70,10 @@ class RouterConfig(BaseModel):
         default_factory=list,
         description="Strings in the event or the domain that force a call to stay personal.",
     )
+    team_markers: list[str] = Field(
+        default_factory=list,
+        description="Strings in the event that make a call among colleagues team work, of any size.",
+    )
 
     @field_validator("team_domains")
     @classmethod
@@ -75,14 +86,14 @@ class RouterConfig(BaseModel):
             domains.append(domain)
         return domains
 
-    @field_validator("personal_markers")
+    @field_validator("personal_markers", "team_markers")
     @classmethod
     def _check_markers(cls, value: list[str]) -> list[str]:
         markers = []
         for item in value:
             marker = item.strip().casefold()
             if not marker:
-                raise ValueError("a personal marker must not be empty")
+                raise ValueError("a marker must not be empty")
             markers.append(marker)
         return markers
 
@@ -134,6 +145,7 @@ class CallRouter:
         send: SendEvent | None = None,
         *,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
+        settle_seconds: float = 0.0,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -152,7 +164,9 @@ class CallRouter:
         self._poll_seconds = poll_seconds
         self._clock = clock
         self._sleep = sleep
+        self._settle_seconds = settle_seconds
         self._seen: dict[str, tuple[int, int]] = {}
+        self._settling: dict[str, tuple[tuple[int, int], float]] = {}
         self._stopped = False
 
     @property
@@ -174,37 +188,53 @@ class CallRouter:
             if marker in text:
                 return Decision("personal", f"personal marker {marker!r}")
 
-        people = _participants(frontmatter.get("participants"))
+        people = _participants(frontmatter.get("participant_emails")) or _participants(
+            frontmatter.get("participants")
+        )
         if not people:
-            return Decision("ask", "no participants")
-        if len(people) <= 2:
-            return Decision("personal", f"{len(people)} participant(s): a 1:1 stays personal")
+            return Decision("ask", "no participants: the recorder matched no calendar event")
+        if len(people) == 1:
+            return Decision("personal", "one participant: nobody else was there")
+        domains = [_domain_of(person) for person in people]
+        names = [person for person, domain in zip(people, domains, strict=True) if domain is None]
+        if names:
+            return Decision("ask", f"only a name, not an email: {', '.join(names)}")
 
-        organizer = str(frontmatter.get("organizer") or "").strip()
+        team = self._config.team_domains
+        outside = sorted({domain for domain in domains if domain not in team})
+        if outside and len(people) <= 2:
+            return Decision("personal", f"a 1:1 with someone outside the team: {', '.join(outside)}")
+        if outside:
+            return Decision("ask", f"participants outside the team: {', '.join(outside)}")
+
+        event = str(frontmatter.get("event") or "").casefold()
+        marker = next((marker for marker in self._config.team_markers if marker in event), None)
+        if marker is not None:
+            return Decision("team", f"team marker {marker!r}, everyone in team domains")
+        if len(people) < self._config.team_min_participants:
+            if len(people) <= 2:
+                return Decision("ask", "a 1:1 with a colleague: work or personal?")
+            return Decision("ask", f"only {len(people)} participants")
+
+        organizer = str(frontmatter.get("organizer_email") or frontmatter.get("organizer") or "").strip()
         if not organizer:
             return Decision("ask", "the organizer is missing")
-        domains = [_domain_of(person) for person in people]
-        if any(domain is None for domain in domains):
-            return Decision("ask", "a participant is a name, not an email")
         organizer_domain = _domain_of(organizer)
         if organizer_domain is None:
             return Decision("ask", "the organizer is a name, not an email")
-        if organizer_domain not in self._config.team_domains:
+        if organizer_domain not in team:
             return Decision("ask", f"the organizer is not in a team domain: {organizer_domain}")
-
-        outside = sorted({domain for domain in domains if domain not in self._config.team_domains})
-        if outside:
-            return Decision("ask", f"participants outside the team: {', '.join(outside)}")
-        if len(people) < self._config.team_min_participants:
-            return Decision("ask", f"only {len(people)} participants")
         return Decision("team", f"{len(people)} people, all in team domains")
 
     def poll_once(self) -> list[dict[str, Any]]:
         """One pass over the capture folder. Returns the events Hermes accepted during it."""
         current = self._scan()
+        now = self._clock()
         sent: list[dict[str, Any]] = []
         for path in sorted(current):
             if self._seen.get(path) == current[path]:
+                continue
+            if not self._settled(path, current[path], now):
                 continue
             decision = self.decide(read_frontmatter(self._watch_dir / path))
             payload = {
@@ -221,7 +251,19 @@ class CallRouter:
                 self._seen.pop(path, None)
         for path in sorted(set(self._seen) - set(current)):
             self._seen.pop(path, None)
+        for path in sorted(set(self._settling) - set(current)):
+            self._settling.pop(path, None)
         return sent
+
+    def _settled(self, path: str, state: tuple[int, int], now: float) -> bool:
+        """Whether the note has kept the same size and mtime for `settle_seconds`."""
+        if self._settle_seconds <= 0:
+            return True
+        previous = self._settling.get(path)
+        if previous is None or previous[0] != state:
+            self._settling[path] = (state, now)
+            return False
+        return now - previous[1] >= self._settle_seconds
 
     def run_forever(self, poll_seconds: float | None = None) -> None:
         """Poll until stopped. A failing poll logs and the next one runs: the sidecar stays up."""
@@ -310,6 +352,7 @@ def main() -> None:  # pragma: no cover - process entry point
         section.rules,
         send=config.sender(section.route),
         poll_seconds=section.poll_seconds,
+        settle_seconds=section.settle_seconds,
     )
     log.info("call router on %s, route %s", router.watch_dir, section.route)
 
@@ -326,6 +369,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "DEFAULT_POLL_SECONDS",
+    "DEFAULT_SETTLE_SECONDS",
     "DEFAULT_TEAM_MIN_PARTICIPANTS",
     "CallRouter",
     "Decision",

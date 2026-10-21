@@ -185,6 +185,7 @@ def test_guard_config_has_every_enabled_tool(instance: Path) -> None:
         "vault_move",
         "vault_delete",
         "vault_undo",
+        "call_transcript",
         "calendar_list",
         "weather",
         "nextcloud_link",
@@ -223,6 +224,7 @@ def test_a_disabled_group_is_not_in_the_guard_table(tmp_path: Path, answers_file
         "vault_move",
         "vault_delete",
         "vault_undo",
+        "call_transcript",
     }
 
 
@@ -1497,3 +1499,21 @@ def test_without_a_memory_export_neither_the_page_nor_the_mount_exists(
     compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
     volumes = compose["services"]["brain-tools"]["volumes"]
     assert all("/hermes-memories" not in str(volume) for volume in volumes)
+
+
+def test_a_handoff_section_mounts_the_folder_and_adds_the_tool(tmp_path: Path, answers_file: Path) -> None:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["handoff"] = {"host_dir": str(tmp_path / "handoff"), "move_hint": "rsync it to the team host"}
+    path = tmp_path / "handoff.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    instance = tmp_path / "handoff-instance"
+    init(Answers.from_yaml(path), instance)
+    tools = ToolsConfig.from_yaml(instance / "config/brain-tools.yaml")
+    assert tools.handoff is not None
+    assert str(tools.handoff.dir) == "/handoff"
+    assert tools.handoff.move_hint == "rsync it to the team host"
+    guard = GuardConfig.from_yaml(instance / "config/brain-guard.yaml")
+    assert guard.mcp_tools["team_handoff"].autonomy == Autonomy.ASK
+    assert f"{tmp_path / 'handoff'}:/handoff" in (instance / "compose.yaml").read_text(encoding="utf-8")
+    owners = (instance / "owners.sh").read_text(encoding="utf-8")
+    assert f"chown -R 23002:23002 '{tmp_path / 'handoff'}'" in owners
