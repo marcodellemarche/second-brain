@@ -995,6 +995,7 @@ def test_a_team_vault_gets_the_four_shared_zones(tmp_path: Path, answers_file: P
     for zone in ("systems", "incidents", "decisions", "runbooks"):
         assert (Path(vault) / zone / "_TEMPLATE.md").is_file(), zone
     assert (Path(vault) / "_meta" / "CONTRIBUTING.md").is_file()
+    assert (Path(vault) / "_meta" / "team-preferences.md").is_file()
     # The team vault has no agent memory of its own and no personal documents.
     assert not (Path(vault) / "_brain").exists() or not any((Path(vault) / "_brain").iterdir())
 
@@ -1020,6 +1021,7 @@ def test_a_personal_vault_has_no_team_zones(tmp_path: Path, answers: Answers) ->
     init(answers, instance)
     for zone in ("systems", "incidents", "decisions", "runbooks"):
         assert not (answers.vault_dir / zone).exists(), zone
+    assert not (answers.vault_dir / "_meta" / "team-preferences.md").exists()
 
 
 def test_a_personal_vault_keeps_its_documents_folder(tmp_path: Path, answers: Answers) -> None:

@@ -21,7 +21,7 @@ This vault has no `_brain/`: agent memory belongs to a person, not to a team. It
 
 ## How a page gets here
 
-A page is a pull request, never a direct write. The contribution rules are in `_meta/CONTRIBUTING.md`: read them before the first change.
+A page is a pull request, never a direct write. The contribution rules are in `_meta/CONTRIBUTING.md`: read them before the first change. How the team wants the brain to answer is in `_meta/team-preferences.md`, which grows by pull request or by a capture the triage moves there.
 
 ```yaml
 language: en

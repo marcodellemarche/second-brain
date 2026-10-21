@@ -530,6 +530,8 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "channel": answers.channel,
         # A template decides between the Telegram block and the Slack one with this flag.
         "is_slack": answers.slack is not None,
+        # A team brain shares one vault with the whole team, so the prompt says how to use it.
+        "is_team": answers.shape == "team",
         # The long-audio worker and the mail sidecar are services of their own, so the compose file
         # decides whether to render them and the images they run.
         "has_tts": answers.tools.tts is not None,

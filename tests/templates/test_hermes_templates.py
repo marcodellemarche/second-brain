@@ -33,6 +33,7 @@ VALUES: dict[str, Any] = {
     "owner_telegram_id": OWNER_ID,
     "owner_id": OWNER_ID,
     "is_slack": False,
+    "is_team": False,
     "owner_slack_id": "U0000000001",
     "owner_name": "Sample Owner",
     "language": "Italian",
@@ -316,6 +317,35 @@ def test_soul_suggests_new_inside_a_sentence() -> None:
     for line in soul.splitlines():
         assert not line.rstrip().endswith("/new`"), f"bare /new at the end of a line: {line!r}"
         assert not line.rstrip().endswith("`/new`"), f"bare /new at the end of a line: {line!r}"
+
+
+def test_a_slack_soul_suggests_a_new_thread_and_never_mentions_new() -> None:
+    # `/new` in Slack opens a new message that may land outside the thread, so a team brain that
+    # keeps one session per thread suggests a new thread instead.
+    soul = render(TEMPLATES / "SOUL.md.j2", dict(VALUES, is_slack=True))
+    assert "new thread" in soul
+    assert "/new" not in soul
+
+
+def test_a_telegram_soul_keeps_the_new_sentence() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
+    assert "`/new`" in soul
+    assert "new thread" not in soul
+
+
+def test_a_team_soul_reads_the_system_page_before_jira() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", dict(VALUES, is_team=True))
+    assert "`systems/`" in soul
+    assert "team-preferences.md" in soul
+    # The live miss: a case-sensitive search for "invoice matcher" did not find "Invoice Matcher".
+    assert "(?i)" in soul
+    assert "target: files" in soul
+
+
+def test_a_personal_soul_has_no_team_rules() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
+    assert "team-preferences.md" not in soul
+    assert "`systems/`" not in soul
 
 
 def test_user_card_carries_the_owner_details() -> None:
