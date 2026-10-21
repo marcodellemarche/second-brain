@@ -15,6 +15,7 @@ from pathlib import Path
 from second_brain.cli.answers import Answers, AnswersError
 from second_brain.cli.check import FAIL, SKIP, CheckResult, live_checks, static_checks
 from second_brain.cli.init import InitError, init
+from second_brain.cli.verify_repo import verify_repo
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,6 +44,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also check the running deployment through docker compose (skipped without docker)",
     )
+
+    verify_parser = subcommands.add_parser(
+        "verify-repo",
+        help="verify the brain never committed outside its vault folder",
+        description=verify_repo_help(),
+    )
+    verify_parser.add_argument("path", type=Path, help="the instance repository, checked out")
+    verify_parser.add_argument(
+        "--prefix", default="vault", help="folder the vault lives in, relative to the repository root"
+    )
+    verify_parser.add_argument(
+        "--author", default="brain@localhost", help="author email the brain pushes with"
+    )
     return parser
 
 
@@ -67,12 +81,23 @@ def check_help() -> str:
     )
 
 
+def verify_repo_help() -> str:
+    return (
+        "Verify the brain never committed outside its vault folder.\n\n"
+        "Reads the history of the instance repository and lists every file, outside the vault\n"
+        "folder, that a commit by the brain's author email touched. Merges count too. Run it\n"
+        "before building and deploying: the exit code is 1 when anything is listed."
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     if args.command == "init":
         return _init(args)
     if args.command == "check":
         return _check(args)
+    if args.command == "verify-repo":
+        return _verify_repo(args)
     return 2
 
 
@@ -114,6 +139,20 @@ def _check(args: argparse.Namespace) -> int:
     if args.live:
         results += live_checks(instance)
     return report(results)
+
+
+def _verify_repo(args: argparse.Namespace) -> int:
+    try:
+        offending = verify_repo(args.path, prefix=args.prefix, author_email=args.author)
+    except ValueError as exc:
+        print(f"sb verify-repo: {exc}", file=sys.stderr)
+        return 2
+    if not offending:
+        print(f"ok: no commit by {args.author} outside {args.prefix.strip('/')}/")
+        return 0
+    for line in offending:
+        print(line)
+    return 1
 
 
 def report(results: Sequence[CheckResult]) -> int:
