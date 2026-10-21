@@ -188,7 +188,7 @@ Two kinds, handled differently on purpose:
 
 No file in `secrets/` is written twice, not by a second `sb init` and not with `--force`. A regenerated token would silently invalidate a running deployment, and a regenerated model key would not exist on the other side at all. The rendered config uses the value that is on disk, so a re-render never hands Hermes a token brain_tools does not have.
 
-`secrets/hermes.env` is the one place where generated values are written as values rather than read from a file: Hermes takes the MCP token, the chat token and the webhook secrets from the environment. It is generated once, and the chat token in it is filled in by hand.
+`secrets/hermes.env` is the one place where generated values are written as values rather than read from a file: Hermes takes the MCP token, the chat token and the webhook secrets from the environment. `sb init` re-renders it on every run from the files under `secrets/`, so a chat token goes into its own file (`telegram_bot_token`, `slack_bot_token`, `slack_app_token`) and reaches `hermes.env` with the next `sb init --force`. When that file is empty, the value already in `hermes.env` is kept.
 
 ## brain_tools config
 

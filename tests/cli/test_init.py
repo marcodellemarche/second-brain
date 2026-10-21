@@ -117,6 +117,48 @@ def test_the_managed_env_carries_the_generated_values(instance: Path) -> None:
     assert "TELEGRAM_BOT_TOKEN=\n" in env
 
 
+def test_a_chat_token_filled_after_the_first_run_reaches_the_managed_env(
+    instance: Path, answers: Answers
+) -> None:
+    env = instance / "secrets" / "hermes.env"
+    env.chmod(0o640)
+    (instance / "secrets" / "telegram_bot_token").write_text("fake-bot-token\n", encoding="utf-8")
+    init(answers, instance, force=True)
+    assert "TELEGRAM_BOT_TOKEN=fake-bot-token\n" in env.read_text(encoding="utf-8")
+    # Rewritten in place: the mode owners.sh or the operator gave it is kept.
+    assert stat.S_IMODE(env.stat().st_mode) == 0o640
+
+
+def test_a_chat_token_pasted_only_into_the_managed_env_survives_a_rerun(
+    instance: Path, answers: Answers
+) -> None:
+    env = instance / "secrets" / "hermes.env"
+    text = env.read_text(encoding="utf-8").replace("TELEGRAM_BOT_TOKEN=\n", "TELEGRAM_BOT_TOKEN=by-hand\n")
+    env.write_text(text, encoding="utf-8")
+    init(answers, instance, force=True)
+    assert "TELEGRAM_BOT_TOKEN=by-hand\n" in env.read_text(encoding="utf-8")
+
+
+def test_the_managed_env_has_no_token_for_a_channel_the_brain_does_not_use(
+    instance: Path, answers: Answers
+) -> None:
+    env = instance / "secrets" / "hermes.env"
+    env.write_text(env.read_text(encoding="utf-8") + "SLACK_BOT_TOKEN=stale\n", encoding="utf-8")
+    init(answers, instance, force=True)
+    text = env.read_text(encoding="utf-8")
+    assert "stale" not in text
+    assert "SLACK_BOT_TOKEN=\n" in text
+
+
+def test_an_unreadable_managed_env_asks_for_sudo(instance: Path, answers: Answers) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root reads every file")
+    env = instance / "secrets" / "hermes.env"
+    env.chmod(0o000)
+    with pytest.raises(InitError, match="sudo sb init"):
+        init(answers, instance, force=True)
+
+
 def test_two_runs_generate_different_internal_secrets(tmp_path: Path, answers_file: Path) -> None:
     first = Answers.from_yaml(answers_file)
     second_raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))

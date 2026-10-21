@@ -443,8 +443,8 @@ def _readme(answers: Answers, instance: Path) -> str:
 A brain built by `sb init`. Next steps:
 
 1. Fill in the files under `secrets/` that are still empty. `secrets/README.md` says what each
-   one is and where it comes from. `hermes.env` needs the same chat token, under the name Hermes
-   reads (`TELEGRAM_BOT_TOKEN` or `SLACK_BOT_TOKEN`).
+   one is and where it comes from. Then run `sb init --force` once more: it copies the chat
+   token into `hermes.env`, under the name Hermes reads.
 2. In the second-brain repo root, download the faster-whisper model into `models/` as a Hugging
    Face cache (`models/hub/models--Systran--faster-whisper-small`), which is where Hermes looks
    with no network:
