@@ -797,6 +797,10 @@ def _team_domains_check(ctx: _Instance) -> CheckResult:
         # This brain is the team brain: a call it recognises as a team call is written here, so the
         # domains are how it tells its own meetings from a 1:1.
         return _pass(name, f"{', '.join(domains)} is the team, and this is the team brain")
+    if ctx.tools is not None and ctx.tools.handoff is not None:
+        return _pass(
+            name, f"{', '.join(domains)} is the team, and its calls are handed over with team_handoff"
+        )
     return _fail(
         name,
         "team_domains is set but this brain has no team brain to route to: team calls would be lost"

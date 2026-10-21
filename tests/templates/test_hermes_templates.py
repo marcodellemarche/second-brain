@@ -22,6 +22,7 @@ VALUES: dict[str, Any] = {
     "model_name": "local-model",
     "model_gate_url": "http://model-gate:8080/v1",
     "model_context_length": "131072",
+    "model_reasoning_effort": "none",
     "timezone": "Europe/Rome",
     "skills_dir": "/data/skills",
     "media_dir": "/data/media",
@@ -34,6 +35,7 @@ VALUES: dict[str, Any] = {
     "owner_id": OWNER_ID,
     "is_slack": False,
     "is_team": False,
+    "has_handoff": False,
     "owner_slack_id": "U0000000001",
     "owner_name": "Sample Owner",
     "language": "Italian",
@@ -325,12 +327,18 @@ def test_soul_suggests_new_inside_a_sentence() -> None:
         assert not line.rstrip().endswith("`/new`"), f"bare /new at the end of a line: {line!r}"
 
 
-def test_a_slack_soul_suggests_a_new_thread_and_never_mentions_new() -> None:
-    # `/new` in Slack opens a new message that may land outside the thread, so a team brain that
-    # keeps one session per thread suggests a new thread instead.
+def test_a_slack_soul_never_suggests_a_restart() -> None:
+    # In Slack a thread is already the session, and a reminder after every forward is noise.
     soul = render(TEMPLATES / "SOUL.md.j2", dict(VALUES, is_slack=True))
-    assert "new thread" in soul
+    assert "new thread" not in soul
+    assert "start fresh" not in soul
     assert "/new" not in soul
+
+
+def test_a_team_soul_looks_beyond_the_vault_before_asking() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", dict(VALUES, is_team=True))
+    assert "not a dead end" in soul
+    assert "report-archiver" in soul
 
 
 def test_a_telegram_soul_keeps_the_new_sentence() -> None:
@@ -413,3 +421,22 @@ def test_the_research_prompt_names_the_job_the_outbox_looks_for(config: dict[str
         job_id=job_id, title="A title", question="A question?"
     )
     assert job_id_from_prompt(prompt) == job_id
+
+
+def test_a_soul_searches_the_vault_before_asking() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
+    assert "search the vault for it first" in soul
+    assert "team_handoff" not in soul
+
+
+def test_a_soul_with_a_handoff_knows_the_team_brain() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", {**VALUES, "has_handoff": True})
+    assert "team_handoff" in soul
+    assert "call-decision" in soul
+
+
+def test_thinking_is_off_by_default_and_follows_the_answers() -> None:
+    off = yaml.safe_load(render(TEMPLATES / "config.yaml.j2", VALUES))
+    assert off["agent"]["reasoning_effort"] in ("none", None, False)
+    high = yaml.safe_load(render(TEMPLATES / "config.yaml.j2", dict(VALUES, model_reasoning_effort="high")))
+    assert high["agent"]["reasoning_effort"] == "high"

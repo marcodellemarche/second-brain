@@ -109,7 +109,9 @@ def test_empty_searches_over_the_limit_on_a_search_tool() -> None:
     verdict = check(store, tool="web_search", policy=policy)
     assert not verdict.ok
     assert verdict.reason == "max_empty_searches"
-    assert "Stop searching" in verdict.message_to_model
+    assert "Do not run another search of this kind" in verdict.message_to_model
+    # The model is pointed at other sources, not told to give up on the question.
+    assert "look there with its own tool" in verdict.message_to_model
 
 
 def test_empty_searches_do_not_block_a_non_search_tool() -> None:

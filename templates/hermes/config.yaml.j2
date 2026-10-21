@@ -54,7 +54,7 @@ web:
   keyless_rescue: false
 
 agent:
-  reasoning_effort: none
+  reasoning_effort: {{ model_reasoning_effort }}
   # browser is here on purpose: web access goes through web_search/web_extract, which the guard
   # classifies and can refuse. A headless browser is a second, unclassified network path. Drop
   # `browser` from this list for a brain that really needs it, and add a policy rule for it first.

@@ -454,6 +454,9 @@ class Answers(BaseModel):
     model_endpoint: str = Field(description="Base URL of an OpenAI-compatible endpoint.")
     model_name: str = Field(min_length=1)
     model_context_length: int = Field(default=131072, ge=1024)
+    # What Hermes asks the endpoint for. `none` sends thinking off, which every endpoint accepts;
+    # a level the model does not know is refused by the endpoint on every turn.
+    model_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] = "none"
     instance_skills_dir: Path | None = Field(
         default=None,
         description="A folder of skills this instance adds, copied next to the product ones. "

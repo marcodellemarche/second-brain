@@ -764,3 +764,19 @@ def test_a_service_outside_the_slice_fails(tmp_path: Path) -> None:
     status, reason = _status(directory, "compose.slice")
     assert status == FAIL
     assert "hermes" in reason
+
+
+def test_a_personal_brain_with_a_handoff_may_name_the_team_domains(tmp_path: Path) -> None:
+    data = yaml.safe_load(SAMPLE.read_text(encoding="utf-8"))
+    data["vault_dir"] = str(tmp_path / "vault")
+    data["media_dir"] = str(tmp_path / "media")
+    data["archive_dir"] = str(tmp_path / "archive")
+    data["calls"] = {"team_domains": ["example.com"], "team_markers": ["ds9"]}
+    data["handoff"] = {"host_dir": str(tmp_path / "handoff")}
+    path = tmp_path / "personal.yaml"
+    path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    directory = tmp_path / "personal-instance"
+    init(Answers.from_yaml(path), directory)
+    status, reason = _status(directory, "team_domains")
+    assert status == PASS, reason
+    assert "team_handoff" in reason

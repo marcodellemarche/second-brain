@@ -561,6 +561,7 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "model_gate_url": "http://gate:8080/v1",
         "model_name": answers.model_name,
         "model_context_length": answers.model_context_length,
+        "model_reasoning_effort": answers.model_reasoning_effort,
         "timezone": answers.timezone,
         "docker_gid": docker_gid(answers),
         "brain_tools_extra_volumes": brain_tools_extra_volumes(answers),
@@ -587,6 +588,7 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "is_slack": answers.slack is not None,
         # A team brain shares one vault with the whole team, so the prompt says how to use it.
         "is_team": answers.shape == "team",
+        "has_handoff": answers.handoff is not None,
         # The long-audio worker and the mail sidecar are services of their own, so the compose file
         # decides whether to render them and the images they run.
         "has_tts": answers.tools.tts is not None,

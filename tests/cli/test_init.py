@@ -1516,4 +1516,5 @@ def test_a_handoff_section_mounts_the_folder_and_adds_the_tool(tmp_path: Path, a
     assert guard.mcp_tools["team_handoff"].autonomy == Autonomy.ASK
     assert f"{tmp_path / 'handoff'}:/handoff" in (instance / "compose.yaml").read_text(encoding="utf-8")
     owners = (instance / "owners.sh").read_text(encoding="utf-8")
-    assert f"chown -R 23002:23002 '{tmp_path / 'handoff'}'" in owners
+    assert f"chown -R 23002:\"$(stat -c %g .)\" '{tmp_path / 'handoff'}'" in owners
+    assert f"chmod 2775 '{tmp_path / 'handoff'}'" in owners

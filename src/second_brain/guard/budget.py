@@ -57,9 +57,10 @@ def check_budget(
     if tool in search_tools and empty_searches >= policy.max_empty_searches:
         return _stop(
             "max_empty_searches",
-            f"The last {empty_searches} searches found nothing new or have not answered yet. Stop "
-            "searching: answer "
-            "now with what you already have and say what you could not find.",
+            f"The last {empty_searches} searches found nothing new or have not answered yet. Do not "
+            "run another search of this kind. If another source can have it (the code, a cluster, "
+            "a ticket), look there with its own tool; otherwise answer with what you have and say "
+            "where you looked.",
         )
     return BudgetVerdict(ok=True, reason="", message_to_model="")
 

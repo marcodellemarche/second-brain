@@ -404,9 +404,11 @@ def _owners_script(answers: Answers, credentials: dict[str, str]) -> str:
     if answers.handoff is not None:
         lines += [
             "",
-            "# team_handoff writes the calls for the team brain here; the owner moves them on.",
+            "# team_handoff writes the calls for the team brain here; the owner moves them on, so",
+            "# the folder is also the operator group's, and a moved file can be removed.",
             f"mkdir -p '{answers.handoff.host_dir}'",
-            f"chown -R {BRAIN_UID}:{BRAIN_UID} '{answers.handoff.host_dir}'",
+            f"chown -R {BRAIN_UID}:\"$(stat -c %g .)\" '{answers.handoff.host_dir}'",
+            f"chmod 2775 '{answers.handoff.host_dir}'",
         ]
     # The vault and the archive are deliberately left out: they belong to the brain, and a blanket
     # `chown` over the instance directory would hand them back to the operator, which is exactly the
