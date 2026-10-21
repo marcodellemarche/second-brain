@@ -49,6 +49,7 @@ VALUES: dict[str, Any] = {
     "tts_image": "second_brain/tts:0.1.0",
     "has_mail": False,
     "mail_rules_mount": [],
+    "has_memory_export": False,
 }
 
 

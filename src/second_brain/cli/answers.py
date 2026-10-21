@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from second_brain.core.policy import PolicyConfig
 from second_brain.core.schema import SchemaError, load_schema
+from second_brain.core.types import Zone
 from second_brain.tools.archive import ArchiveConfig
 from second_brain.tools.config import _reject_secret_fields
 from second_brain.tools.links import LinkConfig
@@ -242,6 +243,42 @@ class StagingAnswers(BaseModel):
         return _absolute_path(value)
 
 
+class MemoryExportAnswers(BaseModel):
+    """A copy of what the brain remembers, written into one vault page.
+
+    Hermes keeps `MEMORY.md` and `USER.md` under its own home and nowhere else. This copies them into
+    the vault on a timer, so the memory has a history and the owner can read it. The page is
+    overwritten at every tick: it is a copy, and editing it changes nothing. A personal memory can
+    hold private facts, so its page lands in `_brain` unless the answers name another one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: str | None = Field(
+        default=None,
+        description="Vault-relative page of the copy; `_meta/brain-memory.md` for a team brain, "
+        "`_brain/hermes-memory.md` for a personal one.",
+    )
+    poll_seconds: float = Field(default=3600, gt=0, le=86400)
+
+    @field_validator("page")
+    @classmethod
+    def _page(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("memory_export.page must not be empty")
+        path = PurePosixPath(text)
+        if path.is_absolute():
+            raise ValueError(f"memory_export.page must be relative to the vault: {value!r}")
+        if ".." in path.parts:
+            raise ValueError(f"memory_export.page must not leave the vault: {value!r}")
+        if path.suffix.lower() != ".md":
+            raise ValueError(f"memory_export.page must be a markdown file: {value!r}")
+        return str(path)
+
+
 class VaultRemoteAnswers(BaseModel):
     """The repo the vault is published into: one folder of it, and the token in a secret file.
 
@@ -428,6 +465,8 @@ class Answers(BaseModel):
     staging: StagingAnswers | None = None
     # The repo the vault is published into, and what is merged back from it.
     vault_remote: VaultRemoteAnswers | None = None
+    # A one-way copy of the memory the brain keeps for itself, so it has a history and can be read.
+    memory_export: MemoryExportAnswers | None = None
 
     @field_validator("instance_skills_dir")
     @classmethod
@@ -612,6 +651,21 @@ class Answers(BaseModel):
             "keep_days": 14,
             "timezone": self.timezone,
         }
+
+    def memory_page(self) -> str | None:
+        """The page the memory copy goes to, or None when this brain exports no memory.
+
+        A team vault has no `_brain` of its own, so the copy is a `_meta` page the whole team reads.
+        A personal memory can hold private facts, so its copy stays in the private zone.
+        """
+        if self.memory_export is None:
+            return None
+        if self.memory_export.page:
+            return self.memory_export.page
+        schema = load_schema(TEMPLATES / "vault" / self.language)
+        if self.shape == "team":
+            return f"{schema.folder(Zone.META)}/brain-memory.md"
+        return f"{schema.folder(Zone.BRAIN)}/hermes-memory.md"
 
     def _brain_page(self, name: str) -> str:
         """A `_brain` page named by the schema of this brain's language."""

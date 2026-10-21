@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, ValidationError, WithJsonSchema
 
 from second_brain.core.schema import load_schema
 from second_brain.tools.config import ToolsConfig, build_registry
+from second_brain.tools.memory_export import MemoryExporter
 from second_brain.tools.outbox import (
     MAX_BODY_BYTES,
     OUTBOX_PATH,
@@ -47,6 +48,7 @@ INTEGRITY_VALUES: tuple[str, ...] = ("trusted", "untrusted")
 OUTBOX_IMPORT_SECONDS = 30.0
 STAGING_IMPORT_SECONDS = 60.0
 REMOTE_SYNC_SECONDS = 300.0
+MEMORY_EXPORT_SECONDS = 3600.0
 
 ASGIApp = Callable[..., Awaitable[None]]
 
@@ -322,6 +324,9 @@ def main() -> None:
         start_staging_timer(importer, config.staging.poll_seconds or STAGING_IMPORT_SECONDS)
     if config.remote is not None:
         start_remote_timer(config.remote.remote(vault), config.remote.poll_seconds or REMOTE_SYNC_SECONDS)
+    if config.memory_export is not None:
+        exporter = config.memory_export.exporter(vault)
+        start_memory_export_timer(exporter, config.memory_export.poll_seconds or MEMORY_EXPORT_SECONDS)
     log.info("brain_tools serving %d tools on %s:%d", len(registry.specs()), host, port)
     uvicorn.run(build_app(registry, token, outbox), host=host, port=port, log_level="info")
 
@@ -431,6 +436,31 @@ def start_remote_timer(remote: VaultRemote, seconds: float) -> threading.Thread:
             sync_remote_once(remote)
 
     thread = threading.Thread(target=loop, name="brain_tools-remote-sync", daemon=True)
+    thread.start()
+    return thread
+
+
+def export_memory_once(exporter: MemoryExporter) -> str | None:
+    """One tick of the export. A failure is logged, never raised, and never with the memory in it."""
+    try:
+        return exporter.export_once()
+    except VaultError as exc:
+        log.error("could not export the memory: %s", exc)
+        return None
+    except Exception:
+        log.exception("could not export the memory")
+        return None
+
+
+def start_memory_export_timer(exporter: MemoryExporter, seconds: float) -> threading.Thread:
+    """Copy the brain's own memory into its page, in the background."""
+
+    def loop() -> None:
+        while True:
+            time.sleep(seconds)
+            export_memory_once(exporter)
+
+    thread = threading.Thread(target=loop, name="brain_tools-memory-export", daemon=True)
     thread.start()
     return thread
 

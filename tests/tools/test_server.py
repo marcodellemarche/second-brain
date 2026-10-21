@@ -21,14 +21,16 @@ from second_brain.tools.server import (
     build_server,
     commit_human_changes_once,
     dispatch,
+    export_memory_once,
     import_outbox_once,
     start_human_commit_timer,
+    start_memory_export_timer,
     start_outbox_timer,
     start_remote_timer,
     sync_remote_once,
     tool_callable,
 )
-from second_brain.tools.vault import Vault, VaultConfig
+from second_brain.tools.vault import Vault, VaultConfig, VaultError
 
 TOKEN = "test-token-9f3a"
 
@@ -417,3 +419,50 @@ def test_the_remote_timer_keeps_going_after_a_remote_error() -> None:
 
     assert thread.is_alive() is True
     assert remote.syncs >= 2
+
+
+class _FakeExporter:
+    def __init__(self, page: str | None = "_brain/hermes-memory.md", error: Exception | None = None) -> None:
+        self._page = page
+        self._error = error
+        self.exports = 0
+
+    def export_once(self) -> str | None:
+        self.exports += 1
+        if self._error is not None:
+            raise self._error
+        return self._page
+
+
+def test_export_memory_once_returns_the_page_it_wrote() -> None:
+    exporter = _FakeExporter()
+
+    assert export_memory_once(exporter) == "_brain/hermes-memory.md"  # type: ignore[arg-type]
+    assert exporter.exports == 1
+
+
+def test_export_memory_once_survives_a_vault_error() -> None:
+    exporter = _FakeExporter(error=VaultError("secret_detected", "refusing to write the page"))
+
+    assert export_memory_once(exporter) is None  # type: ignore[arg-type]
+    assert exporter.exports == 1
+
+
+def test_export_memory_once_survives_any_other_error() -> None:
+    exporter = _FakeExporter(error=RuntimeError("the memory folder is on fire"))
+
+    assert export_memory_once(exporter) is None  # type: ignore[arg-type]
+    assert exporter.exports == 1
+
+
+def test_the_memory_export_timer_keeps_going_after_an_error() -> None:
+    exporter = _FakeExporter(error=RuntimeError("the memory folder is on fire"))
+
+    thread = start_memory_export_timer(exporter, 0.01)  # type: ignore[arg-type]
+    deadline = time.monotonic() + 5
+    while exporter.exports < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert thread.daemon is True
+    assert thread.name == "brain_tools-memory-export"
+    assert exporter.exports >= 2

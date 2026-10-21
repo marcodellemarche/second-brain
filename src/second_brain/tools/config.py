@@ -31,6 +31,7 @@ from second_brain.tools.calendar import (
 from second_brain.tools.core_vault import vault_tools
 from second_brain.tools.jobs import JobKind, JobStore, job_tools
 from second_brain.tools.links import LinkConfig, link_tools
+from second_brain.tools.memory_export import MemoryExportConfig
 from second_brain.tools.notify import NotifyConfig, notify_tools
 from second_brain.tools.outbox import OutboxConfig
 from second_brain.tools.registry import ExtensionError, ExtensionSettings, Registry, Tool
@@ -160,6 +161,8 @@ class ToolsConfig(BaseModel):
     staging: StagingConfig | None = None
     # The repo the vault is published into, and what is merged there. Absent, nothing syncs.
     remote: RemoteConfig | None = None
+    # A read-only copy of the brain's own memory, written to one vault page. Absent, no copy.
+    memory_export: MemoryExportConfig | None = None
     # Entry point name to that instance package's settings. Free-form on purpose: the core does not
     # know what an instance tool needs, it only refuses a secret value in there.
     extensions: dict[str, dict[str, Any]] = Field(default_factory=dict)

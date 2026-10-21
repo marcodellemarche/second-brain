@@ -59,6 +59,8 @@ from second_brain.tools.config import (
 )
 from second_brain.tools.export import export_guard_classes
 from second_brain.tools.jobs import JobKind
+from second_brain.tools.memory_export import SOURCE_DIR as MEMORY_SOURCE_DIR
+from second_brain.tools.memory_export import MemoryExportConfig
 from second_brain.tools.outbox import OutboxConfig
 from second_brain.tools.registry import Registry
 from second_brain.tools.remote import RemoteConfig
@@ -157,6 +159,18 @@ def remote_config(answers: Answers) -> RemoteConfig | None:
     )
 
 
+def memory_export_config(answers: Answers) -> MemoryExportConfig | None:
+    """The copy of the brain's own memory, or None when this brain exports none."""
+    page = answers.memory_page()
+    if page is None or answers.memory_export is None:
+        return None
+    return MemoryExportConfig(
+        source_dir=Path(MEMORY_SOURCE_DIR),
+        page=page,
+        poll_seconds=answers.memory_export.poll_seconds,
+    )
+
+
 def tools_config(answers: Answers) -> ToolsConfig:
     """The tools config this instance runs with. Secrets are paths, never values."""
     tools = answers.tools
@@ -197,6 +211,7 @@ def tools_config(answers: Answers) -> ToolsConfig:
         outbox=outbox_config(answers),
         staging=staging_config(answers),
         remote=remote_config(answers),
+        memory_export=memory_export_config(answers),
         extensions={**tools.extensions, **instance_sections(answers)},
     )
 
@@ -537,6 +552,9 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "has_tts": answers.tools.tts is not None,
         "tts_image": tts_image(answers),
         "has_mail": answers.tools.mail is not None,
+        # The memory the brain keeps for itself is on a volume of its own, mounted read-only into
+        # brain-tools only when this brain copies it into the vault.
+        "has_memory_export": answers.memory_export is not None,
         # The filter file, when the answers name one: a list with zero or one entry, because the
         # renderer has no nested conditional block.
         "mail_rules_mount": mail_rules_mount(answers),

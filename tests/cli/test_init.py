@@ -1392,3 +1392,66 @@ def test_without_a_vault_remote_nothing_changes(instance: Path) -> None:
     assert "github.com" not in squid
     compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
     assert "vault_remote_token" not in compose["services"]["brain-tools"]["secrets"]
+
+
+def test_a_memory_export_on_a_team_brain_is_a_meta_page(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(tmp_path, answers_file, shape="team", memory_export={})
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    tools = yaml.safe_load((instance / "config/brain-tools.yaml").read_text(encoding="utf-8"))
+    assert tools["memory_export"] == {
+        "source_dir": "/hermes-memories",
+        "page": "_meta/brain-memory.md",
+        "poll_seconds": 3600.0,
+    }
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    volumes = compose["services"]["brain-tools"]["volumes"]
+    assert {
+        "type": "volume",
+        "source": "hermes-home",
+        "target": "/hermes-memories",
+        "read_only": True,
+        "volume": {"subpath": "memories"},
+    } in volumes
+
+
+def test_a_memory_export_on_a_personal_brain_stays_in_the_brain_zone(
+    tmp_path: Path, answers_file: Path
+) -> None:
+    answers = _answers_with(tmp_path, answers_file, language="it", memory_export={})
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    tools = yaml.safe_load((instance / "config/brain-tools.yaml").read_text(encoding="utf-8"))
+    # An Italian vault still calls the private zone `_brain`, and a personal memory can be private.
+    assert tools["memory_export"]["page"] == "_brain/hermes-memory.md"
+
+
+def test_a_memory_export_page_can_be_named_in_the_answers(tmp_path: Path, answers_file: Path) -> None:
+    answers = _answers_with(
+        tmp_path,
+        answers_file,
+        memory_export={"page": "topics/memory.md", "poll_seconds": 600},
+    )
+    instance = tmp_path / "instance"
+    init(answers, instance)
+
+    tools = yaml.safe_load((instance / "config/brain-tools.yaml").read_text(encoding="utf-8"))
+    assert tools["memory_export"]["page"] == "topics/memory.md"
+    assert tools["memory_export"]["poll_seconds"] == 600.0
+
+
+def test_a_memory_export_page_that_climbs_out_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError, match="leave the vault"):
+        _answers_with(tmp_path, answers_file, memory_export={"page": "_brain/../policy.md"})
+
+
+def test_without_a_memory_export_neither_the_page_nor_the_mount_exists(
+    instance: Path,
+) -> None:
+    tools = yaml.safe_load((instance / "config/brain-tools.yaml").read_text(encoding="utf-8"))
+    assert "memory_export" not in tools
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    volumes = compose["services"]["brain-tools"]["volumes"]
+    assert all("/hermes-memories" not in str(volume) for volume in volumes)

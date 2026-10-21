@@ -61,6 +61,7 @@ types:
   task: a task, with the Jira reference
   answer: a good answer, saved
   drawing: an Excalidraw drawing
+  brain: a page the brain keeps about itself, such as the copy of its own memory
 tags:
   - backend
   - frontend

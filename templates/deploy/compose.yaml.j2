@@ -220,6 +220,16 @@ services:
 {% for volume in brain_tools_extra_volumes %}
       - {{ volume }}
 {% endfor %}
+{% if has_memory_export %}
+      # The memory Hermes keeps for itself, read-only and only the `memories` folder of its home:
+      # this is the only reader of it, and it writes the copy into the vault.
+      - type: volume
+        source: hermes-home
+        target: /hermes-memories
+        read_only: true
+        volume:
+          subpath: memories
+{% endif %}
     # calendar_token only when the calendar tools are on: compose refuses a secret file that does not exist.
     secrets: [{{ brain_tools_secrets }}]
     healthcheck:
