@@ -366,7 +366,7 @@ def test_a_team_soul_reads_the_system_page_before_jira() -> None:
     soul = render(TEMPLATES / "SOUL.md.j2", dict(VALUES, is_team=True))
     assert "`systems/`" in soul
     assert "team-preferences.md" in soul
-    # The live miss: a case-sensitive search for "invoice matcher" did not find "Invoice Matcher".
+    # A case-sensitive search for "invoice matcher" does not find "Invoice Matcher".
     assert "(?i)" in soul
     assert "target: files" in soul
 

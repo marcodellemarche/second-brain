@@ -80,7 +80,7 @@ tests/                unit tests per package; tests/security/ for attack scenari
 - Fail closed: if a policy decision cannot be made (missing config, exception, unknown tool), block.
 - Never write secrets, tokens or real personal data in code, tests, fixtures or docs. Fixtures use obviously fake data.
 - Stay inside this repo. Do not touch other directories, do not run `git commit` or `git push`, do not install system packages.
-- Never search the filesystem outside this repo (no `find /`, no `find ~`). The Hermes Agent source at the pinned version is at `/tmp/claude-1000/hermes-v0222` (tag `v0.22.2`): read it there when you need to check a Hermes API.
+- Never search the filesystem outside this repo (no `find /`, no `find ~`). When you need to check a Hermes API, read the Hermes Agent source at tag `v0.22.2`, never a newer one.
 - Read only the files you need, and only the relevant parts of large files (use `grep -n` and line ranges).
-- Reference material (read-only, may be in Italian, do not copy personal details): `../second-brain-scouting/piano.md` (the plan), `../second-brain-scouting/prototype/` (a working prototype of brain_guard, brain_tools, watchdog and deploy, to be rewritten cleanly here), `../second-brain-scouting/research/08-hermes-action-paths.md` and `10-hermes-scritture-memoria-delega.md` (Hermes internals and hardening).
+- If `AGENTS.local.md` exists, read it: it says where the Hermes source and any reference material live on this machine. It is not tracked.
 - At the end of each task, print a short summary: files changed, tests run with results, open questions.

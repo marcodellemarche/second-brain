@@ -7,3 +7,6 @@ __pycache__/
 
 # faster-whisper cache copied into the Hermes image at build time
 /models/
+
+# machine-specific notes for coding agents
+AGENTS.local.md
