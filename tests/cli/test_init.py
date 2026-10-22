@@ -1519,3 +1519,18 @@ def test_a_handoff_section_mounts_the_folder_and_adds_the_tool(tmp_path: Path, a
     owners = (instance / "owners.sh").read_text(encoding="utf-8")
     assert f"chown -R 23002:\"$(stat -c %g .)\" '{tmp_path / 'handoff'}'" in owners
     assert f"chmod 2775 '{tmp_path / 'handoff'}'" in owners
+
+
+def test_the_staging_folder_belongs_to_the_brain_so_it_can_move_files(
+    tmp_path: Path, answers_file: Path
+) -> None:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    raw["staging"] = {"host_dir": str(tmp_path / "staging")}
+    path = tmp_path / "staging.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    instance = tmp_path / "staging-instance"
+    init(Answers.from_yaml(path), instance)
+    owners = (instance / "owners.sh").read_text(encoding="utf-8")
+    # Files extracted by root stay readable; done/ and failed/ need the folder to be the brain's.
+    assert f"chown -R 23002:\"$(stat -c %g .)\" '{tmp_path / 'staging'}'" in owners
+    assert f"chmod 2775 '{tmp_path / 'staging'}'" in owners

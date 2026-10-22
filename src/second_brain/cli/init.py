@@ -410,12 +410,24 @@ def _owners_script(answers: Answers, credentials: dict[str, str]) -> str:
             f"chown -R {BRAIN_UID}:\"$(stat -c %g .)\" '{answers.handoff.host_dir}'",
             f"chmod 2775 '{answers.handoff.host_dir}'",
         ]
+    if answers.staging is not None:
+        lines += [
+            "",
+            "# The staging importer moves each file to done/ or failed/ after reading it, so the folder",
+            "# is the brain's; the operator's group keeps writing into it, whoever extracts the files.",
+            f"mkdir -p '{answers.staging.host_dir}'",
+            f"chown -R {BRAIN_UID}:\"$(stat -c %g .)\" '{answers.staging.host_dir}'",
+            f"chmod -R g+rwX '{answers.staging.host_dir}'",
+            f"chmod 2775 '{answers.staging.host_dir}'",
+        ]
     # The vault and the archive are deliberately left out: they belong to the brain, and a blanket
     # `chown` over the instance directory would hand them back to the operator, which is exactly the
     # state git refuses to work in ("dubious ownership").
     keep_owned = ["secrets", answers.vault_dir.name, (answers.archive_dir or answers.vault_dir).name]
     if answers.handoff is not None:
         keep_owned.append(answers.handoff.host_dir.name)
+    if answers.staging is not None:
+        keep_owned.append(answers.staging.host_dir.name)
     skip = " || ".join(f'[ "$entry" = "{name}" ]' for name in keep_owned)
     lines += [
         "",
