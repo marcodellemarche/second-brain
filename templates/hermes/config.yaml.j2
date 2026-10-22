@@ -192,9 +192,10 @@ platforms:
   # thread, or two colleagues in one thread would talk to the same conversation.
   slack:
     enabled: true
-    # Members write only in a direct message: Hermes lets anyone in the channel list press an
-    # approval button, so the channel stays the owner's and so do the approvals.
-    allow_from: ["{{ owner_slack_id }}"{% for member in slack_member_ids %}, "{{ member }}"{% endfor %}]
+    # Members and approvers write only in a direct message: Hermes lets anyone in the channel list
+    # press an approval button, so the channel stays the owner's and each approver only ever sees
+    # the cards of their own requests.
+    allow_from: ["{{ owner_slack_id }}"{% for member in slack_member_ids %}, "{{ member }}"{% endfor %}{% for approver in slack_approver_ids %}, "{{ approver }}"{% endfor %}]
     group_allow_from: ["{{ owner_slack_id }}"]
     allow_admin_from: ["{{ owner_slack_id }}"]
     group_allow_admin_from: ["{{ owner_slack_id }}"]

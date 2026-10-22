@@ -645,7 +645,8 @@ def _terminal_check(ctx: _Instance) -> CheckResult:
     return _pass(name, f"terminal.backend is {backend}, in its own container")
 
 
-# The one list a member may be in: Slack direct messages. Channels and approvals stay the owner's.
+# The one list a member or an approver may be in: Slack direct messages. The channel and the admin
+# commands stay the owner's.
 MEMBER_LIST = "platforms.slack.allow_from"
 
 
@@ -661,20 +662,27 @@ def _owner_check(ctx: _Instance) -> CheckResult:
     if error is not None:
         return error
     members = set(ctx.guard.members)
-    if owner in members:
-        return _fail(name, f"the owner {owner} is also listed as a member")
+    approvers = set(ctx.guard.approvers)
+    if owner in members | approvers:
+        return _fail(name, f"the owner {owner} is also listed as a member or an approver")
+    if members & approvers:
+        return _fail(name, f"{', '.join(sorted(members & approvers))} is both a member and an approver")
     problems = [
         f"{label} is {list(values)}"
         for label, values in _owner_lists(hermes)
-        if set(values) != ({owner} | members if label == MEMBER_LIST else {owner})
+        if set(values) != ({owner} | members | approvers if label == MEMBER_LIST else {owner})
     ]
     gateway = hermes.get("gateway")
     if isinstance(gateway, dict) and gateway.get("allow_all_users"):
         problems.append("gateway.allow_all_users is on")
     if problems:
         return _fail(name, f"the owner is {owner}, but " + "; ".join(problems))
-    if members:
-        return _pass(name, f"{owner} is the only admin, {len(members)} members write only in a DM")
+    if members or approvers:
+        return _pass(
+            name,
+            f"{owner} is the only admin, {len(members)} members and {len(approvers)} approvers write "
+            "only in a DM",
+        )
     return _pass(name, f"{owner} is the only allowed user and the only admin")
 
 

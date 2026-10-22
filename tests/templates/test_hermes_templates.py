@@ -45,7 +45,10 @@ VALUES: dict[str, Any] = {
     "deliver_platform": "telegram",
     "slack_home_channel": "C0000000001",
     "slack_member_ids": [],
+    "slack_approver_ids": [],
     "has_members": False,
+    "has_approvers": False,
+    "who_approves": "Sample Owner runs this brain and is the only one who can approve an action.",
     "example_note_path": "knowledge/example.md",
     # Empty here: the routes of the skills an instance schedules are built in the CLI tests.
     "scheduled_skills": [],
@@ -300,6 +303,24 @@ def test_a_member_writes_in_a_direct_message_and_never_approves() -> None:
     assert slack["group_allow_admin_from"] == [owner]
 
 
+def test_an_approver_writes_in_a_direct_message_and_is_never_an_admin() -> None:
+    values = dict(
+        VALUES,
+        channel="Slack",
+        deliver_platform="slack",
+        is_slack=True,
+        slack_member_ids=["U0000000002"],
+        slack_approver_ids=["U0000000003"],
+    )
+    slack = yaml.safe_load(render(TEMPLATES / "config.yaml.j2", values))["platforms"]["slack"]
+    owner = VALUES["owner_slack_id"]
+    assert slack["allow_from"] == [owner, "U0000000002", "U0000000003"]
+    # Out of the channel, an approver only ever sees the cards of their own requests.
+    assert slack["group_allow_from"] == [owner]
+    assert slack["allow_admin_from"] == [owner]
+    assert slack["group_allow_admin_from"] == [owner]
+
+
 def test_a_telegram_brain_has_no_thread_sessions_key(config: dict[str, Any]) -> None:
     # The key only means something on a platform with threads: on Telegram it would be noise.
     assert "thread_sessions_per_user" not in config
@@ -472,6 +493,23 @@ def test_a_brain_with_members_does_not_take_everyone_for_the_owner() -> None:
     user = render(TEMPLATES / "USER.md.j2", values)
     assert "`U0000000002`" in user
     assert "cannot approve anything" in user
+
+
+def test_a_brain_with_approvers_says_who_they_are() -> None:
+    values = dict(
+        VALUES,
+        is_slack=True,
+        is_team=True,
+        has_members=True,
+        has_approvers=True,
+        slack_member_ids=["U0000000002"],
+        slack_approver_ids=["U0000000003"],
+        who_approves="Sample Owner runs this brain. The approvers listed in USER.md can also ask.",
+    )
+    assert "approvers listed in USER.md" in render(TEMPLATES / "SOUL.md.j2", values)
+    user = render(TEMPLATES / "USER.md.j2", values)
+    assert "- Slack user id `U0000000002`: member" in user
+    assert "- Slack user id `U0000000003`: approver" in user
 
 
 def test_a_brain_without_members_keeps_its_one_person() -> None:

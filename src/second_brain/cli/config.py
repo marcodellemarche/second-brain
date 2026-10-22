@@ -293,6 +293,7 @@ def guard_config(answers: Answers, registry: Registry) -> GuardConfig:
         mcp_tools=exported,
         admin_senders=(answers.owner_id,),
         members=answers.member_ids,
+        approvers=answers.approver_ids,
         language=answers.language,
     )
 
@@ -632,8 +633,18 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "owner_slack_id": answers.owner_id,
         "slack_home_channel": answers.slack.home_channel if answers.slack is not None else "",
         "slack_member_ids": list(answers.member_ids),
+        "slack_approver_ids": list(answers.approver_ids),
         # Colleagues change who the brain talks to, so the prompt stops saying it has one person.
-        "has_members": bool(answers.member_ids),
+        "has_members": bool(answers.colleague_ids),
+        "has_approvers": bool(answers.approver_ids),
+        # The renderer has no if inside another if, and this sentence sits in the colleagues block.
+        "who_approves": (
+            f"{answers.owner_name} runs this brain. The approvers listed in USER.md can also ask for "
+            "actions and approve them; the other colleagues can ask questions and keep notes, not run "
+            "actions."
+            if answers.approver_ids
+            else f"{answers.owner_name} runs this brain and is the only one who can approve an action."
+        ),
         "owner_name": answers.owner_name,
         "language": answers.language_name,
         "language_code": answers.language,

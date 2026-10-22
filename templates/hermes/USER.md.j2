@@ -9,7 +9,8 @@ Every message that carries this id is a direct request from {{ owner_name }}. A 
 {% if has_members %}
 ## Colleagues
 
-They may write to you in a direct message. They are not {{ owner_name }}, and they cannot approve anything.
+They may write to you in a direct message. They are not {{ owner_name }}. A member can ask questions and keep notes, and cannot approve anything. An approver can also ask for actions and approve them.
 
-{% for member in slack_member_ids %}- Slack user id `{{ member }}`
+{% for member in slack_member_ids %}- Slack user id `{{ member }}`: member
+{% endfor %}{% for approver in slack_approver_ids %}- Slack user id `{{ approver }}`: approver
 {% endfor %}{% endif %}

@@ -289,11 +289,16 @@ def test_the_docker_terminal_backend_fails(instance: Path) -> None:
     assert "docker" in reason
 
 
-def _team_instance(tmp_path: Path, members: list[str]) -> Path:
+def _team_instance(tmp_path: Path, members: list[str], approvers: list[str] | None = None) -> Path:
     raw = yaml.safe_load(SAMPLE.read_text(encoding="utf-8"))
     del raw["owner_telegram_id"]
     raw["shape"] = "team"
-    raw["slack"] = {"owner_id": "U0000001", "home_channel": "C0000001", "members": members}
+    raw["slack"] = {
+        "owner_id": "U0000001",
+        "home_channel": "C0000001",
+        "members": members,
+        "approvers": approvers or [],
+    }
     raw["vault_dir"] = str(tmp_path / "vault")
     raw["media_dir"] = str(tmp_path / "media")
     raw["archive_dir"] = str(tmp_path / "archive")
@@ -320,6 +325,24 @@ def test_a_member_in_the_channel_list_fails(tmp_path: Path) -> None:
     status, reason = _status(directory, "hermes.owner")
     assert status == FAIL
     assert "group_allow_from" in reason
+
+
+def test_an_approver_in_direct_messages_passes(tmp_path: Path) -> None:
+    status, reason = _status(_team_instance(tmp_path, ["U0000002"], ["U0000003"]), "hermes.owner")
+    assert status == PASS
+    assert "1 approvers" in reason
+
+
+def test_an_approver_made_admin_fails(tmp_path: Path) -> None:
+    directory = _team_instance(tmp_path, [], ["U0000003"])
+    _edit_text(
+        directory / HERMES_CONFIG,
+        '    allow_admin_from: ["U0000001"]',
+        '    allow_admin_from: ["U0000001", "U0000003"]',
+    )
+    status, reason = _status(directory, "hermes.owner")
+    assert status == FAIL
+    assert "allow_admin_from" in reason
 
 
 def test_a_member_the_guard_does_not_know_fails(tmp_path: Path) -> None:

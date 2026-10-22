@@ -56,21 +56,29 @@ class SlackAnswers(BaseModel):
         default_factory=list,
         description="Slack member ids of colleagues who may write to the brain in a direct message.",
     )
+    approvers: list[str] = Field(
+        default_factory=list,
+        description="Slack member ids of colleagues who may also ask for actions and approve them, "
+        "in a direct message.",
+    )
 
-    @field_validator("members")
+    @field_validator("members", "approvers")
     @classmethod
-    def _check_members(cls, value: list[str]) -> list[str]:
+    def _check_ids(cls, value: list[str]) -> list[str]:
         for member in value:
             if not SLACK_MEMBER_ID.fullmatch(member):
                 raise ValueError(f"not a Slack member id: {member!r}")
         if len(set(value)) != len(value):
-            raise ValueError("a Slack member is listed twice")
+            raise ValueError(f"a Slack member is listed twice: {value}")
         return value
 
     @model_validator(mode="after")
-    def _owner_is_not_a_member(self) -> SlackAnswers:
-        if self.owner_id in self.members:
-            raise ValueError("the owner is not a member: leave them out of slack.members")
+    def _one_role_each(self) -> SlackAnswers:
+        if self.owner_id in self.members or self.owner_id in self.approvers:
+            raise ValueError("the owner is neither a member nor an approver: leave them out of both lists")
+        both = sorted(set(self.members) & set(self.approvers))
+        if both:
+            raise ValueError(f"one role per person: {', '.join(both)} is both a member and an approver")
         return self
 
 
@@ -459,8 +467,11 @@ class Answers(BaseModel):
     def _one_channel_and_consistent_tools(self) -> Answers:
         if (self.owner_telegram_id is None) == (self.slack is None):
             raise ValueError("set either owner_telegram_id or a slack section, not both and not neither")
-        if self.slack is not None and self.slack.members and self.shape != "team":
-            raise ValueError("slack.members is for a team brain: a personal brain answers only its owner")
+        if self.slack is not None and self.colleague_ids and self.shape != "team":
+            raise ValueError(
+                "slack.members and slack.approvers are for a team brain: a personal brain answers only "
+                "its owner"
+            )
         if self.tools.archive is not None and self.archive_dir is None:
             raise ValueError("tools.archive needs archive_dir")
         if self.tools.jobs and not self.job_kinds:
@@ -509,6 +520,15 @@ class Answers(BaseModel):
     def member_ids(self) -> tuple[str, ...]:
         """Colleagues a team brain also answers, in direct messages only."""
         return tuple(self.slack.members) if self.slack is not None else ()
+
+    @property
+    def approver_ids(self) -> tuple[str, ...]:
+        """Colleagues who may also ask for actions and approve them, in direct messages only."""
+        return tuple(self.slack.approvers) if self.slack is not None else ()
+
+    @property
+    def colleague_ids(self) -> tuple[str, ...]:
+        return self.member_ids + self.approver_ids
 
     @property
     def language_name(self) -> str:

@@ -58,8 +58,11 @@ class GuardConfig(BaseModel):
     admin_senders: tuple[str, ...] = ()
     # Colleagues a team brain also answers. They get what runs on its own (read and internal);
     # anything other people would see, anything that leaves the system and every approval stay
-    # the owner's, because the credentials behind those tools are the owner's.
+    # with the owner and the approvers.
     members: tuple[str, ...] = ()
+    # Colleagues the guard treats like the owner: they may ask for actions and approve them. They
+    # write only in a direct message, so the card they approve is always one they asked for.
+    approvers: tuple[str, ...] = ()
     search_tools: frozenset[str] = frozenset(DEFAULT_SEARCH_TOOLS)
     # The language the owner reads, so the approval card is written in it and not in policy codes.
     language: Literal["it", "en"] = "en"

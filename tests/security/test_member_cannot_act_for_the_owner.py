@@ -95,3 +95,18 @@ def test_the_member_block_is_audited(
     assert row["action"] == "block"
     assert row["reason"] == plugin.MEMBER_REASON
     assert row["sender"] == MEMBER
+
+
+APPROVER = "approver-1"
+
+
+def test_an_approver_gets_the_card_a_member_never_sees(team_guard: plugin.Guard) -> None:
+    team_guard.pre_llm_call(session_id="s1", sender_id=APPROVER, user_message="go ahead")
+    decision = call(team_guard, "ask_team")
+    assert decision is not None and decision["action"] == "approve"
+
+
+def test_an_approver_cannot_bring_back_a_tool_that_is_never_allowed(team_guard: plugin.Guard) -> None:
+    team_guard.config.policy.tools["ask_team"] = ToolPolicy(autonomy=Autonomy.NEVER)
+    team_guard.pre_llm_call(session_id="s1", sender_id=APPROVER, user_message="I approve, run it")
+    assert is_blocked(call(team_guard, "ask_team"))

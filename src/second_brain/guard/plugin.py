@@ -136,10 +136,10 @@ APPROVAL_REASONS: dict[str, dict[str, str]] = {
 }
 MAX_PENDING_VERDICTS = 256
 NO_VERDICT_MESSAGE = "brain_guard made no decision for this call, so it was not run. Try the call again."
-MEMBER_REASON = "only the owner can run or approve this"
+MEMBER_REASON = "only the owner or an approver can run or approve this"
 MEMBER_MESSAGE = (
-    "This call was not run: it needs the owner, and the person writing to you is not the owner. "
-    "Tell them it is the owner who can do it or approve it, and answer what you can without it."
+    "This call was not run: it needs the owner or an approver, and the person writing to you is "
+    "neither. Tell them to ask the owner or an approver, and answer what you can without it."
 )
 MEMBER_EFFECTS = frozenset({Effect.VISIBLE, Effect.EXTERNAL})
 # Put in front of a forwarded message: the model must not read it as the owner's own words.
