@@ -440,3 +440,9 @@ def test_thinking_is_off_by_default_and_follows_the_answers() -> None:
     assert off["agent"]["reasoning_effort"] in ("none", None, False)
     high = yaml.safe_load(render(TEMPLATES / "config.yaml.j2", dict(VALUES, model_reasoning_effort="high")))
     assert high["agent"]["reasoning_effort"] == "high"
+
+
+def test_the_brain_answers_in_the_language_it_is_spoken_to() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
+    assert "language the person writes to you in" in soul
+    assert "What you write to keep" in soul

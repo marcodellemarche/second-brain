@@ -37,6 +37,7 @@ class McpToolPolicy(BaseModel):
     autonomy: Autonomy
     taints_untrusted: bool = False
     taints_private: bool = False
+    approval: str = ""
 
 
 class GuardConfig(BaseModel):
@@ -86,7 +87,9 @@ class GuardConfig(BaseModel):
     def tool_classes(self) -> dict[str, ToolClass]:
         """The brain_tools table `classify` looks tools up in, keyed by name without the prefix."""
         return {
-            name: ToolClass(tool.effect, tool.autonomy, tool.taints_untrusted, tool.taints_private)
+            name: ToolClass(
+                tool.effect, tool.autonomy, tool.taints_untrusted, tool.taints_private, tool.approval
+            )
             for name, tool in self.mcp_tools.items()
         }
 

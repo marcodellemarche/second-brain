@@ -191,3 +191,30 @@ def test_export_keeps_the_tool_spec_values() -> None:
             "taints_private": False,
         }
     }
+
+
+def test_an_approval_line_travels_to_the_guard_table() -> None:
+    class Params(BaseModel):
+        name: str
+
+    spec = ToolSpec(
+        name="branch_create",
+        description="Create a branch.",
+        params=Params,
+        effect=Effect.EXTERNAL,
+        autonomy=Autonomy.ASK,
+        approval="Create branch `{name}`.",
+    )
+    registry = Registry()
+    registry.add(Tool(spec=spec, handler=lambda params, provenance: {}))
+    exported = export_guard_classes(registry)
+    assert exported["branch_create"]["approval"] == "Create branch `{name}`."
+    config = GuardConfig.model_validate(
+        {
+            "vault_root": "/vault",
+            "guard_dir": "/guard",
+            "hermes_config_path": "/c.yaml",
+            "mcp_tools": exported,
+        }
+    )
+    assert config.tool_classes()["branch_create"].approval == "Create branch `{name}`."

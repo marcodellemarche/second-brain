@@ -583,3 +583,8 @@ def test_the_proxy_opens_a_declared_port_and_matches_an_ip_by_address() -> None:
     allow_ip = squid.index("http_access allow CONNECT allowed_egress_ip")
     assert squid.index("http_access deny private_dst") < allow_ip
     assert squid.strip().endswith("http_access deny all")
+
+
+def test_hermes_reads_the_catalog_overlay_read_only() -> None:
+    compose = yaml.safe_load(render(DEPLOY / "compose.yaml.j2", VALUES))
+    assert "./config/hermes/locales:/opt/data/locales:ro" in compose["services"]["hermes"]["volumes"]

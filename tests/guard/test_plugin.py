@@ -932,3 +932,61 @@ def test_a_pending_forward_older_than_ten_minutes_is_ignored(
     clock["now"] += session_module.FORWARD_TTL_SECONDS + 1
     guard.pre_llm_call(session_id="s1", sender_id="u1")
     assert guard.store.flags("s1") == (False, False)
+
+
+# --- a tool's own approval line ---------------------------------------------------------------
+
+
+def _guard_with_line(tmp_path: Path, hermes_config: Path, line: str) -> plugin.Guard:
+    tools = {
+        **CONFIG["mcp_tools"],
+        "branch_create": {"effect": "external", "autonomy": "ask", "approval": line},
+    }
+    config = GuardConfig.model_validate(
+        {
+            **CONFIG,
+            "mcp_tools": tools,
+            "guard_dir": str(tmp_path / "guard"),
+            "hermes_config_path": str(hermes_config),
+        }
+    )
+    return plugin.Guard(config)
+
+
+def test_a_tool_line_replaces_the_json_and_the_always_asks_reason(
+    tmp_path: Path, hermes_config: Path
+) -> None:
+    guard = _guard_with_line(
+        tmp_path, hermes_config, "Create branch `{name}` in *{repo}*, from `{start|main}`."
+    )
+    directive = guard.pre_tool_call(
+        tool_name="mcp__brain__branch_create",
+        args={"name": "brain/x", "repo": "acme/argo"},
+        session_id="s1",
+        tool_call_id="c1",
+    )
+    assert directive is not None and directive["action"] == "approve"
+    assert directive["message"] == "Create branch `brain/x` in *acme/argo*, from `main`."
+
+
+def test_a_session_reason_stays_under_the_tool_line() -> None:
+    decision = Decision(action="ask", reason="rule of two")
+    text = plugin._approval_text("mcp__brain__x", {"name": "a"}, decision, "en", "Do `{name}`.")
+    assert text.splitlines()[0] == "Do `a`."
+    assert "private notes" in text
+
+
+def test_the_line_cannot_mention_link_or_break_out_of_code() -> None:
+    line = plugin.render_approval(
+        "Reply: {body}", {"body": "<!here> see <https://evil.example|x> `rm` & co\nsecond line"}
+    )
+    assert "<" not in line and ">" not in line and "`" not in line and "\n" not in line
+    assert "&" not in line
+
+
+def test_lists_of_objects_and_long_values_are_compact() -> None:
+    files = [{"path": f"dir/file{i}.yaml", "content": "x" * 5000} for i in range(3)]
+    line = plugin.render_approval("Files: {files:path}. Body: {body}", {"files": files, "body": "y" * 1000})
+    assert "dir/file0.yaml, dir/file1.yaml, dir/file2.yaml" in line
+    assert "xxxx" not in line
+    assert len(line) <= plugin.APPROVAL_CARD_CHARS

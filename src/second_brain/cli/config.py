@@ -25,6 +25,7 @@ from second_brain.cli.answers import (
     AnswersError,
     StackLimitsAnswers,
 )
+from second_brain.cli.locales import render_locale
 from second_brain.cli.render import render_template
 from second_brain.cli.secrets import (
     CALENDAR_TOKEN,
@@ -655,4 +656,5 @@ def render_hermes(answers: Answers, registry: Registry, generated: Mapping[str, 
         "config/hermes/config.yaml": render_template(hermes / "config.yaml.j2", values),
         "config/hermes/SOUL.md": render_template(hermes / "SOUL.md.j2", values),
         "config/hermes/USER.md": render_template(hermes / "USER.md.j2", values),
+        **render_locale(answers.language),
     }

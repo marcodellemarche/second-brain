@@ -118,3 +118,6 @@ class ToolSpec(BaseModel):
     taints_untrusted: bool = False
     # The result carries private data: vault notes, documents, mail.
     taints_private: bool = False
+    # One line for the approval card, with `{arg}`, `{arg|fallback}` and `{list_arg:key}` taken
+    # from the call's arguments, for example "Create branch `{name}` in {repo|the default repo}".
+    approval: str = ""

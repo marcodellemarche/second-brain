@@ -21,16 +21,20 @@ from second_brain.tools.registry import Registry
 
 
 def export_guard_classes(registry: Registry) -> dict[str, dict[str, Any]]:
-    """Effect, autonomy and taints of every registered tool, keyed by name without the prefix."""
-    return {
-        spec.name: {
-            "effect": spec.effect.value,
-            "autonomy": spec.autonomy.value,
-            "taints_untrusted": spec.taints_untrusted,
-            "taints_private": spec.taints_private,
-        }
-        for spec in registry.specs()
+    """Effect, autonomy, taints and approval line of every registered tool, keyed by name."""
+    return {spec.name: _guard_class(spec) for spec in registry.specs()}
+
+
+def _guard_class(spec: Any) -> dict[str, Any]:
+    exported: dict[str, Any] = {
+        "effect": spec.effect.value,
+        "autonomy": spec.autonomy.value,
+        "taints_untrusted": spec.taints_untrusted,
+        "taints_private": spec.taints_private,
     }
+    if spec.approval:
+        exported["approval"] = spec.approval
+    return exported
 
 
 def render(classes: dict[str, dict[str, Any]]) -> str:

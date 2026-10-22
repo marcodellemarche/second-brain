@@ -30,6 +30,7 @@ class ToolClass:
     autonomy: Autonomy
     taints_untrusted: bool = False
     taints_private: bool = False
+    approval: str = ""
 
 
 UNKNOWN = ToolClass(Effect.EXTERNAL, Autonomy.NEVER, True, True)

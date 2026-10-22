@@ -134,6 +134,8 @@ services:
       - ./secrets/hermes.env:/etc/hermes/.env:ro
       - ./config/hermes/SOUL.md:/opt/data/SOUL.md:ro
       - ./config/hermes/USER.md:/opt/data/USER.md:ro
+      # Hermes reads its catalog overrides from here: the approval card's labels and outcomes.
+      - ./config/hermes/locales:/opt/data/locales:ro
       - ./config/brain-guard.yaml:/etc/brain-guard/config.yaml:ro
       # The vault is read-only here: brain_tools is the only writer.
       - {{ vault_dir }}:/vault:ro

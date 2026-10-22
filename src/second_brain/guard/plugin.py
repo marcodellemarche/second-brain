@@ -362,7 +362,7 @@ class Guard:
         if verdict.decision.action == "block":
             return {"action": "block", "message": verdict.message or verdict.decision.reason}
         if verdict.decision.action == "ask":
-            message = _approval_text(tool_name, call_args, verdict.decision, self.config.language)
+            message = self._card(tool_name, call_args, verdict.decision)
             directive = {"action": "approve", "message": message}
             if tool_call_id:
                 # One approval covers this call only, never the same tool for the rest of the session.
@@ -443,11 +443,7 @@ class Guard:
         verdict: Verdict,
     ) -> None:
         # The exact text the human is shown, so the audit says what was asked, not only that.
-        prompt = (
-            _approval_text(tool_name, args, verdict.decision, self.config.language)
-            if verdict.decision.action == "ask"
-            else ""
-        )
+        prompt = self._card(tool_name, args, verdict.decision) if verdict.decision.action == "ask" else ""
         self.audit.append(
             {
                 "event": "decision",
@@ -465,6 +461,12 @@ class Guard:
                 "args": _preview(args, ARGS_PREVIEW_CHARS),
             }
         )
+
+    def _card(self, tool_name: str, args: dict[str, Any], decision: Decision) -> str:
+        """The approval text: the tool's own line when it declares one, else the generic one."""
+        tool_class = self.tool_classes.get(_policy_name(tool_name))
+        template = tool_class.approval if tool_class is not None else ""
+        return _approval_text(tool_name, args, decision, self.config.language, template)
 
     def _remember(self, session_id: str, tool_call_id: str, verdict: Verdict) -> None:
         if not tool_call_id:
@@ -618,11 +620,55 @@ def _scheduled(task_id: str, session_id: str) -> str:
     return f"session:{session_id}" if session_id else ""
 
 
-def _approval_text(tool_name: str, args: dict[str, Any], decision: Decision, language: str = "en") -> str:
-    """What the human sees when asked: what will happen, in plain words, and why the guard asks."""
+def _approval_text(
+    tool_name: str, args: dict[str, Any], decision: Decision, language: str = "en", template: str = ""
+) -> str:
+    """What the human sees when asked: what will happen, in plain words, and why the guard asks.
+
+    A tool's own line already says what happens, so "this tool always asks" adds nothing under it;
+    a reason that depends on the session (the rule of two) is always kept.
+    """
     reasons = APPROVAL_REASONS.get(language, APPROVAL_REASONS["en"])
     reason = reasons.get(decision.reason) or reasons[""]
+    if template:
+        lines = [render_approval(template, args)]
+        return "\n".join(lines if decision.reason == "tool requires approval" else [*lines, reason])
     return "\n".join([*_approval_lines(tool_name, args, language), reason])
+
+
+APPROVAL_FIELD = re.compile(r"\{([a-z_][a-z0-9_]*)(?::([a-z_][a-z0-9_]*))?(?:\|([^{}]*))?\}")
+APPROVAL_VALUE_CHARS = 140
+APPROVAL_CARD_CHARS = 450
+
+
+def render_approval(template: str, args: dict[str, Any]) -> str:
+    """Fill a tool's approval line from the call's arguments, made safe for a chat card.
+
+    The arguments come from the model, so every value is one line, clipped, and cannot open a
+    Slack mention (`<!here>`), a link or a code span of its own.
+    """
+
+    def value(match: re.Match[str]) -> str:
+        name, key, fallback = match.group(1), match.group(2), match.group(3)
+        raw = args.get(name)
+        if key and isinstance(raw, list):
+            raw = [item.get(key) for item in raw if isinstance(item, dict) and item.get(key)]
+        if isinstance(raw, list):
+            text = ", ".join(str(item) for item in raw if str(item).strip())
+        elif isinstance(raw, dict):
+            text = _dumps(raw)
+        elif raw is None or (isinstance(raw, str) and not raw.strip()):
+            text = ""
+        else:
+            text = str(raw)
+        text = text or (fallback or "").strip() or "-"
+        return _short(_card_safe(text), APPROVAL_VALUE_CHARS)
+
+    return _short(APPROVAL_FIELD.sub(value, template), APPROVAL_CARD_CHARS)
+
+
+def _card_safe(text: str) -> str:
+    return text.replace("<", "\u2039").replace(">", "\u203a").replace("`", "'").replace("&", "+")
 
 
 def _approval_lines(tool_name: str, args: dict[str, Any], language: str) -> list[str]:

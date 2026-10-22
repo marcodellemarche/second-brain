@@ -86,6 +86,7 @@ def test_every_config_file_is_created(instance: Path) -> None:
         "secrets/terminal_host_key",
     }
     assert expected <= created
+    assert any(path.startswith("config/hermes/locales/") for path in created)
     for name in GENERATED:
         assert f"secrets/{name}" in created, name
 

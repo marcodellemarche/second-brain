@@ -81,6 +81,7 @@ A missing section is an empty mapping, so a package with no options needs nothin
 - `effect`: `read`, `internal`, `visible` or `external`.
 - `autonomy`: `auto`, `notify`, `ask` or `never`.
 - `hosts`: the egress the tool needs. `sb init` adds them to the squid allowlist. A host is a name or an IP address, with `:port` when it is not 443 (a Kubernetes API on 6443): the port is opened for CONNECT, and an IP address is matched by address.
+- `approval`: optional, one line for the approval card of a tool that asks, with `{arg}`, `{arg|fallback}` and `{list_arg:key}` filled from the call. Write what will happen and where ("Create branch `{name}` in {repo}"): the card then shows that instead of the raw arguments, and drops the generic "this tool always asks" line. Values are made safe for the chat card and clipped.
 - `credentials`: names of secrets, resolved from files at runtime. Never values in config.
 - `taints_untrusted`: the result carries words written by someone else, such as mail, web pages or invite descriptions.
 - `taints_private`: the result carries private data.
