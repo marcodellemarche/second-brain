@@ -19,12 +19,8 @@ coredump_dir /tmp
 shutdown_lifetime 3 seconds
 
 acl SSL_ports port 443
-{% if has_mail %}
-# IMAP is 993, not 443, so a brain with a mail sidecar opens one more port to one host: the tunnel
-# is still a CONNECT through this proxy, and `allowed_egress` still decides which host.
-acl SSL_ports port 993
-{% endif %}
-# A tool that declares `host:port` (a Kubernetes API on 6443) opens that port the same way.
+# A tool or a sidecar that declares `host:port` (IMAP on 993, a Kubernetes API on 6443) opens that
+# port next to 443: the tunnel is still a CONNECT, and `allowed_egress` still decides which host.
 {% for port in egress_ports %}
 acl SSL_ports port {{ port }}
 {% endfor %}

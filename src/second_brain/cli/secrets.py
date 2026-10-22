@@ -43,9 +43,6 @@ TERMINAL_HOST_PUBKEY = "terminal_host_key.pub"
 # Names of the values that come from a service.
 MODEL_API_KEY = "model_api_key"
 CALENDAR_TOKEN = "calendar_token"
-# The Gmail app password and the address it belongs to: only the mail sidecar reads them.
-MAIL_USER = "mail_user"
-MAIL_APP_PASSWORD = "mail_app_password"
 # The token that pushes the vault into the remote repo: only brain-tools reads it.
 VAULT_REMOTE_TOKEN = "vault_remote_token"
 
@@ -71,16 +68,6 @@ EXTERNAL: tuple[tuple[str, str], ...] = (
         "The Google credential for the calendars: the service-account JSON key when the calendar "
         "section says `service_account: true`, otherwise an OAuth access token, which expires "
         "after an hour and has to be replaced by hand.",
-    ),
-    (
-        MAIL_USER,
-        "The Gmail address the mail sidecar reads, whole (`someone@example.com`). Only for a brain "
-        "with a `tools.mail` section.",
-    ),
-    (
-        MAIL_APP_PASSWORD,
-        "A Google app password for that address, not the account password. Create one at "
-        "myaccount.google.com/apppasswords; revoke it there when it is no longer needed.",
     ),
     (
         VAULT_REMOTE_TOKEN,
@@ -120,8 +107,9 @@ class SecretsPlan:
     generated: dict[str, str]
     external: tuple[str, ...]
     ssh_keypair: bool
-    # The instance tool that declared the secret, for the ones that are not in `EXTERNAL`. It is
-    # what the README says next to the file, so the owner knows where the value comes from.
+    # The instance tool or sidecar that declared the secret ("tool x", "sidecar y"), for the ones
+    # that are not in `EXTERNAL`. The README says it next to the file, so the owner knows where the
+    # value comes from.
     instance_tools: Mapping[str, str] = field(default_factory=dict)
 
 
@@ -129,14 +117,13 @@ def plan(
     *,
     channel: str,
     calendar: bool,
-    mail: bool = False,
     vault_remote: bool = False,
     instance_credentials: Mapping[str, str] | None = None,
 ) -> SecretsPlan:
     """Every secret this instance needs. A Slack brain has no Telegram token and the other way round.
 
-    `instance_credentials` maps a secret name to the instance tool that declared it. Those are
-    external like the others: only the service the tool talks to can hand the value over.
+    `instance_credentials` maps a secret name to the instance tool or sidecar that declared it.
+    Those are external like the others: only the service it talks to can hand the value over.
     """
     generated = {name: secrets.token_urlsafe(TOKEN_BYTES) for name in GENERATED}
     external = [
@@ -147,8 +134,6 @@ def plan(
         external.append("slack_app_token")
     if calendar:
         external.append(CALENDAR_TOKEN)
-    if mail:
-        external += [MAIL_USER, MAIL_APP_PASSWORD]
     if vault_remote:
         external.append(VAULT_REMOTE_TOKEN)
     instance_tools = dict(instance_credentials or {})
@@ -263,9 +248,9 @@ def secrets_readme(plan_: SecretsPlan) -> str:
         if name in plan_.external or name == TERMINAL_SSH_KEY:
             lines.append(f"- `{name}`: {description}")
     for name in plan_.external:
-        tool = plan_.instance_tools.get(name)
-        if tool is not None and name not in dict(EXTERNAL):
-            lines.append(f"- `{name}`: needed by the instance tool {tool}.")
+        declared_by = plan_.instance_tools.get(name)
+        if declared_by is not None and name not in dict(EXTERNAL):
+            lines.append(f"- `{name}`: needed by the instance {declared_by}.")
     lines += [
         "",
         "`hermes.env` is the one exception: Hermes wants the MCP token, the chat token and the",

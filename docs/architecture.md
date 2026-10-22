@@ -53,7 +53,7 @@ There is no `_meta/log.md` and no `_meta/index.md` to keep up to date: the histo
 
 ### Sidecars
 
-The sidecars are separate containers on the internal network. Each one opens no port, mounts the vault read-only or not at all, and talks to Hermes only through a signed webhook.
+The sidecars are separate containers on the internal network. Each one opens no port, mounts the vault read-only or not at all, and talks to Hermes only through a signed webhook. An instance package can add its own sidecars (a mail poller, an audio worker): they get the same hardening, and only the hosts, secrets and volumes their spec declares.
 
 The vault watcher keeps a snapshot of every file's size and mtime and sends `{kind, path}` for what moved. It polls instead of using inotify, because the vault is a network-synced folder where inotify misses what the sync client writes underneath and fires on temporary files that never become notes. It never reads a note's content and never writes. It skips the bookkeeping folders, the temporary files of a sync in progress, and the paths the brain itself changed, recognised by a commit authored by `brain@localhost` in the last two polls. A sync conflict copy is reported immediately, because it is the one thing a human has to look at. A changed note waits until its size and mtime stop moving, because a half-written note is worse than a late event.
 

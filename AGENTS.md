@@ -51,7 +51,7 @@ ToolSpec(
 )
 ```
 
-Instance repos register tools through a Python entry point group `second_brain.tools`.
+Instance repos register tools through a Python entry point group `second_brain.tools`, and their own services through `second_brain.sidecars` (a `SidecarSpec` per service). They import only from `second_brain.ext`: the product never names an instance package.
 
 ## Repo layout
 

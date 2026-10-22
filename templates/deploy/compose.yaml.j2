@@ -66,12 +66,6 @@ secrets:
   {{ name }}:
     file: ./secrets/{{ name }}
 {% endfor %}
-{% if has_mail %}
-  mail_user:
-    file: ./secrets/mail_user
-  mail_app_password:
-    file: ./secrets/mail_app_password
-{% endif %}
   terminal_ssh_key:
     file: ./secrets/terminal_ssh_key
   webhook_ingest:
@@ -244,70 +238,7 @@ services:
     mem_limit: 512m
     pids_limit: 256
 
-{% if has_tts %}
-  tts-worker:
-    <<: *brain
-    # Not the brain image: XTTS and whisper live in their own, built from the tts/ folder.
-    image: {{ tts_image }}
-    container_name: {{ instance_name }}-tts-worker
-    command: ["python", "-m", "brain_personal.tts_worker"]
-    # No network at all: the request already carries the text to read, so this container never
-    # needs the internet, the model or the vault.
-    networks: [internal]
-    environment:
-      TTS_WORKER_CONFIG: /etc/second-brain/tts-worker.json
-      HOME: /tmp
-    volumes:
-      # The same data volume brain_tools writes the queue into, and the media folder the chat reads.
-      - data:/data
-      - {{ media_dir }}:{{ media_dir }}
-      - ./config/tts-worker.json:/etc/second-brain/tts-worker.json:ro
-    healthcheck:
-      # Synthesis is long and single threaded; the check only proves the process is alive.
-      test: ["CMD", "python", "-c", "import sys;sys.exit(0 if b'tts_worker' in open('/proc/1/cmdline','rb').read() else 1)"]
-      interval: 60s
-      timeout: 5s
-      retries: 3
-    # XTTS peaks at ~4 GB with the checkpoint in mmap, so the limit is the room it needs.
-    cpus: 1.0
-    mem_limit: 5g
-    pids_limit: 256
-{% endif %}
-{% if has_mail %}
-  mail:
-    <<: *brain
-    container_name: {{ instance_name }}-mail
-    command: ["python", "-m", "brain_personal.mail"]
-    # Out through the egress proxy, like every other way out: Gmail is a CONNECT tunnel, not a
-    # direct connection.
-    networks: [internal, egress-net]
-    environment:
-      MAIL_CONFIG: /etc/second-brain/mail.json
-      MAIL_SECRETS_DIR: /run/secrets
-      HOME: /tmp
-      HTTP_PROXY: http://egress:3128
-      HTTPS_PROXY: http://egress:3128
-      http_proxy: http://egress:3128
-      https_proxy: http://egress:3128
-      NO_PROXY: localhost,127.0.0.1
-      no_proxy: localhost,127.0.0.1
-    volumes:
-      # The staged mail, which brain_tools reads through the mail tools.
-      - data:/data
-      - ./config/mail.json:/etc/second-brain/mail.json:ro
-{% for mount in mail_rules_mount %}
-      - {{ mount }}
-{% endfor %}
-    secrets: [mail_user, mail_app_password, webhook_ingest]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import sys;sys.exit(0 if b'brain_personal' in open('/proc/1/cmdline','rb').read() else 1)"]
-      interval: 60s
-      timeout: 5s
-      retries: 3
-    cpus: 0.25
-    mem_limit: 256m
-    pids_limit: 128
-{% endif %}
+{{ instance_sidecars }}
 
   gate:
     <<: *brain

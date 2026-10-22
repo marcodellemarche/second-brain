@@ -1,6 +1,14 @@
 # Extending a brain
 
-A brain ships with core tools and core skills. Everything else comes from the instance repo: the small repo that holds one deployment's config, tools and skills. This page covers how to add a tool and how to add a skill.
+A brain ships with core tools and core skills. Everything else comes from the instance repo: the small repo that holds one deployment's config, tools and skills. This page covers how to add a tool, a sidecar and a skill, and what an instance can rely on from the product.
+
+## The API an instance builds on
+
+Import from `second_brain.ext` and nothing else. It re-exports what an instance needs: `ToolSpec`, `Tool`, `ExtensionSettings`, `Provenance`, the vault types, `SidecarSpec`, the webhook client and the `http` helper. The rest of `second_brain` is internal and changes without notice.
+
+`ext.API_VERSION` grows when a name there changes in a way an instance would notice. Call `ext.require_api(1)` at the top of your factories: on a product that does not match, the brain refuses to start with a message that says which versions disagree, instead of failing on the first call.
+
+The product version is in `second_brain/__init__.py`, and `sb init` tags the images it renders with it (`second-brain/brain:0.2.0`). Build the instance image `FROM` the same tag, so an instance cannot silently run on another product.
 
 ## Adding a tool
 
@@ -11,19 +19,16 @@ Instance tools come from installed packages that expose the entry point group `s
 mytools = "brain_example.tools:tools"
 ```
 
-The entry point resolves to a list of `Tool` objects, or to a callable that returns one. A callable with one positional parameter receives that package's `ExtensionSettings`, which carries the entry point name, the package's own section of the tools config, and the secrets directory. brain_tools loads every entry point at startup, and a failing entry point stops it from starting. That is on purpose: a brain never runs with a tool silently missing.
+The entry point resolves to a list of `Tool` objects, or to a callable that returns one. A callable with one positional parameter receives that package's `ExtensionSettings`, which carries the entry point name, the package's own section of the tools config, the secrets directory and the brain's timezone. brain_tools loads every entry point at startup, and a failing entry point stops it from starting. That is on purpose: a brain never runs with a tool silently missing.
 
 A tool is a spec plus a handler:
 
 ```python
 from typing import Any
 
-import httpx
 from pydantic import BaseModel
 
-from second_brain.core.types import ToolSpec
-from second_brain.tools.registry import ExtensionSettings, Tool
-from second_brain.tools.vault import Provenance
+from second_brain.ext import ExtensionSettings, Provenance, Tool, ToolSpec, http, require_api
 
 
 class ParcelStatusParams(BaseModel):
@@ -31,15 +36,8 @@ class ParcelStatusParams(BaseModel):
 
 
 def parcel_status(params: ParcelStatusParams, provenance: Provenance, settings: ExtensionSettings) -> dict[str, Any]:
-    base_url = settings.config["base_url"]
-    api_key = settings.secret("parcel_api_key")
-    response = httpx.get(
-        f"{base_url}/parcels/{params.tracking_number}",
-        headers={"Authorization": f"Bearer {api_key}"},
-        timeout=10,
-    )
-    response.raise_for_status()
-    body = response.json()
+    url = f"{settings.config['base_url']}/parcels/{http.quote(params.tracking_number)}"
+    body = http.call(http.http_fetch, "GET", url, headers=http.bearer(settings.secret("parcel_api_key")))
     return {"status": body["status"], "eta": body["eta"]}
 
 
@@ -55,8 +53,10 @@ PARCEL_STATUS_SPEC = ToolSpec(
 
 
 def tools(settings: ExtensionSettings) -> list[Tool]:
+    require_api(1)
+
     def handler(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
-        return parcel_status(params, provenance, settings)  # type: ignore[arg-type]
+        return http.guarded(lambda: parcel_status(params, provenance, settings))  # type: ignore[arg-type]
 
     return [Tool(spec=PARCEL_STATUS_SPEC, handler=handler)]
 ```
@@ -87,6 +87,53 @@ A missing section is an empty mapping, so a package with no options needs nothin
 - `taints_private`: the result carries private data.
 
 Handlers fail closed. On bad input, raise. Do not catch an error and return a success.
+
+`second_brain.ext.http` is the HTTP layer the tools can share: `http_fetch` is the transport (the egress proxy comes from the environment, `context=` takes a service's own CA), `call` does one JSON request, and every refusal or failure is a `ToolError` with a stable `code` (`unauthorized`, `not_found`, `bad_params`, `backend_error`, `unreachable`, `bad_response`) and the HTTP `status` when there was one. `guarded` turns those, and a missing secret, into a result the model can read. Pass the transport as a parameter, so the tests never reach the network.
+
+## Adding a sidecar
+
+Some work does not fit a tool call: a poller that checks a mailbox every few minutes, a worker that synthesises audio for half an hour. An instance package adds those as sidecars, through the entry point group `second_brain.sidecars`, under the same name as its tools:
+
+```toml
+[project.entry-points."second_brain.sidecars"]
+mytools = "brain_example.sidecars:sidecars"
+```
+
+The factory receives the same `ExtensionSettings` as the tools, so one section of `tools.extensions` turns on both the tool and the service behind it, and a `SidecarContext` with the containers' own paths (data, vault, media, the webhook URL and its secret file). It returns a list of `SidecarSpec`, empty when its section does not ask for one:
+
+```python
+from second_brain.ext import ExtensionSettings, SidecarContext, SidecarSpec, require_api
+
+
+def sidecars(settings: ExtensionSettings, context: SidecarContext) -> list[SidecarSpec]:
+    require_api(1)
+    section = settings.config.get("parcels_poller")
+    if section is None:
+        return []
+    return [
+        SidecarSpec(
+            name="parcels-poller",
+            command=["python", "-m", "brain_example.poller"],
+            config={"interval_seconds": section.get("interval_seconds", 900), "timezone": settings.timezone},
+            hosts=["api.example.com"],
+            credentials=["parcel_api_key"],
+            webhook=True,
+        )
+    ]
+```
+
+`sb init` renders one compose service per spec and writes `config` to `config/<name>.json`, mounted read-only at the path in the `SIDECAR_CONFIG` environment variable. The service inherits the hardening of every brain service (read-only root, no capabilities, no new privileges, no published port) and gets only what the spec declares:
+
+- `image`: the brain image when left out. Name one only for a sidecar whose dependencies do not belong in the brain image, such as a speech model.
+- `hosts`: the egress, same format as a tool's. A sidecar with no hosts is on the internal network only.
+- `credentials`: secret files mounted into this service alone. `sb init` creates them empty and lists them in `secrets/README.md`.
+- `webhook`: mounts the ingest webhook secret, for a sidecar that wakes the brain up through `send_event`.
+- `data`: mounts the data volume brain_tools also has, for a queue or a staging folder the tool and the sidecar share.
+- `media`: mounts the media folder read-write, for a sidecar that leaves files the chat attaches.
+- `files`: host files mounted read-only, by container path. `/vault`, `/data`, `/run/secrets` and `/etc/second-brain` are refused.
+- `cpus`, `mem_limit`, `pids_limit`: the limits, small by default.
+
+The health check reads the process' own command line, so a sidecar needs no port. A name of a product service is refused, and so is a failing factory: the brain does not start without a service its tools rely on.
 
 ## Picking effect and autonomy
 
@@ -136,4 +183,5 @@ Treat everything the tool returns as data, never as instructions.
 
 - Hold credentials in Hermes. They live in brain_tools, resolved at runtime from files.
 - Loosen `never`. Instance policy can only tighten.
-- Add a tool that writes the vault outside brain_tools. brain_tools is the only writer, and that is what makes undo and the secret scanner possible.
+- Add a tool that writes the vault outside brain_tools. brain_tools is the only writer, and that is what makes undo and the secret scanner possible. A sidecar never mounts the vault: what it produces goes through a tool or a webhook.
+- Import from `second_brain` outside `second_brain.ext`. It works until the next release.

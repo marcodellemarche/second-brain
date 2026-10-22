@@ -15,12 +15,15 @@ import ipaddress
 import subprocess
 import tempfile
 import urllib.parse
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import yaml
+from pydantic import ValidationError
+
+from second_brain import __version__ as PRODUCT_VERSION
 from second_brain.cli.answers import (
-    MAIL_RULES_IN_CONTAINER,
     Answers,
     AnswersError,
     StackLimitsAnswers,
@@ -49,6 +52,7 @@ from second_brain.sidecars.config import (
     SidecarsConfig,
     VaultWatcherSection,
 )
+from second_brain.sidecars.extension import SidecarContext, SidecarSpec, load_sidecars
 from second_brain.sidecars.scheduler import ScheduleConfig, ScheduleEntry
 from second_brain.sidecars.vault_watcher import DEFAULT_IGNORE
 from second_brain.tools.calls import HANDOFF_PATH, HandoffConfig
@@ -65,7 +69,7 @@ from second_brain.tools.jobs import JobKind
 from second_brain.tools.memory_export import SOURCE_DIR as MEMORY_SOURCE_DIR
 from second_brain.tools.memory_export import MemoryExportConfig
 from second_brain.tools.outbox import OutboxConfig
-from second_brain.tools.registry import Registry
+from second_brain.tools.registry import ExtensionError, Registry
 from second_brain.tools.remote import RemoteConfig
 from second_brain.tools.staging import StagingConfig
 from second_brain.tools.vault import VaultConfig
@@ -79,7 +83,6 @@ HERMES_WEBHOOK_BASE_URL = "http://hermes:8644/webhooks"
 SCHEDULE_STATE_FILE = DATA_IN_CONTAINER / "scheduler.json"
 DOCKER_SOCKET = Path("/var/run/docker.sock")
 SEARXNG_IMAGE = "searxng/searxng:2026.10.19-81371861f"
-TTS_IMAGE = "second-brain/tts:0.1.0"
 
 SCHEDULE_ROUTES: dict[str, str] = {
     "digest": "scheduled-digest",
@@ -223,28 +226,9 @@ def tools_config(answers: Answers) -> ToolsConfig:
         handoff=handoff_config(answers),
         remote=remote_config(answers),
         memory_export=memory_export_config(answers),
-        extensions={**tools.extensions, **instance_sections(answers)},
+        extensions=tools.extensions,
+        timezone=answers.timezone,
     )
-
-
-def instance_sections(answers: Answers) -> dict[str, dict[str, Any]]:
-    """The `extensions.personal` blocks the core knows how to fill, merged under the answers.
-
-    The tts and mail blocks are not free-form like the rest of `extensions`: their paths are the
-    ones the containers actually have, so a typo in the answers file cannot point a tool at a
-    folder nobody mounted. A brain without the block gets no tool.
-    """
-    sections: dict[str, dict[str, Any]] = {}
-    personal: dict[str, Any] = {}
-    tts = answers.tts_config()
-    if tts is not None:
-        personal["tts"] = tts
-    mail = answers.mail_config()
-    if mail is not None:
-        personal["mail"] = mail
-    if personal:
-        sections["personal"] = {**personal, **answers.tools.extensions.get("personal", {})}
-    return sections
 
 
 def export_registry(config: ToolsConfig) -> Registry:
@@ -390,14 +374,12 @@ def _schedule_entries(answers: Answers) -> list[ScheduleEntry]:
     return entries
 
 
-def egress_hosts(answers: Answers, registry: Registry) -> list[str]:
-    """Every host the egress proxy allows: the model, the chat API, and the enabled tools."""
+def egress_hosts(answers: Answers, registry: Registry, sidecars: Sequence[SidecarSpec] = ()) -> list[str]:
+    """Every host the egress proxy allows: the model, the chat API, the tools and the sidecars."""
     hosts: list[str] = [answers.endpoint_host]
     hosts += list(SLACK_HOSTS if answers.slack is not None else TELEGRAM_HOSTS)
-    # The mail sidecar reads IMAP through the proxy, so its host has to be on the allowlist even
-    # though no tool declares it: the sidecar is not a tool.
-    if answers.tools.mail is not None:
-        hosts.append(answers.tools.mail.imap_host)
+    for sidecar in sidecars:
+        hosts += [split_host(entry)[0] for entry in sidecar.hosts]
     # The sync reaches the git repo through the proxy, and git is not a tool that declares hosts.
     if answers.vault_remote is not None:
         remote_host = urllib.parse.urlparse(answers.vault_remote.url).hostname
@@ -419,9 +401,10 @@ def split_host(entry: str) -> tuple[str, int]:
     return host, int(port)
 
 
-def egress_ports(registry: Registry) -> list[int]:
-    """The ports other than 443 that a tool declared, opened for CONNECT next to 443."""
+def egress_ports(registry: Registry, sidecars: Sequence[SidecarSpec] = ()) -> list[int]:
+    """The ports other than 443 that a tool or a sidecar declared, opened for CONNECT next to 443."""
     ports = {split_host(entry)[1] for spec in registry.specs() for entry in spec.hosts}
+    ports |= {split_host(entry)[1] for sidecar in sidecars for entry in sidecar.hosts}
     return sorted(port for port in ports if port != 443)
 
 
@@ -496,28 +479,8 @@ def instance_credentials(registry: Registry) -> dict[str, str]:
         if spec.name not in instance:
             continue
         for name in spec.credentials:
-            credentials.setdefault(name, spec.name)
+            credentials.setdefault(name, f"tool {spec.name}")
     return credentials
-
-
-def mail_rules_mount(answers: Answers) -> list[str]:
-    """The host filter file, mounted where the sidecar expects it, or nothing."""
-    path = mail_rules_path(answers)
-    return [f"{path}:{MAIL_RULES_IN_CONTAINER}:ro"] if path is not None else []
-
-
-def tts_image(answers: Answers) -> str:
-    """The image that synthesises the audio: the one the answers name, else the product default."""
-    if answers.tools.tts is not None and answers.tools.tts.image:
-        return answers.tools.tts.image
-    return TTS_IMAGE
-
-
-def mail_rules_path(answers: Answers) -> Path | None:
-    """The filter the mail sidecar reads, or None when this brain has no mail section."""
-    if answers.tools.mail is None:
-        return None
-    return answers.tools.mail.rules_file
 
 
 def optional_secrets(answers: Answers) -> list[str]:
@@ -537,15 +500,102 @@ def all_secrets(answers: Answers, registry: Registry) -> list[str]:
     return names
 
 
-def instance_secrets(answers: Answers, registry: Registry) -> list[str]:
-    """The secrets brain_tools reads only because an instance tool declared them."""
+def instance_secrets(answers: Answers, registry: Registry, sidecars: Sequence[SidecarSpec] = ()) -> list[str]:
+    """The secrets that exist only because an instance tool or sidecar declared them."""
     optional = optional_secrets(answers)
-    return [name for name in all_secrets(answers, registry) if name not in optional]
+    names = [name for name in all_secrets(answers, registry) if name not in optional]
+    for sidecar in sidecars:
+        names += [name for name in sidecar.credentials if name not in names and name not in optional]
+    return names
+
+
+def instance_sidecars(answers: Answers) -> list[SidecarSpec]:
+    """The sidecars the installed instance packages declare for this brain's answers."""
+    context = SidecarContext(
+        timezone=answers.timezone,
+        media_dir=answers.media_dir,
+        data_dir=DATA_IN_CONTAINER,
+        vault_dir=VAULT_IN_CONTAINER,
+        secrets_dir=SECRETS_IN_CONTAINER,
+        webhook_url=HERMES_WEBHOOK_BASE_URL,
+        webhook_secret_file=SECRETS_IN_CONTAINER / WEBHOOK_INGEST,
+    )
+    try:
+        return load_sidecars(answers.tools.extensions, context, timezone=answers.timezone)
+    except (ExtensionError, ValidationError) as exc:
+        raise AnswersError(f"an instance sidecar is not valid: {exc}") from None
+
+
+def sidecar_credentials(sidecars: Sequence[SidecarSpec]) -> dict[str, str]:
+    """The secrets the sidecars read, mapped to the first sidecar that named each one."""
+    credentials: dict[str, str] = {}
+    for sidecar in sidecars:
+        for name in sidecar.credentials:
+            credentials.setdefault(name, f"sidecar {sidecar.name}")
+    return credentials
+
+
+def sidecar_services(instance_name: str, media_dir: Path, sidecars: Sequence[SidecarSpec]) -> str:
+    """The compose services of the instance sidecars, as YAML text under `services:`.
+
+    The template renderer only substitutes text, so the services are built here from the spec:
+    a sidecar gets the network, the volumes and the secrets it declared, and nothing else.
+    """
+    blocks: list[str] = []
+    for sidecar in sidecars:
+        environment: dict[str, str] = {"SIDECAR_CONFIG": str(sidecar.config_path), "HOME": "/tmp"}
+        networks = ["internal"]
+        if sidecar.hosts:
+            networks.append("egress-net")
+            for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                environment[key] = "http://egress:3128"
+            environment["NO_PROXY"] = environment["no_proxy"] = "localhost,127.0.0.1"
+        volumes = [f"./config/{sidecar.name}.json:{sidecar.config_path}:ro"]
+        if sidecar.data:
+            volumes.append(f"data:{DATA_IN_CONTAINER}")
+        if sidecar.media:
+            volumes.append(f"{media_dir}:{media_dir}")
+        volumes += [f"{source}:{target}:ro" for target, source in sidecar.files.items()]
+        secrets = list(sidecar.credentials)
+        if sidecar.webhook:
+            secrets.append(WEBHOOK_INGEST)
+        service: dict[str, Any] = {}
+        if sidecar.image is not None:
+            service["image"] = sidecar.image
+        service["container_name"] = f"{instance_name}-{sidecar.name}"
+        service["command"] = list(sidecar.command)
+        service["networks"] = networks
+        service["environment"] = environment
+        service["volumes"] = volumes
+        if secrets:
+            service["secrets"] = secrets
+        # No port to probe: the check only proves the process the command started is still there.
+        service["healthcheck"] = {
+            "test": [
+                "CMD",
+                "python",
+                "-c",
+                "import sys;sys.exit(0 if "
+                f"b{sidecar.health_marker!r} in open('/proc/1/cmdline','rb').read() else 1)",
+            ],
+            "interval": "60s",
+            "timeout": "5s",
+            "retries": 3,
+        }
+        service["cpus"] = sidecar.cpus
+        service["mem_limit"] = sidecar.mem_limit
+        service["pids_limit"] = sidecar.pids_limit
+        body = yaml.safe_dump(service, sort_keys=False, default_flow_style=False, width=1000)
+        indented = "".join(f"    {line}\n" for line in body.splitlines())
+        blocks.append(f"  {sidecar.name}:\n    <<: *brain\n{indented}")
+    return "\n".join(blocks)
 
 
 def template_values(answers: Answers, registry: Registry, generated: Mapping[str, str]) -> dict[str, Any]:
     """Every placeholder the deploy and Hermes templates use, and nothing else."""
     schema = vault_schema(answers.language)
+    sidecars = instance_sidecars(answers)
+    egress = split_egress(egress_hosts(answers, registry, sidecars))
     return {
         "instance_name": answers.instance_name,
         "vault_dir": str(answers.vault_dir),
@@ -554,9 +604,9 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "vault_group_gids": [str(answers.vault_group_gid)] if answers.vault_group_gid else [],
         "media_dir": str(answers.media_dir),
         "terminal_cwd": "/workspace",
-        "hermes_image": "second-brain/hermes:0.1.0",
-        "terminal_image": "second-brain/terminal:0.1.0",
-        "brain_image": answers.brain_image or "second-brain/brain:0.1.0",
+        "hermes_image": f"second-brain/hermes:{PRODUCT_VERSION}",
+        "terminal_image": f"second-brain/terminal:{PRODUCT_VERSION}",
+        "brain_image": answers.brain_image or f"second-brain/brain:{PRODUCT_VERSION}",
         "egress_image": "ubuntu/squid:6.6-24.04_edge",
         "searxng_image": SEARXNG_IMAGE,
         "model_upstream": model_upstream(answers),
@@ -568,7 +618,7 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "docker_gid": docker_gid(answers),
         "brain_tools_extra_volumes": brain_tools_extra_volumes(answers),
         "optional_secrets": optional_secrets(answers),
-        "instance_secrets": instance_secrets(answers, registry),
+        "instance_secrets": instance_secrets(answers, registry, sidecars),
         "brain_tools_secrets": ["tools_token", "outbox_secret", *all_secrets(answers, registry)],
         "skills_dir": "/data/skills",
         "terminal_ssh_key": str(SECRETS_IN_CONTAINER / "terminal_ssh_key"),
@@ -594,25 +644,19 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         # A team brain shares one vault with the whole team, so the prompt says how to use it.
         "is_team": answers.shape == "team",
         "has_handoff": answers.handoff is not None,
-        # The long-audio worker and the mail sidecar are services of their own, so the compose file
-        # decides whether to render them and the images they run.
-        "has_tts": answers.tools.tts is not None,
-        "tts_image": tts_image(answers),
-        "has_mail": answers.tools.mail is not None,
+        # The services the instance packages add, rendered from their specs.
+        "instance_sidecars": sidecar_services(answers.instance_name, answers.media_dir, sidecars),
         # The memory the brain keeps for itself is on a volume of its own, mounted read-only into
         # brain-tools only when this brain copies it into the vault.
         "has_memory_export": answers.memory_export is not None,
-        # The filter file, when the answers name one: a list with zero or one entry, because the
-        # renderer has no nested conditional block.
-        "mail_rules_mount": mail_rules_mount(answers),
         # The skills this instance schedules by name, so the Hermes config gets a route for each.
         "scheduled_skills": sorted(answers.schedule.skills),
         "deliver_platform": answers.channel.lower(),
         "example_note_path": f"{schema.folder('knowledge')}/example.md",
-        "egress_hosts": split_egress(egress_hosts(answers, registry))[0],
-        "egress_ips": split_egress(egress_hosts(answers, registry))[1],
-        "has_egress_ips": bool(split_egress(egress_hosts(answers, registry))[1]),
-        "egress_ports": egress_ports(registry),
+        "egress_hosts": egress[0],
+        "egress_ips": egress[1],
+        "has_egress_ips": bool(egress[1]),
+        "egress_ports": egress_ports(registry, sidecars),
         "searxng_upstream_hosts": " ".join(SEARXNG_UPSTREAM_HOSTS),
         "searxng_secret_key": generated[SEARXNG_KEY],
     }

@@ -344,13 +344,8 @@ def _files_check(ctx: _Instance) -> CheckResult:
     expected += [f"{SECRETS_DIR}/{secret}" for secret in GENERATED]
     expected += [f"{SECRETS_DIR}/{secret}" for secret in to_fill]
     expected += [f"{SECRETS_DIR}/README.md", f"{SECRETS_DIR}/hermes.env"]
-    # The settings of the two services an instance adds, when compose declares them: a brain
-    # without the audio worker or the mail sidecar has neither file.
-    services = _declared_services(ctx.root)
-    if "tts-worker" in services:
-        expected.append("config/tts-worker.json")
-    if "mail" in services:
-        expected.append("config/mail.json")
+    # The settings of the sidecars an instance adds: compose points each one at its own file.
+    expected += [f"config/{service}.json" for service in _sidecar_services(ctx.root)]
     missing = [relative for relative in expected if not (ctx.root / relative).is_file()]
     if readme_error is not None:
         return _fail(name, readme_error)
@@ -959,6 +954,21 @@ def _compose_probe(
     if result.returncode == 3:
         return 3, detail, None
     return None, detail, _fail(name, detail or f"the probe in {service} exited {result.returncode}")
+
+
+def _sidecar_services(root: Path) -> list[str]:
+    """The services compose.yaml gives a `SIDECAR_CONFIG`: the instance sidecars."""
+    data, _ = _read_yaml(root / "compose.yaml")
+    services = data.get("services") if isinstance(data, dict) else None
+    if not isinstance(services, dict):
+        return []
+    return sorted(
+        str(name)
+        for name, service in services.items()
+        if isinstance(service, dict)
+        and isinstance(service.get("environment"), dict)
+        and "SIDECAR_CONFIG" in service["environment"]
+    )
 
 
 def _declared_services(root: Path) -> list[str]:

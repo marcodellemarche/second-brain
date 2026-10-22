@@ -61,7 +61,7 @@ uv run sb init ~/my-brain --answers my-answers.yaml
 `sb init` renders the whole instance: the Hermes config, the compose file, the egress allowlist, the internal secrets and an empty vault from the template. Its `README.md` lists the next steps for that instance, which in short are:
 
 1. Fill the external secrets listed in `~/my-brain/secrets/README.md` (model key, chat tokens, calendar credential).
-2. Download the speech-to-text model into `models/` and build the three images (`second-brain/hermes`, `second-brain/brain`, `second-brain/terminal`) from `templates/deploy/`.
+2. Download the speech-to-text model into `models/` and build the three images (`second-brain/hermes`, `second-brain/brain`, `second-brain/terminal`) from `templates/deploy/`, tagged with the version in `src/second_brain/__init__.py`: that is the tag `sb init` renders.
 3. `sudo sh owners.sh`, then `uv run sb check ~/my-brain` until every static check passes.
 4. `docker compose up -d` in the instance folder, then `uv run sb check ~/my-brain --live`.
 
@@ -83,7 +83,7 @@ ToolSpec(
 )
 ```
 
-`sb init` finds the instance tools, adds them to the guard table, opens their hosts in the egress proxy and lists their secrets. The instance image is just `FROM second-brain/brain` with the package installed on top. [docs/extending.md](docs/extending.md) explains how to pick effect and autonomy, how to add skills and what an instance must not do.
+`sb init` finds the instance tools, adds them to the guard table, opens their hosts in the egress proxy and lists their secrets. A package can also add its own services through a `second_brain.sidecars` entry point (a mail poller, an audio worker), and it imports only from `second_brain.ext`. The instance image is just `FROM second-brain/brain` with the package installed on top. [docs/extending.md](docs/extending.md) explains how to pick effect and autonomy, how to add sidecars and skills, and what an instance must not do.
 
 ## Documentation
 
@@ -122,7 +122,7 @@ Every behaviour change comes with tests, and every security rule comes with a te
 
 ## Status
 
-Version 0.1.0. It runs every day for a personal brain and a team brain, but interfaces and file formats can still change between versions.
+Version 0.2.0. It runs every day for a personal brain and a team brain, but interfaces and file formats can still change between versions.
 
 ## License
 

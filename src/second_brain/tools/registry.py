@@ -33,7 +33,7 @@ class ExtensionError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class ExtensionSettings:
-    """What one instance package gets: its name, its config section and the secrets directory.
+    """What one instance package gets: its name, its config section, the secrets and the timezone.
 
     The section is what the instance repo wrote under `extensions: <name>` in the tools config.
     Secrets are never in there: a tool names them in its spec and reads them by file, so a
@@ -43,6 +43,7 @@ class ExtensionSettings:
     name: str
     config: Mapping[str, Any] = field(default_factory=dict)
     secrets_dir: Path = Path("/run/secrets")
+    timezone: str = "UTC"
 
     def secret(self, name: str) -> str:
         """Read one secret from `<secrets_dir>/<name>`, on every call, so rotation needs no restart."""

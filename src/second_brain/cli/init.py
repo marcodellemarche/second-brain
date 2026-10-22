@@ -24,15 +24,16 @@ import yaml
 
 from second_brain.cli.answers import Answers
 from second_brain.cli.config import (
-    SECRETS_IN_CONTAINER,
     TEMPLATES,
     capture_dir,
     export_registry,
     git_init,
     guard_config,
     instance_credentials,
+    instance_sidecars,
     render_deploy,
     render_hermes,
+    sidecar_credentials,
     sidecars_config,
     tools_config,
 )
@@ -95,7 +96,10 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
     # tools declared: the guard table and the egress allowlist come from the same build.
     config = tools_config(answers)
     registry = export_registry(config)
+    sidecars = instance_sidecars(answers)
     credentials = instance_credentials(registry)
+    for name, declared_by in sidecar_credentials(sidecars).items():
+        credentials.setdefault(name, declared_by)
 
     try:
         generated, secrets_created = write_secrets(
@@ -103,7 +107,6 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
             plan(
                 channel=answers.channel,
                 calendar=answers.tools.calendar is not None,
-                mail=answers.tools.mail is not None,
                 vault_remote=answers.vault_remote is not None,
                 instance_credentials=credentials,
             ),
@@ -119,7 +122,7 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
         "config/brain-tools.yaml": _yaml(config.model_dump(mode="json", exclude_none=True)),
         "config/brain-guard.yaml": _yaml(_guard_dict(guard_config(answers, registry))),
         "config/sidecars.yaml": _yaml(sidecars_config(answers).model_dump(mode="json", exclude_none=True)),
-        **_instance_configs(answers),
+        **{f"config/{sidecar.name}.json": _json(sidecar.config) for sidecar in sidecars},
         OWNERS_SCRIPT: _owners_script(answers, credentials),
         "README.md": _readme(answers, instance),
     }
@@ -139,21 +142,6 @@ def init(answers: Answers, instance_dir: Path, *, force: bool = False) -> InitRe
     if not result.vault_skipped:
         _copy_vault(answers, result)
     return result
-
-
-def _instance_configs(answers: Answers) -> dict[str, str]:
-    """The settings files of the services an instance adds: the audio worker and the mail sidecar.
-
-    Only the ones this brain has. The paths in them are the containers' own, so they are rendered
-    from the answers and never typed by hand.
-    """
-    files: dict[str, str] = {}
-    worker = answers.tts_worker_config()
-    if worker is not None:
-        files["config/tts-worker.json"] = _json(worker)
-    if answers.tools.mail is not None:
-        files["config/mail.json"] = _json(answers.mail_sidecar_config(SECRETS_IN_CONTAINER / WEBHOOK_INGEST))
-    return files
 
 
 def _json(values: dict[str, object]) -> str:

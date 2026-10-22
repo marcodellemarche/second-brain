@@ -170,6 +170,8 @@ class ToolsConfig(BaseModel):
     # know what an instance tool needs, it only refuses a secret value in there.
     extensions: dict[str, dict[str, Any]] = Field(default_factory=dict)
     secrets_dir: Path = Path("/run/secrets")
+    # The brain's timezone, handed to the instance tools with their section.
+    timezone: str = "UTC"
 
     @model_validator(mode="before")
     @classmethod
@@ -263,7 +265,7 @@ def build_registry(
 
 def _settings_for(config: ToolsConfig) -> Callable[[str], ExtensionSettings]:
     def settings(name: str) -> ExtensionSettings:
-        return ExtensionSettings(name, config.extensions.get(name, {}), config.secrets_dir)
+        return ExtensionSettings(name, config.extensions.get(name, {}), config.secrets_dir, config.timezone)
 
     return settings
 

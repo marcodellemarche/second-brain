@@ -57,10 +57,7 @@ The `tools` section is a group per key. A group left out is not built at all, so
 | `tools.archive` | off | `discard_dir` (`_discard`) and `allowed_extensions` (`pdf`, `jpg`, `jpeg`, `png`, `heic`, `webp`). |
 | `tools.jobs` | `false` | The job queue. Needs at least one job kind. |
 | `tools.notify` | off | `initiative_path` (the schema's initiative page when empty) and `default_daily` (`6`), the messages a day when the budget note cannot be read. |
-| `tools.tts` | off | Long audio read aloud. `voices` (`claribel`, `damien`), `max_chars` (`150000`) and `image`, the one that synthesises it. Adds the `tts-worker` service and the `tts_long` tool of the instance. |
-| `tools.mail` | off | The Gmail sidecar. `imap_host` (`imap.gmail.com`), `rules_file`, `interval_seconds` (`900`), `quiet_hours` (empty, always on) and `body_max` (`8000`). Adds the `mail` service, its two secrets and port 993 to the one host it reads. |
-
-`tools.tts` and `tools.mail` are the two sections the core fills in for the instance rather than passing through: their paths are the ones the containers actually have, so a typo cannot point a tool at a folder nobody mounted. `tools.tts` needs an image that can synthesise (the product `second-brain/tts` or the one the instance builds) and `tools.mail` needs `secrets/mail_user` and `secrets/mail_app_password`, a Gmail app password and not the account password.
+| `tools.extensions` | empty | One section per instance package, keyed by its entry point name. The package reads it for its tools and its sidecars: see [extending.md](extending.md). |
 
 A job kind says what the model may queue and whether the route behind it reaches the web:
 

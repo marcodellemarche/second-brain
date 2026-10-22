@@ -17,15 +17,18 @@ import pytest
 import yaml
 from pydantic import BaseModel
 
+from second_brain import __version__
 from second_brain.cli.answers import Answers, AnswersError
+from second_brain.cli.check import static_checks
 from second_brain.cli.init import InitError, init
 from second_brain.cli.main import main
 from second_brain.cli.secrets import create_file
 from second_brain.core.types import Autonomy, Effect, ToolSpec
 from second_brain.guard.config import GuardConfig
 from second_brain.sidecars.config import SidecarsConfig
+from second_brain.sidecars.extension import SidecarContext, SidecarSpec
 from second_brain.tools.config import ToolsConfig
-from second_brain.tools.registry import Tool
+from second_brain.tools.registry import ExtensionSettings, Tool
 
 SAMPLE = Path(__file__).with_name("answers.sample.yaml")
 GENERATED = (
@@ -974,7 +977,7 @@ def test_the_brain_image_from_the_answers_lands_in_compose(tmp_path: Path, answe
 
 def test_the_default_brain_image_is_the_shipped_one(instance: Path) -> None:
     compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
-    assert compose["services"]["brain-tools"]["image"] == "second-brain/brain:0.1.0"
+    assert compose["services"]["brain-tools"]["image"] == f"second-brain/brain:{__version__}"
 
 
 def test_an_inline_secret_in_the_extensions_is_refused(tmp_path: Path, answers_file: Path) -> None:
@@ -1127,84 +1130,116 @@ def test_owners_sh_leaves_a_shared_vault_with_its_service(tmp_path: Path, answer
     assert f"chown -R 23002:23002 '{data['vault_dir']}'" not in script
 
 
-# --- the audio worker and the mail sidecar ---------------------------------------------------
+# --- the sidecars an instance adds -----------------------------------------------------------
 
 
-def _with_services(tmp_path: Path, answers_file: Path, **tools: object) -> Answers:
+def _mail_sidecars(settings: ExtensionSettings, context: SidecarContext) -> list[SidecarSpec]:
+    section = settings.config.get("mail")
+    if not isinstance(section, dict):
+        return []
+    return [
+        SidecarSpec(
+            name="mail",
+            command=["python", "-m", "example_instance.mail"],
+            config={
+                "imap_host": section["imap_host"],
+                "timezone": settings.timezone,
+                "webhook_url": context.webhook_url,
+                "webhook_secret_file": str(context.webhook_secret_file),
+            },
+            hosts=[f"{section['imap_host']}:993"],
+            credentials=["mail_user", "mail_app_password"],
+            webhook=True,
+            data=True,
+        )
+    ]
+
+
+class _SidecarEntryPoint:
+    name = "example"
+
+    def load(self):
+        return _mail_sidecars
+
+
+@pytest.fixture
+def sidecar_entry_point(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("second_brain.sidecars.extension.entry_points", lambda group: [_SidecarEntryPoint()])
+
+
+def _with_section(tmp_path: Path, answers_file: Path, section: dict[str, object]) -> Answers:
     raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
-    raw["tools"].update(tools)
-    path = tmp_path / "services.yaml"
+    raw["tools"]["extensions"] = {"example": section}
+    path = tmp_path / "sidecar.yaml"
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     return Answers.from_yaml(path)
 
 
-def test_a_brain_without_the_two_services_renders_neither(tmp_path: Path, answers: Answers) -> None:
+def test_a_brain_without_a_sidecar_section_renders_none(
+    tmp_path: Path, answers: Answers, sidecar_entry_point: None
+) -> None:
     instance = tmp_path / "instance"
     init(answers, instance)
 
     compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
-    assert "tts-worker" not in compose["services"]
     assert "mail" not in compose["services"]
-    assert not (instance / "config" / "tts-worker.json").exists()
     assert not (instance / "config" / "mail.json").exists()
 
 
-def test_the_audio_worker_gets_its_config_from_the_answers(tmp_path: Path, answers_file: Path) -> None:
-    answers = _with_services(tmp_path, answers_file, tts={"max_chars": 42_000})
-    instance = tmp_path / "instance"
-    init(answers, instance)
-
-    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
-    assert "tts-worker" in compose["services"]
-    worker = json.loads((instance / "config" / "tts-worker.json").read_text(encoding="utf-8"))
-    assert worker["queue_dir"] == "/data/tts/queue"
-    assert worker["output_dir"] == f"{answers.media_dir}/tts"
-    tools = yaml.safe_load((instance / "config" / "brain-tools.yaml").read_text(encoding="utf-8"))
-    assert tools["extensions"]["personal"]["tts"]["max_chars"] == 42_000
-    assert tools["extensions"]["personal"]["tts"]["vault_dir"] == "/vault"
-
-
-def test_the_mail_sidecar_gets_its_config_and_its_secrets(tmp_path: Path, answers_file: Path) -> None:
-    answers = _with_services(
-        tmp_path, answers_file, mail={"quiet_hours": "22:00-07:30", "imap_host": "imap.example.test"}
-    )
+def test_a_sidecar_gets_its_service_its_config_and_its_secrets(
+    tmp_path: Path, answers_file: Path, sidecar_entry_point: None
+) -> None:
+    answers = _with_section(tmp_path, answers_file, {"mail": {"imap_host": "imap.example.test"}})
     instance = tmp_path / "instance"
     init(answers, instance)
 
     compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
     assert compose["services"]["mail"]["secrets"] == ["mail_user", "mail_app_password", "webhook_ingest"]
     config = json.loads((instance / "config" / "mail.json").read_text(encoding="utf-8"))
-    assert config["staging_dir"] == "/data/mail/inbox"
     assert config["imap_host"] == "imap.example.test"
-    assert config["quiet_hours"] == "22:00-07:30"
+    assert config["timezone"] == answers.timezone
     # The HMAC secret is a path, never a value.
     assert config["webhook_secret_file"] == "/run/secrets/webhook_ingest"
-    assert (instance / "secrets" / "mail_user").is_file()
-    assert (instance / "secrets" / "mail_app_password").is_file()
+    assert (instance / "secrets" / "mail_user").read_text(encoding="utf-8") == ""
     readme = (instance / "secrets" / "README.md").read_text(encoding="utf-8")
-    assert "mail_app_password" in readme
+    assert "- `mail_app_password`: needed by the instance sidecar mail." in readme
+    owners = (instance / "owners.sh").read_text(encoding="utf-8")
+    assert "mail_app_password" in owners
     squid = (instance / "config" / "squid.conf").read_text(encoding="utf-8")
     assert "dstdomain imap.example.test" in squid
     assert "acl SSL_ports port 993" in squid
 
 
-def test_the_mail_tools_read_the_same_staging_folder_the_sidecar_writes(
-    tmp_path: Path, answers_file: Path
+def test_a_sidecar_secret_never_reaches_brain_tools(
+    tmp_path: Path, answers_file: Path, sidecar_entry_point: None
 ) -> None:
-    answers = _with_services(tmp_path, answers_file, mail={})
+    answers = _with_section(tmp_path, answers_file, {"mail": {"imap_host": "imap.example.test"}})
     instance = tmp_path / "instance"
     init(answers, instance)
 
-    tools = yaml.safe_load((instance / "config" / "brain-tools.yaml").read_text(encoding="utf-8"))
-    sidecar = json.loads((instance / "config" / "mail.json").read_text(encoding="utf-8"))
-    assert tools["extensions"]["personal"]["mail"]["staging_dir"] == sidecar["staging_dir"]
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert "mail_user" not in compose["services"]["brain-tools"]["secrets"]
 
 
-def test_a_mail_section_with_a_bad_host_is_refused(tmp_path: Path, answers_file: Path) -> None:
-    with pytest.raises(AnswersError):
-        _with_services(tmp_path, answers_file, mail={"imap_host": "not a host"})
-    with pytest.raises(AnswersError):
-        _with_services(tmp_path, answers_file, mail={"quiet_hours": "22:00"})
+def test_sb_check_expects_the_config_of_every_sidecar(
+    tmp_path: Path, answers_file: Path, sidecar_entry_point: None
+) -> None:
+    answers = _with_section(tmp_path, answers_file, {"mail": {"imap_host": "imap.example.test"}})
+    instance = tmp_path / "instance"
+    init(answers, instance)
+    (instance / "config" / "mail.json").unlink()
+
+    results = {result.name: result for result in static_checks(instance)}
+    assert results["files"].status == "fail"
+    assert "config/mail.json" in results["files"].reason
+
+
+def test_a_sidecar_that_does_not_validate_stops_sb_init(
+    tmp_path: Path, answers_file: Path, sidecar_entry_point: None
+) -> None:
+    answers = _with_section(tmp_path, answers_file, {"mail": {"imap_host": "not a host"}})
+    with pytest.raises(AnswersError, match="sidecar"):
+        init(answers, tmp_path / "instance")
 
 
 # --- the skills an instance brings -----------------------------------------------------------
