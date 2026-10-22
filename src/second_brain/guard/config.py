@@ -56,6 +56,10 @@ class GuardConfig(BaseModel):
     media_dir: str | None = None
     mcp_tools: dict[str, McpToolPolicy] = Field(default_factory=dict)
     admin_senders: tuple[str, ...] = ()
+    # Colleagues a team brain also answers. They get what runs on its own (read and internal);
+    # anything other people would see, anything that leaves the system and every approval stay
+    # the owner's, because the credentials behind those tools are the owner's.
+    members: tuple[str, ...] = ()
     search_tools: frozenset[str] = frozenset(DEFAULT_SEARCH_TOOLS)
     # The language the owner reads, so the approval card is written in it and not in policy codes.
     language: Literal["it", "en"] = "en"

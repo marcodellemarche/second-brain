@@ -14,6 +14,7 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `owner_name` | required | Who the brain belongs to, in `USER.md` and the prompts. |
 | `owner_telegram_id` | none | The Telegram chat the brain answers. Set this or `slack`, not both and not neither. |
 | `slack.owner_id`, `slack.home_channel` | none | The same for a team brain on Slack: member id and default channel. |
+| `slack.members` | `[]` | Team brain only: Slack member ids of colleagues who may write to the brain in a direct message. They can read and change the brain's own data; anything visible to others, anything external and every approval stay the owner's. They are not in the channel list, because there anyone allowed can press an approval button. |
 | `timezone` | `UTC` | IANA name the schedule and the daily budget are read in. An unknown name is refused. |
 | `vault_dir` | required, absolute | Where the vault lives on the host. Scaffolded only when missing or empty. |
 | `media_dir` | required, absolute | Host folder for media, created if missing. |

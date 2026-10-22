@@ -289,6 +289,47 @@ def test_the_docker_terminal_backend_fails(instance: Path) -> None:
     assert "docker" in reason
 
 
+def _team_instance(tmp_path: Path, members: list[str]) -> Path:
+    raw = yaml.safe_load(SAMPLE.read_text(encoding="utf-8"))
+    del raw["owner_telegram_id"]
+    raw["shape"] = "team"
+    raw["slack"] = {"owner_id": "U0000001", "home_channel": "C0000001", "members": members}
+    raw["vault_dir"] = str(tmp_path / "vault")
+    raw["media_dir"] = str(tmp_path / "media")
+    raw["archive_dir"] = str(tmp_path / "archive")
+    answers_file = tmp_path / "answers.yaml"
+    answers_file.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    directory = tmp_path / "team-instance"
+    init(Answers.from_yaml(answers_file), directory)
+    return directory
+
+
+def test_a_declared_member_in_direct_messages_passes(tmp_path: Path) -> None:
+    status, reason = _status(_team_instance(tmp_path, ["U0000002"]), "hermes.owner")
+    assert status == PASS
+    assert "1 members" in reason
+
+
+def test_a_member_in_the_channel_list_fails(tmp_path: Path) -> None:
+    directory = _team_instance(tmp_path, ["U0000002"])
+    _edit_text(
+        directory / HERMES_CONFIG,
+        '    group_allow_from: ["U0000001"]',
+        '    group_allow_from: ["U0000001", "U0000002"]',
+    )
+    status, reason = _status(directory, "hermes.owner")
+    assert status == FAIL
+    assert "group_allow_from" in reason
+
+
+def test_a_member_the_guard_does_not_know_fails(tmp_path: Path) -> None:
+    directory = _team_instance(tmp_path, ["U0000002"])
+    _edit_yaml(directory / "config/brain-guard.yaml", lambda data: data.update(members=[]))
+    status, reason = _status(directory, "hermes.owner")
+    assert status == FAIL
+    assert "U0000002" in reason
+
+
 def test_an_extra_allowed_user_fails(instance: Path) -> None:
     _edit_text(
         instance / HERMES_CONFIG,

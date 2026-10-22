@@ -308,6 +308,7 @@ def guard_config(answers: Answers, registry: Registry) -> GuardConfig:
         media_dir=str(answers.media_dir),
         mcp_tools=exported,
         admin_senders=(answers.owner_id,),
+        members=answers.member_ids,
         language=answers.language,
     )
 
@@ -580,6 +581,9 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "owner_id": answers.owner_id,
         "owner_slack_id": answers.owner_id,
         "slack_home_channel": answers.slack.home_channel if answers.slack is not None else "",
+        "slack_member_ids": list(answers.member_ids),
+        # Colleagues change who the brain talks to, so the prompt stops saying it has one person.
+        "has_members": bool(answers.member_ids),
         "owner_name": answers.owner_name,
         "language": answers.language_name,
         "language_code": answers.language,

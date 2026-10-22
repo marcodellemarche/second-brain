@@ -319,6 +319,42 @@ def test_a_slack_brain_allows_the_slack_hosts_and_no_telegram(tmp_path: Path, an
     assert not (tmp_path / "slack-instance" / "secrets" / "telegram_bot_token").exists()
 
 
+def _slack_answers(tmp_path: Path, answers_file: Path, **slack: Any) -> Path:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    del raw["owner_telegram_id"]
+    raw["slack"] = {"owner_id": "U0000000001", "home_channel": "C0000000001", **slack}
+    raw["shape"] = "team"
+    path = tmp_path / "slack-members.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    return path
+
+
+def test_the_members_reach_the_guard(tmp_path: Path, answers_file: Path) -> None:
+    path = _slack_answers(tmp_path, answers_file, members=["U0000000002"])
+    init(Answers.from_yaml(path), tmp_path / "team-instance")
+    guard = GuardConfig.from_yaml(tmp_path / "team-instance" / "config" / "brain-guard.yaml")
+    assert guard.members == ("U0000000002",)
+    assert guard.admin_senders == ("U0000000001",)
+
+
+@pytest.mark.parametrize(
+    "members",
+    [["U0000000001"], ["U0000000002", "U0000000002"], ["giulio"], ["U0000000002\n  allow_all_users: true"]],
+)
+def test_a_bad_member_list_is_refused(tmp_path: Path, answers_file: Path, members: list[str]) -> None:
+    with pytest.raises(AnswersError):
+        Answers.from_yaml(_slack_answers(tmp_path, answers_file, members=members))
+
+
+def test_a_personal_brain_has_no_members(tmp_path: Path, answers_file: Path) -> None:
+    raw = yaml.safe_load(_slack_answers(tmp_path, answers_file, members=["U0000000002"]).read_text())
+    raw["shape"] = "personal"
+    path = tmp_path / "personal-members.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    with pytest.raises(AnswersError):
+        Answers.from_yaml(path)
+
+
 def test_the_channel_is_required(tmp_path: Path, answers_file: Path) -> None:
     raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
     del raw["owner_telegram_id"]

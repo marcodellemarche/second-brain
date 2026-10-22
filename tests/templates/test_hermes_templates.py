@@ -44,6 +44,8 @@ VALUES: dict[str, Any] = {
     "channel": "Telegram",
     "deliver_platform": "telegram",
     "slack_home_channel": "C0000000001",
+    "slack_member_ids": [],
+    "has_members": False,
     "example_note_path": "knowledge/example.md",
     # Empty here: the routes of the skills an instance schedules are built in the CLI tests.
     "scheduled_skills": [],
@@ -285,6 +287,19 @@ def test_a_slack_brain_answers_on_slack_and_not_on_telegram() -> None:
     assert webhook["group_allow_admin_from"] == [VALUES["owner_id"]]
 
 
+def test_a_member_writes_in_a_direct_message_and_never_approves() -> None:
+    values = dict(
+        VALUES, channel="Slack", deliver_platform="slack", is_slack=True, slack_member_ids=["U0000000002"]
+    )
+    slack = yaml.safe_load(render(TEMPLATES / "config.yaml.j2", values))["platforms"]["slack"]
+    owner = VALUES["owner_slack_id"]
+    assert slack["allow_from"] == [owner, "U0000000002"]
+    # In the channel anyone allowed can press an approval button, so the channel stays the owner's.
+    assert slack["group_allow_from"] == [owner]
+    assert slack["allow_admin_from"] == [owner]
+    assert slack["group_allow_admin_from"] == [owner]
+
+
 def test_a_telegram_brain_has_no_thread_sessions_key(config: dict[str, Any]) -> None:
     # The key only means something on a platform with threads: on Telegram it would be noise.
     assert "thread_sessions_per_user" not in config
@@ -446,3 +461,20 @@ def test_the_brain_answers_in_the_language_it_is_spoken_to() -> None:
     soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
     assert "language the person writes to you in" in soul
     assert "What you write to keep" in soul
+
+
+def test_a_brain_with_members_does_not_take_everyone_for_the_owner() -> None:
+    values = dict(VALUES, is_slack=True, is_team=True, has_members=True, slack_member_ids=["U0000000002"])
+    soul = render(TEMPLATES / "SOUL.md.j2", values)
+    assert "is the only person you talk to" not in soul
+    assert "never assume it is" in soul
+    assert "only one who can approve" in soul
+    user = render(TEMPLATES / "USER.md.j2", values)
+    assert "`U0000000002`" in user
+    assert "cannot approve anything" in user
+
+
+def test_a_brain_without_members_keeps_its_one_person() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
+    assert "is the only person you talk to" in soul
+    assert "## Colleagues" not in render(TEMPLATES / "USER.md.j2", VALUES)

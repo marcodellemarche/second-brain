@@ -53,6 +53,9 @@ class AnswersError(RuntimeError):
     """The answers file is missing, unreadable, or describes a brain that cannot be built."""
 
 
+SLACK_MEMBER_ID = re.compile(r"[UW][A-Z0-9]{2,}")
+
+
 class SlackAnswers(BaseModel):
     """A team brain on Slack: the bot's user id and the channel the home messages go to."""
 
@@ -60,6 +63,26 @@ class SlackAnswers(BaseModel):
 
     owner_id: str = Field(min_length=1, description="Slack member id of the person the brain answers.")
     home_channel: str = Field(min_length=1, description="Channel id the assistant speaks in by default.")
+    members: list[str] = Field(
+        default_factory=list,
+        description="Slack member ids of colleagues who may write to the brain in a direct message.",
+    )
+
+    @field_validator("members")
+    @classmethod
+    def _check_members(cls, value: list[str]) -> list[str]:
+        for member in value:
+            if not SLACK_MEMBER_ID.fullmatch(member):
+                raise ValueError(f"not a Slack member id: {member!r}")
+        if len(set(value)) != len(value):
+            raise ValueError("a Slack member is listed twice")
+        return value
+
+    @model_validator(mode="after")
+    def _owner_is_not_a_member(self) -> SlackAnswers:
+        if self.owner_id in self.members:
+            raise ValueError("the owner is not a member: leave them out of slack.members")
+        return self
 
 
 class CalendarAnswers(BaseModel):
@@ -536,6 +559,8 @@ class Answers(BaseModel):
     def _one_channel_and_consistent_tools(self) -> Answers:
         if (self.owner_telegram_id is None) == (self.slack is None):
             raise ValueError("set either owner_telegram_id or a slack section, not both and not neither")
+        if self.slack is not None and self.slack.members and self.shape != "team":
+            raise ValueError("slack.members is for a team brain: a personal brain answers only its owner")
         if self.tools.archive is not None and self.archive_dir is None:
             raise ValueError("tools.archive needs archive_dir")
         if self.tools.jobs and not self.job_kinds:
@@ -579,6 +604,11 @@ class Answers(BaseModel):
     @property
     def owner_id(self) -> str:
         return self.slack.owner_id if self.slack is not None else str(self.owner_telegram_id)
+
+    @property
+    def member_ids(self) -> tuple[str, ...]:
+        """Colleagues a team brain also answers, in direct messages only."""
+        return tuple(self.slack.members) if self.slack is not None else ()
 
     @property
     def language_name(self) -> str:
