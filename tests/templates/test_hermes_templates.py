@@ -339,13 +339,23 @@ def test_soul_calls_other_content_data_and_forbids_python() -> None:
     assert "`/new`" in soul
 
 
-def test_soul_keeps_identifiers_out_of_the_reply() -> None:
-    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
-    assert "identity document number" in soul
+def test_a_team_soul_keeps_identifiers_out_of_the_reply() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", dict(VALUES, is_team=True))
+    assert "Never write an identity document number" in soul
     assert "IBAN" in soul
     assert "card number" in soul
     # The note path is what the model points to instead of the value.
     assert "Name the note that holds it" in soul
+    assert "give it: it is their own data" not in soul
+
+
+def test_a_personal_soul_gives_the_owner_identifiers_they_ask_for() -> None:
+    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
+    assert f"When {VALUES['owner_name']} asks for an identity document number" in soul
+    assert "give it: it is their own data" in soul
+    assert "Never add one they did not ask for" in soul
+    assert "`type: document`" in soul
+    assert "Never write an identity document number" not in soul
 
 
 def test_soul_says_when_the_owner_denied_something() -> None:
