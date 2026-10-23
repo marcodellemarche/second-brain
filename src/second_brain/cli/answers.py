@@ -10,6 +10,7 @@ vault scaffold would land in a directory the owner never named.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import urllib.parse
 from pathlib import Path, PurePosixPath
@@ -338,6 +339,41 @@ class MountAnswers(BaseModel):
         return value
 
 
+# Carrier-grade NAT, where a mesh VPN puts its peers: the proxy denies it, Python does not call it
+# private.
+_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+
+
+class LanEgressAnswers(BaseModel):
+    """An allowlisted host that lives on the local network, let through at one private address.
+
+    The proxy denies every private address, so a self-hosted service whose name resolves to the
+    LAN is refused like an internal container would be. This opens exactly one name at exactly one
+    address: the proxy allows the CONNECT only when both match.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    host: str = Field(
+        max_length=253,
+        pattern=r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$",
+    )
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address
+
+    @field_validator("address")
+    @classmethod
+    def _a_lan_address(
+        cls, value: ipaddress.IPv4Address | ipaddress.IPv6Address
+    ) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+        # Loopback is where Docker's DNS lives and link-local is the cloud metadata service: never a
+        # service on the LAN. A public address needs no exception, the allowlist already covers it.
+        if value.is_loopback or value.is_link_local or value.is_multicast or value.is_unspecified:
+            raise ValueError(f"not a LAN address: {value}")
+        if not (value.is_private or value in _SHARED_ADDRESS_SPACE):
+            raise ValueError(f"{value} is public: list the host in the allowlist, not here")
+        return value
+
+
 class JobKindAnswers(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -423,6 +459,8 @@ class Answers(BaseModel):
     vault_remote: VaultRemoteAnswers | None = None
     # A one-way copy of the memory the brain keeps for itself, so it has a history and can be read.
     memory_export: MemoryExportAnswers | None = None
+    # Allowlisted hosts that resolve to the local network, each at the one address it may have.
+    egress_lan: list[LanEgressAnswers] = Field(default_factory=list)
 
     @field_validator("instance_skills_dir")
     @classmethod

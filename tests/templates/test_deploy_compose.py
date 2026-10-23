@@ -40,6 +40,7 @@ VALUES: dict[str, Any] = {
     "egress_hosts": HOSTS,
     "egress_ips": [],
     "has_egress_ips": False,
+    "egress_lan_rules": [],
     "egress_ports": [],
     "searxng_upstream_hosts": "duckduckgo.com wikipedia.org",
     "searxng_secret_key": "sample-secret-key-not-a-real-one",

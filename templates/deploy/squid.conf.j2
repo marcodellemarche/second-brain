@@ -71,6 +71,10 @@ acl private_dst dst fc00::/7
 acl private_dst dst fe80::/10
 
 http_access deny package_registries
+# A self-hosted service on the LAN (`egress_lan` in the answers): its name, at its one address.
+{% for rule in egress_lan_rules %}
+{{ rule }}
+{% endfor %}
 http_access deny private_dst
 http_access allow CONNECT allowed_egress
 {% if has_egress_ips %}

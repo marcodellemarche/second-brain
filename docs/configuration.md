@@ -44,6 +44,7 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `calls.team_domains` | `[]` | Email domains that make a call a team call. `sb check` refuses them in a `personal` brain without a `handoff` section, where there is nowhere to route them, and expects them in a `team` one, which is where those calls land. |
 | `calls.personal_markers` | `[]` | Strings in the event or the domain that keep a call personal. |
 | `calls.team_markers` | `[]` | Strings in the event title that make a call team work when everyone on it is in a team domain, a 1:1 included. Without one, a 1:1 with a colleague is a question for the owner. |
+| `egress_lan` | `[]` | `host` and `address` of an allowlisted host that resolves to the local network (a self-hosted service behind a LAN DNS). The proxy denies every private address, so such a host is refused; each entry lets that one name through at that one address, and only the two together. The host must already be declared by an enabled tool or sidecar. The address is a single private or carrier-grade NAT (`100.64.0.0/10`) address, never loopback, link-local or multicast. Keep it outside the brain's own Docker networks. |
 | `policy` | empty | Copied into the guard config as it is: per-tool `autonomy` overrides and the run budget. It can only tighten what a tool declares, and a tool name the registry does not have is refused. |
 
 Every time in `schedule` is `HH:MM`, 24 hours, and is validated before anything is written.

@@ -422,6 +422,25 @@ def split_egress(hosts: list[str]) -> tuple[list[str], list[str]]:
     return [host for host in hosts if not _is_ip(host)], [host for host in hosts if _is_ip(host)]
 
 
+def egress_lan_rules(answers: Answers, hosts: Sequence[str]) -> list[str]:
+    """The squid lines that let each LAN host through at its own address, and only there.
+
+    A host has to be allowlisted already: this only lifts the private-address deny for it.
+    """
+    allowed = set(hosts)
+    rules: list[str] = []
+    for index, entry in enumerate(answers.egress_lan, start=1):
+        if entry.host not in allowed:
+            raise AnswersError(f"egress_lan names a host nothing enabled declares: {entry.host}")
+        name = f"lan_egress_{index}"
+        rules += [
+            f"acl {name}_host dstdomain {entry.host}",
+            f"acl {name}_ip dst {entry.address}",
+            f"http_access allow CONNECT {name}_host {name}_ip",
+        ]
+    return rules
+
+
 def docker_gid(answers: Answers) -> int:
     """The group that owns the docker socket: the answer, else this machine's.
 
@@ -596,7 +615,8 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
     """Every placeholder the deploy and Hermes templates use, and nothing else."""
     schema = vault_schema(answers.language)
     sidecars = instance_sidecars(answers)
-    egress = split_egress(egress_hosts(answers, registry, sidecars))
+    hosts = egress_hosts(answers, registry, sidecars)
+    egress = split_egress(hosts)
     return {
         "instance_name": answers.instance_name,
         "vault_dir": str(answers.vault_dir),
@@ -668,6 +688,7 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "egress_ips": egress[1],
         "has_egress_ips": bool(egress[1]),
         "egress_ports": egress_ports(registry, sidecars),
+        "egress_lan_rules": egress_lan_rules(answers, hosts),
         "searxng_upstream_hosts": " ".join(SEARXNG_UPSTREAM_HOSTS),
         "searxng_secret_key": generated[SEARXNG_KEY],
     }
