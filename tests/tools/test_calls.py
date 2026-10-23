@@ -118,6 +118,31 @@ def test_a_transcript_already_in_raw_is_left_alone(vault: Vault) -> None:
     assert vault.read(RAW)[0] == before
 
 
+def test_a_revision_keeps_the_old_transcript_and_writes_the_new_one_next_to_it(vault: Vault) -> None:
+    tools = CallTools(vault)
+    tools.transcript(_params(), BRAIN)
+    before, _ = vault.read(RAW)
+    named = SOURCE_NOTE.replace("remote_1:", "Alice Example:")
+    vault.write(SOURCE, named, BRAIN, vault.read(SOURCE)[1])
+    result = tools.transcript(_params(revision=True), BRAIN)
+    revised = RAW.replace(".md", " (rev 2).md")
+    assert result["ok"] and result["path"] == revised
+    assert vault.read(RAW)[0] == before
+    assert "Alice Example:** line number 7" in vault.read(revised)[0]
+
+
+def test_the_same_revision_twice_writes_nothing(vault: Vault) -> None:
+    tools = CallTools(vault)
+    tools.transcript(_params(), BRAIN)
+    unchanged = tools.transcript(_params(revision=True, created="2026-10-23"), BRAIN)
+    assert unchanged == {"ok": True, "unchanged": True, "path": RAW}
+    vault.write(SOURCE, SOURCE_NOTE.replace("remote_1:", "Bob Example:"), BRAIN, vault.read(SOURCE)[1])
+    first = tools.transcript(_params(revision=True), BRAIN)
+    again = tools.transcript(_params(revision=True), BRAIN)
+    assert again == {"ok": True, "unchanged": True, "path": first["path"]}
+    assert not (vault.root / RAW.replace(".md", " (rev 3).md")).exists()
+
+
 def test_an_empty_transcript_in_raw_is_completed(vault: Vault) -> None:
     stub = "---\ntype: transcript\ntrust: untrusted\n---\n\n# Design session - 2026-10-21 16:01\n"
     vault.write(RAW, stub, BRAIN)

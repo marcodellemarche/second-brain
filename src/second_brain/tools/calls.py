@@ -55,6 +55,13 @@ class TranscriptParams(BaseModel):
     participants: list[str] = Field(default_factory=list)
     organizer: str = ""
     created: str = Field(min_length=1, description="Today, YYYY-MM-DD.")
+    revision: bool = Field(
+        default=False,
+        description=(
+            "The source is a new version of a call already in the vault. A transcript already in "
+            "raw is kept, and a different one goes next to it under a new name."
+        ),
+    )
 
 
 class HandoffParams(BaseModel):
@@ -169,10 +176,29 @@ class CallTools:
                 raise
             commit = self._vault.write(params.path, content, provenance)
             return {"ok": True, "commit": commit, "lines": len(lines)}
-        if not is_empty_note(existing):
+        if is_empty_note(existing):
+            commit = self._vault.fill(params.path, content, provenance, sha256)
+            return {"ok": True, "commit": commit, "lines": len(lines), "filled": True}
+        if not params.revision:
             raise VaultError("exists", f"{params.path} already holds the transcript: skip this step")
-        commit = self._vault.fill(params.path, content, provenance, sha256)
-        return {"ok": True, "commit": commit, "lines": len(lines), "filled": True}
+        return self._revise(params.path, lines, content, provenance)
+
+    def _revise(self, path: str, lines: list[str], content: str, provenance: Provenance) -> dict[str, Any]:
+        """Raw is never rewritten, so a changed transcript gets the first free `(rev N)` name."""
+        stem, suffix = os.path.splitext(path)
+        candidate, number = path, 1
+        while True:
+            try:
+                existing, _ = self._vault.read(candidate)
+            except VaultError as exc:
+                if exc.code != "not_found":
+                    raise
+                commit = self._vault.write(candidate, content, provenance)
+                return {"ok": True, "commit": commit, "lines": len(lines), "path": candidate}
+            if _same_words(existing, content):
+                return {"ok": True, "unchanged": True, "path": candidate}
+            number += 1
+            candidate = f"{stem} (rev {number}){suffix}"
 
     def handoff(self, params: HandoffParams, provenance: Provenance) -> dict[str, Any]:
         assert self._handoff is not None
@@ -213,6 +239,15 @@ class CallTools:
             raise VaultError("not_found", f"the vault schema cannot be read: {exc}") from exc
 
 
+def _same_words(existing: str, content: str) -> bool:
+    """Same body, whatever the frontmatter says: `created` changes on every run."""
+
+    def body(note: str) -> list[str]:
+        return [line.rstrip() for line in split_note(note)[1]]
+
+    return body(existing) == body(content)
+
+
 def _list(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value.strip()] if value.strip() else []
@@ -246,7 +281,8 @@ def call_tools(vault: Vault, handoff: HandoffConfig | None = None) -> list[Tool]
                     "Copy the transcript of a call note in the capture folder into the raw zone, "
                     "verbatim, with the transcript frontmatter. The words are copied by the server, "
                     "so never pass them yourself. A transcript already in raw is left alone "
-                    "(code `exists`), an empty one is completed."
+                    "(code `exists`), an empty one is completed. With `revision`, a different "
+                    "transcript is written next to the old one and the result says its `path`."
                 ),
                 params=TranscriptParams,
                 effect=Effect.INTERNAL,

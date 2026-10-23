@@ -27,9 +27,21 @@ Answer in one line, in the brain's language, that this is a team call, with the 
 
 Both files are named after the note that landed: same file name, under a folder for the year of the call. A note `<capture>/2026-10/call-2026-10-20 14.36.58 - standup.md` becomes `<calls>/2026/call-2026-10-20 14.36.58 - standup.md` and `<raw>/<calls>/2026/call-2026-10-20 14.36.58 - standup.md`, where `<calls>` is the folder of the `calls` zone (`call` in an Italian vault, so the transcript goes to `raw/call/2026/`). Never invent another layout: the calls already in the vault follow this one, and the brief, the digest and the links all expect it.
 
-Before writing, look for both paths with `vault_read`. If the call note already exists, this call was ingested before (the source came back, or a run stopped half way): do not write a second copy. Complete only the steps that are missing, then go to step 5.
+Before writing, look for a call note of the same recording: same `call-<date> <time>` prefix in `<calls>/<YYYY>/`, whatever the title after it (the recorder renames a call when it rewrites it), with `search_files`, then `vault_read` it. Three cases:
 
-Five steps, in this order. Each write is a separate call with its own `reason`.
+- **None**: a new call, follow the five steps.
+- **One, and the source says the same thing** (same summary, same speakers): the source came back or a run stopped half way. Do not write a second copy: complete only the steps that are missing, then go to step 5.
+- **One, and the source is different** (a summary where there was none, names where there were `remote_1`, `remote_2`): the recorder rewrote the call. This is a revision, and it updates the call instead of adding to it, with the steps below.
+
+A revision, in this order:
+
+1. `call_transcript` with `revision: true` and the path the old transcript has (the call note's `transcript`). The old transcript stays as it is: a different one is written next to it, and the result gives its `path`; `unchanged` means the words are the same.
+2. Rewrite the existing call note in place, at its path, never under the new title, so the links to it keep working. Same rules as step 2, with `transcript` set to the new path and the new source added to `sources`. Keep the frontmatter the owner or a skill added (`status`, `share`) and any action item already checked.
+3. Commitments: append only the owner's action items that have no row yet with this call note as `source`. Never touch an existing row.
+4. Topics: in each topic page, rewrite the paragraphs whose `Source:` is this call note (or a call path with the same `call-<date> <time>` prefix) with what the revision says, and add only what is new. Never add a second paragraph for something the page already has from this call.
+5. Remove the source, as step 5 below does.
+
+For a new call, five steps, in this order. Each write is a separate call with its own `reason`.
 
 1. **The transcript, verbatim, into raw.** Call `call_transcript` with `source` (the note the event named), `path` (`<raw>/<calls>/<YYYY>/<file name>`), `from_heading` (the heading the transcript starts under in the source, for example "Trascritto completo"; leave it out when the whole body is the transcript), `date`, `start`, `participants`, `organizer` and `created`. The server copies the words itself, so never retype a transcript into `vault_write`: a long one does not survive it, and raw cannot be fixed afterwards. Code `exists` means the transcript is already there: skip this step. A transcript in raw that holds only its frontmatter is completed by the same call.
 
