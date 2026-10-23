@@ -628,3 +628,35 @@ def test_the_endpoint_answers_200_to_a_turn_that_is_not_a_research_result(
     assert status == 200
     assert answer["ok"] is True and answer["code"] == "ignored"
     assert _stored(outbox_dir) == []
+
+
+def _long_history(size: int = 2 * 1024 * 1024) -> list[dict[str, str]]:
+    return [{"role": "tool", "content": "x" * 1024} for _ in range(size // 1024)]
+
+
+def test_a_long_research_turn_is_stored_without_its_history(
+    outbox_dir: Path, secret_file: Path, store: JobStore
+) -> None:
+    job_id = _dispatched_job(store)
+    payload = _delivery(job_id)
+    payload["extra"]["conversation_history"] = _long_history()
+    body = _body(payload)
+    sink = _Sink()
+    endpoint = OutboxEndpoint(sink, _receiver(outbox_dir, secret_file, store))
+    status, answer = _call(endpoint, OUTBOX_PATH, body, _signed(body))
+    assert status == 202 and answer["code"] == "stored"
+    stored = json.loads(_stored(outbox_dir)[0].read_bytes())
+    assert "conversation_history" not in stored["extra"]
+    assert stored["extra"]["assistant_response"] == payload["extra"]["assistant_response"]
+
+
+def test_a_long_chat_turn_is_ignored_not_refused(
+    outbox_dir: Path, secret_file: Path, store: JobStore
+) -> None:
+    job_id = _dispatched_job(store)
+    payload = _delivery(job_id, platform="slack")
+    payload["extra"]["conversation_history"] = _long_history()
+    body = _body(payload)
+    endpoint = OutboxEndpoint(_Sink(), _receiver(outbox_dir, secret_file, store))
+    status, answer = _call(endpoint, OUTBOX_PATH, body, _signed(body))
+    assert status == 200 and answer["code"] == "ignored"

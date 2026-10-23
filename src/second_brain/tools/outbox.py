@@ -15,7 +15,9 @@ in `agent/outbound_webhooks.py` unless another file is named.
   `tool_input`, `session_id`, `cwd`, `profile`, `extra`) and `delivery_id` + `timestamp`
   (`:241-252`, `agent/shell_hooks.py:79-94`). The reply text is `extra["assistant_response"]`, the
   platform is `extra["platform"]` ("webhook" for a route), the run's session is `session_id`, and
-  `extra["user_message"]` is the prompt Hermes rendered for the route.
+  `extra["user_message"]` is the prompt Hermes rendered for the route. `extra["conversation_history"]`
+  is every message of the run, tool results included, so a long turn is easily megabytes
+  (`agent/turn_finalizer.py:469-479`).
 - The signature is `X-Hermes-Signature-256: sha256=<hex>`, the HMAC-SHA256 of the raw body with
   the target's secret, and it carries no timestamp: replay protection is the `delivery_id` inside
   the signed body (`:255-263`).
@@ -71,7 +73,8 @@ WEB_PLATFORM = "webhook"
 JOB_PROMPT_PREFIX = "Background research job "
 DONE_DIR = "done"
 FAILED_DIR = "failed"
-MAX_BODY_BYTES = 256 * 1024
+# Every turn carries its whole conversation, so the limit has to fit a long research run.
+MAX_BODY_BYTES = 16 * 1024 * 1024
 MAX_SOURCES = 20
 MAX_TITLE_CHARS = 60
 
@@ -242,9 +245,18 @@ class OutboxReceiver:
         target = self._outbox / f"{name}.json"
         if target.exists():
             return Receipt(200, "duplicate", f"delivery {name} was already stored", target)
-        _atomic_write(target, body)
+        _atomic_write(target, _without_history(body_fields))
         log.info("stored the result of job %s in %s", job.id, target)
         return Receipt(202, "stored", f"the result of job {job.id} is stored", target)
+
+
+def _without_history(payload: Mapping[str, Any]) -> bytes:
+    """The delivery as stored: the importer needs the reply, not the conversation that led to it."""
+    stored = dict(payload)
+    extra = stored.get("extra")
+    if isinstance(extra, Mapping):
+        stored["extra"] = {key: value for key, value in extra.items() if key != "conversation_history"}
+    return json.dumps(stored, ensure_ascii=False).encode("utf-8")
 
 
 def _slug(title: str) -> str:
