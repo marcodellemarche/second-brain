@@ -54,6 +54,7 @@ VALUES: dict[str, Any] = {
     # The services an instance package adds: none unless one is installed and configured.
     "instance_sidecars": "",
     "has_memory_export": False,
+    "has_archive": False,
 }
 
 

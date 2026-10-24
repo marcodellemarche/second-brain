@@ -55,6 +55,7 @@ from second_brain.sidecars.config import (
 from second_brain.sidecars.extension import SidecarContext, SidecarSpec, load_sidecars
 from second_brain.sidecars.scheduler import ScheduleConfig, ScheduleEntry
 from second_brain.sidecars.vault_watcher import DEFAULT_IGNORE
+from second_brain.tools.archive import ATTACHMENT_INBOX
 from second_brain.tools.calls import HANDOFF_PATH, HandoffConfig
 from second_brain.tools.config import (
     CalendarToolsConfig,
@@ -260,7 +261,9 @@ def export_registry(config: ToolsConfig) -> Registry:
                 "notify": config.notify.model_copy(update={"store_path": data / "notifications.sqlite3"})
                 if config.notify is not None
                 else None,
-                "archive": config.archive.model_copy(update={"root": archive, "inbox_media_dir": media})
+                "archive": config.archive.model_copy(
+                    update={"root": archive, "inbox_media_dir": media, "attachment_inbox": media}
+                )
                 if config.archive is not None
                 else None,
             }
@@ -290,6 +293,7 @@ def guard_config(answers: Answers, registry: Registry) -> GuardConfig:
         untrusted_prefixes=(schema.folder("raw"),),
         shape=answers.shape,
         media_dir=str(answers.media_dir),
+        attachment_inbox=str(ATTACHMENT_INBOX) if answers.archive_config is not None else None,
         mcp_tools=exported,
         admin_senders=(answers.owner_id,),
         members=answers.member_ids,
@@ -680,6 +684,8 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         # The memory the brain keeps for itself is on a volume of its own, mounted read-only into
         # brain-tools only when this brain copies it into the vault.
         "has_memory_export": answers.memory_export is not None,
+        # Chat attachments reach brain-tools through a volume of their own, only with an archive.
+        "has_archive": answers.archive_config is not None,
         # The skills this instance schedules by name, so the Hermes config gets a route for each.
         "scheduled_skills": sorted(answers.schedule.skills),
         "deliver_platform": answers.channel.lower(),

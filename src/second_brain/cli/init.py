@@ -383,11 +383,19 @@ def _owners_script(answers: Answers, credentials: dict[str, str]) -> str:
             f"chmod -R g+rwX '{answers.vault_dir}'",
             f"find '{answers.vault_dir}' -type d -exec chmod g+s {{}} +",
         ]
-    if answers.archive_dir is not None:
+    if answers.archive_dir is not None and answers.vault_group_gid is None:
         lines += [
             "",
             "# The archive tool moves files in and out of here.",
             f"chown -R {BRAIN_UID}:{BRAIN_UID} '{answers.archive_dir}'",
+        ]
+    elif answers.archive_dir is not None:
+        lines += [
+            "",
+            "# The archive shares the vault's data folder: same group, never a new owner.",
+            f"chgrp -R {answers.vault_group_gid} '{answers.archive_dir}'",
+            f"chmod -R g+rwX '{answers.archive_dir}'",
+            f"find '{answers.archive_dir}' -type d -exec chmod g+s {{}} +",
         ]
     if answers.handoff is not None:
         lines += [

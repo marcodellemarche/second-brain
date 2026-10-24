@@ -205,6 +205,31 @@ def test_guard_config_has_every_enabled_tool(instance: Path) -> None:
     assert set(guard.mcp_tools) == {spec.name for spec in _specs(tools)}
 
 
+def test_an_archive_hands_attachments_through_their_own_volume(instance: Path) -> None:
+    guard = GuardConfig.from_yaml(instance / "config/brain-guard.yaml")
+    tools = ToolsConfig.from_yaml(instance / "config/brain-tools.yaml")
+    assert guard.attachment_inbox == "/attachments"
+    assert tools.archive is not None
+    assert tools.archive.attachment_inbox == Path("/attachments")
+    compose = yaml.safe_load((instance / "compose.yaml").read_text(encoding="utf-8"))
+    assert "attachments" in compose["volumes"]
+    assert "attachments:/attachments" in compose["services"]["hermes"]["volumes"]
+    assert "attachments:/attachments:ro" in compose["services"]["brain-tools"]["volumes"]
+
+
+def test_without_an_archive_there_is_no_attachments_volume(tmp_path: Path, answers_file: Path) -> None:
+    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    del raw["archive_dir"]
+    raw["tools"].pop("archive", None)
+    path = tmp_path / "no-archive.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    init(Answers.from_yaml(path), tmp_path / "no-archive")
+    guard = GuardConfig.from_yaml(tmp_path / "no-archive" / "config/brain-guard.yaml")
+    assert guard.attachment_inbox is None
+    compose = (tmp_path / "no-archive" / "compose.yaml").read_text(encoding="utf-8")
+    assert "attachments" not in compose
+
+
 def _specs(tools: ToolsConfig) -> list:
     from second_brain.cli.config import export_registry
 
@@ -1128,6 +1153,25 @@ def test_owners_sh_leaves_a_shared_vault_with_its_service(tmp_path: Path, answer
     script = (instance / "owners.sh").read_text(encoding="utf-8")
     assert "chgrp -R 1003" in script
     assert f"chown -R 23002:23002 '{data['vault_dir']}'" not in script
+
+
+def test_a_shared_data_folder_keeps_the_archive_with_its_service(tmp_path: Path, answers_file: Path) -> None:
+    # The archive sits in the same Nextcloud data folder: a chown would hand every document to the
+    # brain, and a 0o644 copy could not be moved or deleted from Nextcloud.
+    data = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
+    data["vault_group_gid"] = 1003
+    shared = tmp_path / "shared.yaml"
+    shared.write_text(yaml.safe_dump(data), encoding="utf-8")
+    answers = Answers.from_yaml(shared)
+    instance = tmp_path / "shared-instance"
+
+    init(answers, instance)
+
+    script = (instance / "owners.sh").read_text(encoding="utf-8")
+    assert f"chgrp -R 1003 '{data['archive_dir']}'" in script
+    assert f"chown -R 23002:23002 '{data['archive_dir']}'" not in script
+    assert answers.archive_config is not None
+    assert answers.archive_config.file_mode == 0o666
 
 
 # --- the sidecars an instance adds -----------------------------------------------------------

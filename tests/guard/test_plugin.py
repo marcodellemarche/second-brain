@@ -990,3 +990,52 @@ def test_lists_of_objects_and_long_values_are_compact() -> None:
     assert "dir/file0.yaml, dir/file1.yaml, dir/file2.yaml" in line
     assert "xxxx" not in line
     assert len(line) <= plugin.APPROVAL_CARD_CHARS
+
+
+def _archive_guard(tmp_path: Path, hermes_config: Path, inbox: Path | None) -> plugin.Guard:
+    cache = tmp_path / "cache" / "documents"
+    cache.mkdir(parents=True)
+    (cache / "doc_0a1b2c3d4e5f_Lease.pdf").write_bytes(b"%PDF fake\n")
+    config = GuardConfig.model_validate(
+        {
+            **CONFIG,
+            "mcp_tools": {
+                **CONFIG["mcp_tools"],
+                "archive_store": {"effect": "internal", "autonomy": "notify"},
+            },
+            "guard_dir": str(tmp_path / "guard"),
+            "hermes_config_path": str(hermes_config),
+            "attachment_inbox": str(inbox) if inbox is not None else None,
+            "attachment_sources": [str(cache)],
+        }
+    )
+    return plugin.Guard(config)
+
+
+def _store(guard: plugin.Guard, tool: str = "mcp__brain__archive_store") -> dict[str, Any] | None:
+    args = {"source": "doc_0a1b2c3d4e5f_Lease.pdf", "category_code": "11", "name": "Lease"}
+    guard.pre_llm_call(session_id="s1", sender_id="admin-1")
+    guard.pre_tool_call(tool_name=tool, args=args, session_id="s1", tool_call_id="c1")
+    return guard.stamp_guard(tool_name=tool, args=args, session_id="s1", tool_call_id="c1")
+
+
+def test_stamp_guard_hands_the_attachment_to_brain_tools(tmp_path: Path, hermes_config: Path) -> None:
+    inbox = tmp_path / "attachments"
+    inbox.mkdir()
+    directive = _store(_archive_guard(tmp_path, hermes_config, inbox))
+    assert directive is not None and directive["action"] == "modify"
+    assert (inbox / "doc_0a1b2c3d4e5f_Lease.pdf").read_bytes() == b"%PDF fake\n"
+
+
+def test_stamp_guard_copies_nothing_without_an_archive(tmp_path: Path, hermes_config: Path) -> None:
+    inbox = tmp_path / "attachments"
+    inbox.mkdir()
+    _store(_archive_guard(tmp_path, hermes_config, None))
+    assert list(inbox.iterdir()) == []
+
+
+def test_stamp_guard_copies_nothing_for_another_tool(tmp_path: Path, hermes_config: Path) -> None:
+    inbox = tmp_path / "attachments"
+    inbox.mkdir()
+    _store(_archive_guard(tmp_path, hermes_config, inbox), tool="mcp__brain__vault_write")
+    assert list(inbox.iterdir()) == []

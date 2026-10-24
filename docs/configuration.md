@@ -19,7 +19,7 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `timezone` | `UTC` | IANA name the schedule and the daily budget are read in. An unknown name is refused. |
 | `vault_dir` | required, absolute | Where the vault lives on the host. Scaffolded only when missing or empty. |
 | `media_dir` | required, absolute | Host folder for media, created if missing. |
-| `archive_dir` | none | Host folder of the document archive. Required when `tools.archive` is set. |
+| `archive_dir` | none | Host folder of the document archive. Required when `tools.archive` is set. With `vault_group_gid` it is treated as part of the same shared data folder: `owners.sh` sets its group instead of handing it to the brain, and archived files are written world-writable like the vault notes. |
 | `model_endpoint` | required | Base URL of an OpenAI-compatible endpoint. http(s), no query and no fragment. Its host is the first entry of the egress allowlist. |
 | `model_name` | required | Model name passed to the endpoint. |
 | `model_context_length` | `131072` | Context window the Hermes config is rendered with, at least 1024. |
@@ -206,7 +206,7 @@ No file in `secrets/` is written twice, not by a second `sb init` and not with `
 - `calendar`: `assistant_calendar_id`, `main_calendar_id`, `timezone`, and exactly one of `service_account_file` or `token_file`. Both are paths, never values. With a service account the brain mints its own access tokens from the key, so nothing expires under it; a `token_file` is a bearer token that lasts an hour and has to be replaced by hand. `sb init` writes `service_account_file` when the answers say `service_account: true`.
 - `weather.enabled`.
 - `links`: `base_url`, `vault_folder`, `archive_folder`.
-- `archive`: `root`, `inbox_media_dir`, `discard_dir`, `allowed_extensions`.
+- `archive`: `root`, `inbox_media_dir`, `attachment_inbox`, `discard_dir`, `allowed_extensions`. Chat attachments stay in Hermes' own cache, which brain_tools cannot read: before `archive_store` runs, brain_guard copies the named file into the `attachments` volume (`/attachments`, read-only in brain-tools) and drops copies older than a week. The volume exists only when `archive_dir` is set.
 - `jobs`: `store_path` of the queue file and `kinds`, each with `route`, `description` and `web`.
 - `notify`: `store_path`, `initiative_path`, `default_daily`, `timezone`.
 - `outbox`: `dir`, `secret_file` and `research_followup_kind`, rendered only when there is a kind without web access.

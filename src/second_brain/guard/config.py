@@ -54,6 +54,10 @@ class GuardConfig(BaseModel):
     # call router's team_domains mean something there and nothing in a personal brain.
     shape: Literal["personal", "team"] = "personal"
     media_dir: str | None = None
+    # Set when the archive is on: before `archive_store` runs, the attachment it names is copied
+    # from Hermes' cache folders into this inbox, which brain_tools mounts read-only.
+    attachment_inbox: str | None = None
+    attachment_sources: tuple[str, ...] = ("/opt/data/cache/documents", "/opt/data/cache/images")
     mcp_tools: dict[str, McpToolPolicy] = Field(default_factory=dict)
     admin_senders: tuple[str, ...] = ()
     # Colleagues a team brain also answers. They get what runs on its own (read and internal);

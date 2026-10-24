@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from second_brain.core.types import Autonomy, Effect, stricter
+from second_brain.guard.attachments import stage_attachment
 from second_brain.guard.audit import AuditLog
 from second_brain.guard.budget import BudgetVerdict, check_budget, note_search_result
 from second_brain.guard.classify import (
@@ -48,6 +49,7 @@ URL_TOOLS = frozenset({"web_extract", "browser_navigate"})
 ARGS_PREVIEW_CHARS = 200
 # The two calendar tools that always ask, whatever the session looks like.
 CALENDAR_WRITE_TOOLS = frozenset({"calendar_main_write", "calendar_invite"})
+ARCHIVE_STORE_TOOL = f"{MCP_PREFIX}archive_store"
 # The argument that says what a call is about, per tool. Anything else falls back to the preview.
 APPROVAL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "web_search": ("query",),
@@ -408,6 +410,9 @@ class Guard:
             return {"action": "block", "message": NO_VERDICT_MESSAGE}
         if verdict.decision.action == "block":
             return None
+        if tool_name == ARCHIVE_STORE_TOOL and self.config.attachment_inbox and isinstance(args, dict):
+            source = str(args.get("source", ""))
+            stage_attachment(source, self.config.attachment_sources, self.config.attachment_inbox)
         return {
             "action": "modify",
             "args": {"guard": self._guard_object(session_id, task_id, verdict)},

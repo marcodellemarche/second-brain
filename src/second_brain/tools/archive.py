@@ -3,10 +3,11 @@
 The originals of personal documents live in a folder outside the vault, organized with numeric
 codes in the Johnny.Decimal style: `10-19 Home/11 House/11.03 Insurance policy.pdf`. Hermes never
 reads this archive. brain_tools is the only writer and it only ever adds: no tool here deletes or
-overwrites anything in the archive. `archive_store` copies a chat attachment from Hermes' media
-folder (mounted read-only) into a category and refuses to replace an existing file, and
-`archive_discard` moves a file into the discard folder, keeping its relative path and a timestamp
-in the name. The model picks a code from `archive_categories`, so it cannot invent a category.
+overwrites anything in the archive. `archive_store` copies a chat attachment into a category and
+refuses to replace an existing file. The attachment is read from Hermes' media folder or from the
+attachment inbox brain_guard fills from Hermes' cache, both mounted read-only. `archive_discard`
+moves a file into the discard folder, keeping its relative path and a timestamp in the name. The
+model picks a code from `archive_categories`, so it cannot invent a category.
 
 Item numbering: a two-digit `category_code` (`11`) gets the next free item number of that category
 (`11.01`, `11.02`, ...). An item-level `category_code` (`11.03`) is kept as given, so the file is
@@ -37,6 +38,8 @@ from second_brain.tools.vault import Provenance
 
 ARCHIVE_HOSTS: tuple[str, ...] = ()
 ARCHIVE_CREDENTIALS: tuple[str, ...] = ()
+# The volume brain_guard copies chat attachments into, at the same path in Hermes and brain_tools.
+ATTACHMENT_INBOX = Path("/attachments")
 
 _PATH_SEPARATORS = re.compile(r"[\\/]+")
 _NAME = re.compile(r"^[\w .-]+$")
@@ -60,7 +63,11 @@ class ArchiveConfig(BaseModel):
 
     root: Path
     inbox_media_dir: Path
+    # Where brain_guard copies a chat attachment from Hermes' own cache, which brain_tools cannot read.
+    attachment_inbox: Path | None = None
     discard_dir: str = "_scarti"
+    # Wider when the archive lives in another service's data folder, as the vault's file_mode.
+    file_mode: int = Field(default=0o644, ge=0o600, le=0o666)
     allowed_extensions: tuple[str, ...] = ("pdf", "jpg", "jpeg", "png", "heic", "webp")
 
     @field_validator("discard_dir")
@@ -96,7 +103,7 @@ class StoreParams(BaseModel):
     source: str = Field(
         min_length=1,
         max_length=255,
-        description="File name of the attachment inside the media folder, without any folder.",
+        description="File name of the chat attachment: the last part of the path Hermes gave, no folder.",
     )
     category_code: str = Field(
         description="Code from archive_categories: '11' to get the next item number, or '11.03' "
@@ -185,14 +192,15 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _copy_exclusive(source: Path, target: Path) -> None:
+def _copy_exclusive(source: Path, target: Path, mode: int) -> None:
     """Copy without ever replacing a file: O_EXCL makes an existing target an error."""
-    handle_fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    handle_fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(handle_fd, "wb") as out, source.open("rb") as origin:
             shutil.copyfileobj(origin, out, 1 << 20)
             out.flush()
             os.fsync(out.fileno())
+            os.fchmod(out.fileno(), mode)
     except BaseException:
         target.unlink(missing_ok=True)
         raise
@@ -204,7 +212,9 @@ class Archive:
     def __init__(self, config: ArchiveConfig) -> None:
         self._config = config
         self._root = config.root.resolve()
-        self._media = config.inbox_media_dir.resolve()
+        self._sources = [config.inbox_media_dir.resolve()]
+        if config.attachment_inbox is not None:
+            self._sources.append(config.attachment_inbox.resolve())
         if not self._root.is_dir():
             raise ArchiveError("not_found", f"archive root is not a directory: {self._root}")
         self._discard = self._resolve(config.discard_dir)[0]
@@ -275,23 +285,24 @@ class Archive:
         raise ArchiveError("unknown_category", f"no category {code} in the archive, known: {known}")
 
     def _source(self, name: str) -> Path:
-        candidate = self._media / name
-        try:
-            resolved = candidate.resolve(strict=True)
-        except OSError:
-            raise ArchiveError("not_found", f"{name} is not in the media folder") from None
-        if self._media not in resolved.parents:
-            raise ArchiveError("outside_archive", f"{name} resolves outside the media folder")
-        if not resolved.is_file():
-            raise ArchiveError("not_found", f"{name} is not a file")
-        return resolved
+        for folder in self._sources:
+            try:
+                resolved = (folder / name).resolve(strict=True)
+            except OSError:
+                continue
+            if folder not in resolved.parents:
+                raise ArchiveError("outside_archive", f"{name} resolves outside the folder it was found in")
+            if not resolved.is_file():
+                raise ArchiveError("not_found", f"{name} is not a file")
+            return resolved
+        raise ArchiveError("not_found", f"{name} is not among the attachments")
 
     def _place(self, origin: Path, folder: Path, prefix: str, name: str, extension: str) -> Path:
         for index in range(1, _MAX_COPIES):
             suffix = "" if index == 1 else f" ({index})"
             target = folder / f"{prefix} {name}{suffix}.{extension}"
             try:
-                _copy_exclusive(origin, target)
+                _copy_exclusive(origin, target, self._config.file_mode)
             except FileExistsError:
                 continue
             return target
@@ -393,10 +404,10 @@ def archive_tools(config: ArchiveConfig) -> list[Tool]:
             spec=ToolSpec(
                 name="archive_store",
                 description=(
-                    "Copy an attachment from the media folder into a category of the document "
+                    "Copy a chat attachment into a category of the document "
                     "archive and return its path and sha256. It copies, never moves, and never "
                     "overwrites: a name already taken gets a number appended. Allowed extensions "
-                    "only, and the source must be a file name inside the media folder."
+                    "only, and the source is the attachment's file name, never a path."
                 ),
                 params=StoreParams,
                 effect=Effect.INTERNAL,

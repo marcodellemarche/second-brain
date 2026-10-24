@@ -51,6 +51,10 @@ volumes:
   data:
   # Hermes' own home: session history, skills, the memory files.
   hermes-home:
+{% if has_archive %}
+  # Chat attachments the guard copies out of Hermes' cache for archive_store.
+  attachments:
+{% endif %}
 
 # Every secret is a file, mounted read-only, and only into the service that reads it. Hermes is the one that cannot take a file: it wants the MCP bearer token, the Telegram token and the webhook secrets as environment values, so `sb init` renders them into `/etc/hermes/.env`, the managed env scope Hermes pins and the agent cannot edit. Same source secrets, mounted rather than passed on the command line, so none of them shows up in `docker inspect`.
 secrets:
@@ -136,6 +140,9 @@ services:
       - {{ media_dir }}:{{ media_dir }}
       - guard:/guard
       - hermes-home:/opt/data
+{% if has_archive %}
+      - attachments:/attachments
+{% endif %}
       # The product skills, copied by `sb init`. Read-only, so a skill write approved from the chat
       # can never change one of them: the mount wins over the copy under the volume.
       - ./skills:/opt/data/skills/second-brain:ro
@@ -213,6 +220,10 @@ services:
       - data:/data
       # Media Hermes wrote, read-only: a reply may point at a file, and that is all.
       - {{ media_dir }}:{{ media_dir }}:ro
+{% if has_archive %}
+      # Written by the guard inside Hermes; brain-tools only reads the attachment it is told to store.
+      - attachments:/attachments:ro
+{% endif %}
 {% for volume in brain_tools_extra_volumes %}
       - {{ volume }}
 {% endfor %}

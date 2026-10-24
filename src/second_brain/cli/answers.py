@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from second_brain.core.policy import PolicyConfig
 from second_brain.core.schema import SchemaError, load_schema
 from second_brain.core.types import Zone
-from second_brain.tools.archive import ArchiveConfig
+from second_brain.tools.archive import ATTACHMENT_INBOX, ArchiveConfig
 from second_brain.tools.config import _reject_secret_fields
 from second_brain.tools.links import LinkConfig
 from second_brain.tools.notify import NotifyConfig
@@ -585,8 +585,11 @@ class Answers(BaseModel):
         return ArchiveConfig(
             root=self.archive_dir,
             inbox_media_dir=self.media_dir,
+            attachment_inbox=ATTACHMENT_INBOX,
             discard_dir=section.discard_dir,
             allowed_extensions=section.allowed_extensions,
+            # A shared vault means a shared data folder, and the archive sits in it too.
+            file_mode=0o666 if self.vault_group_gid is not None else 0o644,
         )
 
     def link_config(self) -> LinkConfig | None:

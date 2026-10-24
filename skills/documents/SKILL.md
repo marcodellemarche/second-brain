@@ -13,7 +13,7 @@ Answer the owner in the brain's language.
 
 ## 1. Find the file and read it
 
-The attachment is a file in the media folder that Hermes wrote when the message arrived, and its file name is what `archive_store` calls `source`. Read the attachment itself with the vision capability when it is an image, and with `read_file` when it is a PDF or a text-like file. Never use python, a shell one-liner or a script to read or parse a document: those calls need an approval and give nothing the file tools do not.
+When the message arrives Hermes says where it saved the attachment, for example `~/.hermes/cache/documents/doc_0a1b2c3d4e5f_Contract.pdf`. The last part of that path, `doc_0a1b2c3d4e5f_Contract.pdf`, is what `archive_store` calls `source`: never pass the folder, the guard hands the file to the archive. Read the attachment itself with the vision capability when it is an image, and with `read_file` when it is a PDF or a text-like file. Never use python, a shell one-liner or a script to read or parse a document: those calls need an approval and give nothing the file tools do not.
 
 If the file cannot be read (an unreadable photo, a corrupt PDF, a scan that is mostly shadow), say what you see and ask for a better shot. Do not guess the fields of a document you could not read.
 
@@ -103,6 +103,6 @@ A document is also a place where secrets hide. Never copy a password, a PIN, a f
 ## Failures
 
 - `unknown_category` from `archive_store`: the code is not in `archive_categories`. Re-read the list and pick from it, or ask.
-- `not_found`: the attachment name is not in the media folder. Ask the owner to send it again.
+- `not_found`: no attachment has that name, or it is older than a week. Check that `source` is only the file name; if it is, ask the owner to send it again.
 - `bad_extension`: the archive does not accept that format. Say which formats it takes and ask for a conversion.
 - `hash_mismatch` from `vault_write`: the card changed under you. Read it again and redo the write.

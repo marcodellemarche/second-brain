@@ -234,6 +234,46 @@ def test_store_refuses_a_source_outside_the_media_folder(
     assert result["code"] == "outside_archive"
 
 
+def _inbox_tools(root: Path, media: Path, inbox: Path) -> dict[str, Tool]:
+    config = ArchiveConfig(root=root, inbox_media_dir=media, attachment_inbox=inbox)
+    return {tool.spec.name: tool for tool in archive_tools(config)}
+
+
+def test_store_takes_an_attachment_from_the_inbox(root: Path, media: Path, tmp_path: Path) -> None:
+    inbox = tmp_path / "attachments"
+    inbox.mkdir()
+    (inbox / "doc_0a1b2c3d4e5f_Lease contract.pdf").write_bytes(PAYLOAD)
+    tools = _inbox_tools(root, media, inbox)
+    result = _call(
+        tools,
+        "archive_store",
+        {"source": "doc_0a1b2c3d4e5f_Lease contract.pdf", "category_code": "11", "name": "Lease"},
+    )
+    assert result["ok"] is True
+    assert (root / result["path"]).read_bytes() == PAYLOAD
+
+
+def test_store_prefers_the_media_folder_to_the_inbox(root: Path, media: Path, tmp_path: Path) -> None:
+    inbox = tmp_path / "attachments"
+    inbox.mkdir()
+    (inbox / "attachment.pdf").write_bytes(b"inbox copy\n")
+    tools = _inbox_tools(root, media, inbox)
+    params = {"source": "attachment.pdf", "category_code": "11", "name": "Lease"}
+    result = _call(tools, "archive_store", params)
+    assert (root / result["path"]).read_bytes() == PAYLOAD
+
+
+def test_store_refuses_an_inbox_link_that_leaves_the_inbox(root: Path, media: Path, tmp_path: Path) -> None:
+    inbox = tmp_path / "attachments"
+    inbox.mkdir()
+    (tmp_path / "secret.pdf").write_bytes(b"outside\n")
+    (inbox / "escape.pdf").symlink_to(tmp_path / "secret.pdf")
+    tools = _inbox_tools(root, media, inbox)
+    result = _call(tools, "archive_store", {"source": "escape.pdf", "category_code": "11", "name": "Escape"})
+    assert result["ok"] is False
+    assert result["code"] == "outside_archive"
+
+
 def test_store_refuses_a_missing_source(tools: dict[str, Tool]) -> None:
     result = _call(tools, "archive_store", {"source": "gone.pdf", "category_code": "11", "name": "Lease"})
     assert result["ok"] is False
@@ -356,6 +396,13 @@ def test_archive_refuses_a_missing_root(tmp_path: Path, media: Path) -> None:
     with pytest.raises(ArchiveError) as refused:
         archive_tools(ArchiveConfig(root=tmp_path / "missing", inbox_media_dir=media))
     assert refused.value.code == "not_found"
+
+
+def test_archive_store_uses_the_configured_file_mode(root: Path, media: Path) -> None:
+    config = ArchiveConfig(root=root, inbox_media_dir=media, file_mode=0o666)
+    tools = {tool.spec.name: tool for tool in archive_tools(config)}
+    result = _call(tools, "archive_store", {"source": "photo.jpg", "category_code": "21", "name": "Receipt"})
+    assert os.stat(root / result["path"]).st_mode & 0o777 == 0o666
 
 
 def test_archive_store_writes_a_readable_file(tools: dict[str, Tool], root: Path) -> None:

@@ -32,5 +32,8 @@ RUN mkdir -p /workspace
 # Hermes runs as uid 23001 and the guard volume takes its initial owner from this directory.
 RUN mkdir -p /guard && chown 23001:23001 /guard
 
+# Same for the attachments volume: the guard copies a chat attachment there for archive_store.
+RUN mkdir -p /attachments && chown 23001:23001 /attachments
+
 # The terminal backend is not the docker one: Hermes never talks to a Docker socket here, it reaches
 # the terminal container over ssh (terminal.backend: ssh). No docker-cli usage in this image.
