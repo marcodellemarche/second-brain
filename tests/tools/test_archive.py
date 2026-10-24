@@ -195,6 +195,17 @@ def test_a_bare_category_code_never_leaves_a_file_next_to_item_folders(
     assert not any(entry.is_file() for entry in (archive / "10-19 Home/11 House").iterdir())
 
 
+def test_a_category_without_items_still_gets_a_folder_in_a_foldered_archive(
+    foldered: tuple[Path, dict[str, Tool]],
+) -> None:
+    archive, tools = foldered
+    (archive / "10-19 Home/12 Car").mkdir()
+    params = {"source": "attachment.pdf", "category_code": "12", "name": "Insurance"}
+    assert _call(tools, "archive_store", params)["code"] == "needs_item"
+    result = _call(tools, "archive_store", {**params, "folder": "Documents"})
+    assert result["path"] == "10-19 Home/12 Car/12.01 Documents/Insurance.pdf"
+
+
 def test_an_item_code_and_a_folder_together_are_refused(foldered: tuple[Path, dict[str, Tool]]) -> None:
     _, tools = foldered
     params = {"source": "attachment.pdf", "category_code": "11.04", "name": "Lease", "folder": "Porto"}

@@ -16,8 +16,8 @@ has to the original. A name already taken in the same category gets ` (2)`, ` (3
 
 An archive kept in item folders (`11 House/11.04 Porto/lease.pdf`) keeps that shape: an item code
 with a folder files into it under the given name, and a new item folder is created only from a
-`folder` name, after checking that the category has no folder by that name already. A category
-with item folders refuses a bare category code, so a file never lands loose next to them.
+`folder` name, after checking that the category has no folder by that name already. Once any
+category has item folders, a bare category code is refused, so a file never lands loose.
 
 Error codes: `outside_archive`, `unknown_category`, `not_found`, `bad_source`, `bad_extension`,
 `already_discarded`, `no_number_left`, `needs_item` and `bad_folder`.
@@ -315,6 +315,12 @@ class Archive:
                 "needs_item",
                 f"category {code} keeps its documents in item folders ({known}): pass one of those "
                 "codes, or a `folder` name for a new one",
+            )
+        if any(other.items for other in self.categories()):
+            raise ArchiveError(
+                "needs_item",
+                f"this archive keeps documents in item folders and category {code} has none yet: "
+                "pass a `folder` name for its first one",
             )
         prefix = f"{code}.{self._next_item_number(category_dir, code):02d}"
         return self._stored(self._place(origin, category_dir, prefix, stem, extension))
