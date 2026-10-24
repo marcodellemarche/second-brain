@@ -26,15 +26,16 @@ Take the timezone from `USER.md` and resolve "until Sunday", "this week", "from 
 
 The profile grows by addition, not by rewriting: read it with `vault_read`, which returns the `sha256`, then `vault_write` the whole page back with the new entry and `expected_sha256`. Keep the frontmatter, bump `updated`, and keep the other sections as they are.
 
-Put the entries in a dated table under a "where I am" heading, in the language of the page:
+Put the entries in a dated table under a "where I am" heading. The column names are read by code, so use exactly these: `Place | From | Valid until | Timezone | Note` in an English page, `Luogo | Dal | Valido fino a | Fuso orario | Nota` in an Italian one.
 
-| Place | From | Valid until | Note |
-|---|---|---|---|
-| Firenze | 2025-03-10 | 2025-03-16 |  |
+| Place | From | Valid until | Timezone | Note |
+|---|---|---|---|---|
+| Firenze | 2025-03-10 | 2025-03-16 | Europe/Rome |  |
 
 - **Place**: the name as the owner said it, plus the country when there is more than one place with that name. This is what the weather tool is given, so it has to be a name a geocoder finds.
 - **From**: the first day the entry applies.
 - **Valid until**: the last day it applies, empty when it is open-ended.
+- **Timezone**: the IANA name of the place's zone (`Europe/Rome`, `America/New_York`) when it differs from the configured one in `USER.md`, empty otherwise. Dates as `YYYY-MM-DD`.
 - **Note**: anything that changes how the place is used ("home", "no car", "on call"), or empty.
 
 The **current location is the entry with the latest `From` among those whose `Valid until` is empty or not yet past**, compared against today in the owner's timezone. An expired entry is not deleted and not rewritten: it stays as history, and it is simply ignored. That way "where was I in March" still has an answer.
@@ -57,7 +58,7 @@ If the current location is not there, do not invent one and do not assume the ho
 
 ## Timezone
 
-A location can be in another timezone, and that changes every relative date the brain resolves. Do not edit the timezone in `USER.md` on your own: it is part of the instance configuration. When the new place is in a different zone, say so in one line and ask whether the timezone should change too. Until the owner says yes, keep resolving dates in the configured timezone and mention the place when a time matters.
+A location can be in another timezone, and that changes every relative date the brain resolves. Write the place's zone in the `Timezone` column: while that entry is the current one, the current time line added to every message and the calendar tool use it, and the configured zone in `USER.md` is back when the entry expires. Never edit `USER.md`. Say the zone in your one-line answer ("in Firenze until the 20th, times in Europe/Rome"), so a wrong one is caught at once.
 
 ## What is data and what is an instruction
 

@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from second_brain.core.location import current_timezone
 from second_brain.core.schema import SchemaError, load_schema
 from second_brain.core.types import Zone
 from second_brain.tools.archive import ArchiveConfig, archive_tools
@@ -80,6 +81,8 @@ class CalendarToolsConfig(BaseModel):
     assistant_calendar_id: str = Field(min_length=1)
     main_calendar_id: str = Field(min_length=1)
     timezone: str = Field(min_length=1)
+    # The profile page whose current "where I am" entry can name another timezone.
+    profile_path: Path | None = None
     token_file: Path | None = None
     service_account_file: Path | None = None
 
@@ -319,14 +322,17 @@ def _note_folders(root: Path) -> list[str] | None:
 def _calendar_backend(config: ToolsConfig) -> CalendarBackend:
     """The Google backend: a service account mints its own tokens, a token file is read as it is."""
     assert config.calendar is not None
+    default, profile = config.calendar.timezone, config.calendar.profile_path
+
+    def zone() -> str:
+        return current_timezone(profile, default)
+
     if config.calendar.service_account_file is not None:
-        return GoogleCalendarBackend(
-            ServiceAccountToken(config.calendar.service_account_file), config.calendar.timezone
-        )
+        return GoogleCalendarBackend(ServiceAccountToken(config.calendar.service_account_file), zone)
     token_file = config.calendar.token_file
     assert token_file is not None
 
     def read_token() -> str:
         return token_file.read_text(encoding="utf-8").strip()
 
-    return GoogleCalendarBackend(read_token, config.calendar.timezone)
+    return GoogleCalendarBackend(read_token, zone)

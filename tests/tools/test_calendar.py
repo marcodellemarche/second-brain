@@ -583,6 +583,33 @@ def test_backend_answers_in_the_configured_timezone(monkeypatch: pytest.MonkeyPa
     assert (events[1].start, events[1].end) == ("2026-10-22", "2026-10-23")
 
 
+def test_backend_asks_for_the_zone_on_every_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = (
+        b'{"items": [{"id": "evt-1", "summary": "gym",'
+        b' "start": {"dateTime": "2026-10-21T17:30:00Z"}, "end": {"dateTime": "2026-10-21T18:50:00Z"}}]}'
+    )
+
+    def fake_urlopen(request: Any, timeout: float = 0) -> Any:
+        class Response:
+            def __enter__(self) -> Response:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return payload
+
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    zones = ["Europe/Lisbon"]
+    backend = GoogleCalendarBackend(lambda: "token-1", lambda: zones[0])
+    assert backend.list_events(ASSISTANT, date(2026, 10, 21), date(2026, 10, 21))[0].start.endswith("+01:00")
+    zones[0] = "Europe/Rome"
+    assert backend.list_events(ASSISTANT, date(2026, 10, 21), date(2026, 10, 21))[0].start.endswith("+02:00")
+
+
 def test_backend_turns_a_404_into_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     import urllib.error
 

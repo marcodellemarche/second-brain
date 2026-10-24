@@ -845,6 +845,11 @@ def test_the_command_prints_the_keypair_warnings(
 def test_guard_config_carries_the_timezone(instance: Path, answers: Answers) -> None:
     guard = GuardConfig.from_yaml(instance / "config/brain-guard.yaml")
     assert guard.timezone == answers.timezone
+    # The profile page can move the timezone while the owner travels.
+    assert guard.profile_path is not None and guard.profile_path.startswith("/vault/")
+    tools = ToolsConfig.from_yaml(instance / "config/brain-tools.yaml")
+    assert tools.calendar is not None
+    assert str(tools.calendar.profile_path) == guard.profile_path
 
 
 def test_guard_config_carries_the_language(tmp_path: Path, answers_file: Path) -> None:

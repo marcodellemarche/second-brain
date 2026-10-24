@@ -195,6 +195,7 @@ def tools_config(answers: Answers) -> ToolsConfig:
                 assistant_calendar_id=tools.calendar.assistant_calendar_id,
                 main_calendar_id=tools.calendar.main_calendar_id,
                 timezone=answers.timezone,
+                profile_path=_optional_path(_profile_path(answers)),
                 service_account_file=SECRETS_IN_CONTAINER / "calendar_token",
             )
         else:
@@ -202,6 +203,7 @@ def tools_config(answers: Answers) -> ToolsConfig:
                 assistant_calendar_id=tools.calendar.assistant_calendar_id,
                 main_calendar_id=tools.calendar.main_calendar_id,
                 timezone=answers.timezone,
+                profile_path=_optional_path(_profile_path(answers)),
                 token_file=SECRETS_IN_CONTAINER / "calendar_token",
             )
     return ToolsConfig(
@@ -300,7 +302,19 @@ def guard_config(answers: Answers, registry: Registry) -> GuardConfig:
         approvers=answers.approver_ids,
         language=answers.language,
         timezone=answers.timezone,
+        profile_path=_profile_path(answers),
     )
+
+
+def _optional_path(value: str | None) -> Path | None:
+    return Path(value) if value is not None else None
+
+
+def _profile_path(answers: Answers) -> str | None:
+    """Where the `location` skill keeps the owner's whereabouts, which can change the timezone."""
+    if answers.shape == "team":
+        return None
+    return str(VAULT_IN_CONTAINER / vault_schema(answers.language).page("profile"))
 
 
 def capture_dir(answers: Answers) -> str:

@@ -1054,3 +1054,24 @@ def test_every_turn_carries_the_current_time(tmp_path: Path, hermes_config: Path
     answer = plugin.Guard(config).pre_llm_call(session_id="s1", sender_id="admin-1")
     assert answer["context"].startswith("Adesso: ")
     assert answer["context"].endswith("(Europe/Lisbon).")
+
+
+def test_the_current_time_follows_the_trip_in_the_profile(tmp_path: Path, hermes_config: Path) -> None:
+    profile = tmp_path / "profilo.md"
+    profile.write_text(
+        "| Luogo | Dal | Valido fino a | Fuso orario | Nota |\n|---|---|---|---|---|\n"
+        "| Firenze | 2000-01-01 |  | Europe/Rome |  |\n",
+        encoding="utf-8",
+    )
+    config = GuardConfig.model_validate(
+        {
+            **CONFIG,
+            "guard_dir": str(tmp_path / "guard"),
+            "hermes_config_path": str(hermes_config),
+            "language": "it",
+            "timezone": "Europe/Lisbon",
+            "profile_path": str(profile),
+        }
+    )
+    answer = plugin.Guard(config).pre_llm_call(session_id="s1", sender_id="admin-1")
+    assert answer["context"].endswith("(Europe/Rome).")

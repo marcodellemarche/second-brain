@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from second_brain.core.location import current_timezone
 from second_brain.core.types import Autonomy, Effect, stricter
 from second_brain.guard.attachments import stage_attachment
 from second_brain.guard.audit import AuditLog
@@ -255,7 +256,9 @@ class Guard:
                 "parent": state.parent or "",
             }
         )
-        return {"context": now_line(self.config.timezone, self.config.language)}
+        profile = Path(self.config.profile_path) if self.config.profile_path else None
+        zone = current_timezone(profile, self.config.timezone)
+        return {"context": now_line(zone, self.config.language)}
 
     def subagent_start(
         self,

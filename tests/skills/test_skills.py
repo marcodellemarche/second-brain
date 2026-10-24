@@ -139,3 +139,10 @@ def test_reminders_read_today_from_the_current_time_line() -> None:
     text = (SKILLS / "reminders" / "SKILL.md").read_text(encoding="utf-8")
     assert "current time line" in text
     assert "already in the past is a mistake" in text
+
+
+def test_location_writes_the_columns_the_code_reads() -> None:
+    text = (SKILLS / "location" / "SKILL.md").read_text(encoding="utf-8")
+    assert "`Luogo | Dal | Valido fino a | Fuso orario | Nota`" in text
+    assert "`Place | From | Valid until | Timezone | Note`" in text
+    assert "Never edit `USER.md`" in text

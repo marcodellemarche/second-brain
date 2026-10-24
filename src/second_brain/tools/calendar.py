@@ -199,13 +199,15 @@ class GoogleCalendarBackend:
     def __init__(
         self,
         access_token: Callable[[], str],
-        timezone: str,
+        timezone: str | Callable[[], str],
         *,
         base_url: str = _CALENDAR_API,
         timeout: float = 10.0,
     ) -> None:
         self._access_token = access_token
-        self._zone = ZoneInfo(timezone)
+        # A callable is asked on every call: the owner's zone changes while they travel.
+        self._timezone = timezone if callable(timezone) else (lambda: timezone)
+        ZoneInfo(self._timezone())
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
 
@@ -272,6 +274,10 @@ class GoogleCalendarBackend:
             body={"attendees": [{"email": address} for address in attendees]},
         )
         return self._local(_event(payload))
+
+    @property
+    def _zone(self) -> ZoneInfo:
+        return ZoneInfo(self._timezone())
 
     def _local(self, event: CalendarEvent) -> CalendarEvent:
         # Google answers in the calendar's own timezone, which can differ from the owner's: a
