@@ -842,6 +842,11 @@ def test_the_command_prints_the_keypair_warnings(
     assert "terminal_host_key" in out
 
 
+def test_guard_config_carries_the_timezone(instance: Path, answers: Answers) -> None:
+    guard = GuardConfig.from_yaml(instance / "config/brain-guard.yaml")
+    assert guard.timezone == answers.timezone
+
+
 def test_guard_config_carries_the_language(tmp_path: Path, answers_file: Path) -> None:
     from second_brain.cli.config import guard_config
 

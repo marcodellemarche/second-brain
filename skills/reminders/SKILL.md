@@ -23,6 +23,8 @@ Ask one short question, and stop, when:
 - the year is missing and the date has already passed this year;
 - the person or the thing the reminder is about is not clear from the conversation.
 
+Read "today", "tonight" and "tomorrow" against the current time line at the end of the owner's message ("Now: ..." or "Adesso: ..."), never against the date the conversation started: a chat can stay open for days. A reminder whose start is already in the past is a mistake: fix the date or ask, never create it.
+
 A time of day that nobody stated is not ambiguous: pick a sensible default (09:00 for a call or an appointment, the start of the working day for a deadline) and say which one you used. A reminder that is only a day gets an event covering that day.
 
 ## 3. Pick the calendar by what it is

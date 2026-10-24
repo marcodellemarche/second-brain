@@ -133,3 +133,9 @@ def test_the_documents_skill_passes_only_the_attachment_file_name() -> None:
     text = (SKILLS / "documents" / "SKILL.md").read_text(encoding="utf-8")
     assert "never pass the folder" in text
     assert "in the media folder that Hermes wrote" not in text
+
+
+def test_reminders_read_today_from_the_current_time_line() -> None:
+    text = (SKILLS / "reminders" / "SKILL.md").read_text(encoding="utf-8")
+    assert "current time line" in text
+    assert "already in the past is a mistake" in text

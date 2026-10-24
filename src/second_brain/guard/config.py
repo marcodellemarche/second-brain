@@ -70,6 +70,8 @@ class GuardConfig(BaseModel):
     search_tools: frozenset[str] = frozenset(DEFAULT_SEARCH_TOOLS)
     # The language the owner reads, so the approval card is written in it and not in policy codes.
     language: Literal["it", "en"] = "en"
+    # The owner's timezone, for the current time the guard adds to every turn.
+    timezone: str = "UTC"
 
     @classmethod
     def load(cls, environ: Mapping[str, str] | None = None) -> GuardConfig:

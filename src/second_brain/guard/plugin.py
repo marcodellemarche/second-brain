@@ -32,6 +32,7 @@ from second_brain.guard.classify import (
     path_taint,
     terminal_denied,
 )
+from second_brain.guard.clock import now_line
 from second_brain.guard.config import GuardConfig
 from second_brain.guard.heartbeat import write_heartbeat
 from second_brain.guard.rules import Decision, decide
@@ -225,8 +226,11 @@ class Guard:
         user_message: Any = "",
         parent_session_id: str = "",
         **_kwargs: Any,
-    ) -> None:
-        """Remember who is talking, which session is the parent, and the URLs the user gave."""
+    ) -> dict[str, str]:
+        """Remember who is talking, which session is the parent, and the URLs the user gave.
+
+        The answer is the current time, which Hermes appends to the user message of the turn.
+        """
         self.store.set_identity(session_id, sender_id, platform)
         # The budget bounds one task, not the whole chat session: a new turn starts it over.
         self.store.start_turn(session_id)
@@ -251,6 +255,7 @@ class Guard:
                 "parent": state.parent or "",
             }
         )
+        return {"context": now_line(self.config.timezone, self.config.language)}
 
     def subagent_start(
         self,

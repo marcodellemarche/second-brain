@@ -1039,3 +1039,18 @@ def test_stamp_guard_copies_nothing_for_another_tool(tmp_path: Path, hermes_conf
     inbox.mkdir()
     _store(_archive_guard(tmp_path, hermes_config, inbox), tool="mcp__brain__vault_write")
     assert list(inbox.iterdir()) == []
+
+
+def test_every_turn_carries_the_current_time(tmp_path: Path, hermes_config: Path) -> None:
+    config = GuardConfig.model_validate(
+        {
+            **CONFIG,
+            "guard_dir": str(tmp_path / "guard"),
+            "hermes_config_path": str(hermes_config),
+            "language": "it",
+            "timezone": "Europe/Lisbon",
+        }
+    )
+    answer = plugin.Guard(config).pre_llm_call(session_id="s1", sender_id="admin-1")
+    assert answer["context"].startswith("Adesso: ")
+    assert answer["context"].endswith("(Europe/Lisbon).")

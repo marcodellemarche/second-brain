@@ -299,6 +299,7 @@ def guard_config(answers: Answers, registry: Registry) -> GuardConfig:
         members=answers.member_ids,
         approvers=answers.approver_ids,
         language=answers.language,
+        timezone=answers.timezone,
     )
 
 
