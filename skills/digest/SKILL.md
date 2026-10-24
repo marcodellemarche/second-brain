@@ -1,6 +1,6 @@
 ---
 name: digest
-description: "Morning and evening digest: what happened, what the brain did with undo hints, what is due soon, deferred notifications, held-back notes and pending questions."
+description: "Morning and evening digest: what happened, what the brain did and how to undo it, what is due or long open, lint findings, deferred notifications, held-back notes and pending questions."
 ---
 
 # Digest
@@ -17,7 +17,7 @@ A team vault is one whose schema has a `systems` zone and an empty `brain_pages`
 
 **New in the vault.** What the team can now find, one line per page with its title and a `[[zone/name]]` link, newest first. Say what the page is about in a few words, never only the folder. A commit with `Requested-By: remote` was merged by a person on the vault's repository: say "merged" and, when the commit names it, the pull request. Group a big merge by zone with its two or three most useful pages named ("12 topics, among them [[topics/hard-limit-enforcing]]"), never as a list of folders.
 
-**What I did on my own.** As in a personal vault: the brain's own writes, each with its undo hint.
+**What I did on my own.** As in a personal vault: the brain's own writes, numbered, with the same line on how to undo one.
 
 **Worth a look.** The lint findings added since the last digest that need a person: a contradiction between two pages, a broken link, a page whose `updated` is old for something that moves fast. One line each with the links to the pages involved, and what the reader would have to decide. A finding the lint reported before is not repeated. A list of orphans is one line with the count, not every path.
 
@@ -31,17 +31,21 @@ The sections below are for a personal vault. Keep a section only when it has som
 
 **Today.** The morning run (a `due` before noon) opens with one line of weather for where the owner is today: `weather` with the place from the current entry the `location` skill keeps in the profile page, or the residence written there when no entry is current. Sky, min and max, rain only when the chance is above 30% (with the hours), wind only when gusts go over 50 km/h. If the calendar shows a trip in the next three days, add half a line with the weather at the destination for that day. Then today's events from `calendar_list` on both calendars, one line each, with the time in the owner's timezone. The evening run skips the weather and lists tomorrow's events instead. This section is always there in the morning, even when nothing else is: a morning digest is at least the weather line.
 
-**Since the last digest.** One line per thing that happened, newest first, taken from the vault commits `vault_log` lists (path, one-line reason, short commit id). Call `vault_log` with `since` set to the time of the previous digest, so the list starts where the last digest stopped. With no previous digest, the window is the last 24 hours, not the whole history of the vault. Group the small stuff: "4 captures, 2 call notes". Leave out the routine internals the owner does not care about.
+**Since the last digest.** One line per thing that happened, newest first, taken from the vault commits `vault_log` lists (path and one-line reason). Call `vault_log` with `since` set to the time of the previous digest, so the list starts where the last digest stopped. With no previous digest, the window is the last 24 hours, not the whole history of the vault. Group the small stuff: "4 captures, 2 call notes". Leave out the routine internals the owner does not care about.
 
-**What I did on my own.** Only the writes that were not asked for in the moment: a topic page updated from a call, a commitment added, a note moved. Call `vault_log` with `since` set to the time of the previous digest and keep only the commits authored by the brain that nobody asked for. A commit whose `Requested-By` is a bare id, the owner's own chat sender, was asked for in chat: it goes under "Since the last digest" and never here. Everything else was not asked for: `webhook:...`, `job:...` and `schedule:...` are scheduled tasks, jobs and ingest events. Each line ends with its undo hint, the short commit id from `vault_log`, so the owner can say "undo `<commit>`". Use `vault_undo` only when the owner asks; the digest never undoes anything by itself.
+**What I did on my own.** Only the writes that were not asked for in the moment: a topic page updated from a call, a commitment added, a note moved. Call `vault_log` with `since` set to the time of the previous digest and keep only the commits authored by the brain that nobody asked for. A commit whose `Requested-By` is a bare id, the owner's own chat sender, was asked for in chat: it goes under "Since the last digest" and never here. Everything else was not asked for: `webhook:...`, `job:...` and `schedule:...` are scheduled tasks, jobs and ingest events. Number these lines and close the section with one short line saying that the owner can answer "undo" and the number. Never print a commit id: it means nothing to the owner. When the owner answers, find the commit again with `vault_log` and undo it with `vault_undo`; the digest never undoes anything by itself.
 
-**Due soon.** Rows from `_brain/commitments` whose `due` is within the next seven days or already past and still open, plus document cards in `documents/` whose `expires` falls in the same window. Format: what, when, how many days left. Overdue first, and say plainly that it is overdue.
+**Due soon.** Rows from `_brain/commitments` whose `due` is within the next seven days or already past and still open, plus document cards in `documents/` whose `expires` falls in the same window. Format: what, when, how many days left. Overdue first, and say plainly that it is overdue. Before listing a row, check that the owner did not already say in chat that it is done, cancelled or not real: such a row is something to close, not something due.
+
+**Still open.** Rows of `_brain/commitments` with no `due` that have been open for more than fourteen days never reach "Due soon", so the register grows unseen. One line with how many there are and the three oldest, then ask whether to close them, give them a date or keep them. The morning run only, and at most once a week (on Mondays, or on the first morning digest after a week without it).
+
+**Worth a look.** The findings the lint left since the last digest that need the owner: a contradiction, a broken link, a page that looks stale. One line each with the pages involved and what to decide. Saying that the lint ran, or that it wrote a page, is not a finding: if it found nothing that needs the owner, leave the section out.
 
 **Deferred.** The messages the `notify` tool answered `defer` to, collected with `deferred_notifications` passing the ISO 8601 time of the previous digest, so each message lands in exactly one digest. Keep them short and in the owner's terms; they were already judged worth saying.
 
 **Held back.** Notes the owner edited that the vault left uncommitted because they look like a credential: the vault's held-back list gives the path and which rule matched. Tell the owner which file to clean, and never print the value, not even a fragment. Say that until the secret is gone the file stays outside the commits.
 
-**Waiting for you.** Open questions that need the owner's answer: a call the router could not classify (`status: pending-team-question` in a call note, with the reason it gave and its title, so the owner can answer "team" or "personal" in chat), a team call still waiting in the capture folder for the owner's yes to hand it over, a capture the triage could not place (`status: pending-review` in an inbox note, with what is missing), a `notify_feedback` proposal waiting for a yes, anything the policy sent to `ask` and is still pending, and the memory writes staged for approval, which stay pending until the owner approves them. One line each, with what happens on yes and on no. The staged memory writes appear only when a tool lists them: if no tool does, leave that line out instead of guessing what is waiting.
+**Waiting for you.** Open questions that need the owner's answer: a call the router could not classify (`status: pending-team-question` in a call note, with the reason it gave and its title, so the owner can answer "team" or "personal" in chat), a team call still waiting in the capture folder for the owner's yes to hand it over, a capture the triage could not place (`status: pending-review` in an inbox note, with what is missing), a `notify_feedback` proposal waiting for a yes, anything the policy sent to `ask` and is still pending, and the memory writes staged for approval, which stay pending until the owner approves them. One line each, with what happens on yes and on no. When more than two calls wait for "team" or "personal", do not list them one by one: say how many there are, propose one answer for all of them from what they share (the same team markers, the same participants), name the ones that look different, and let the owner answer once. The staged memory writes appear only when a tool lists them: if no tool does, leave that line out instead of guessing what is waiting.
 
 ## Tone and length
 
@@ -49,6 +53,7 @@ The sections below are for a personal vault. Keep a section only when it has som
 - Say how sure you are when a line is an inference: "probably", "looks like".
 - No emoji in the digest text. A single leading line naming the time of day is enough.
 - Answer in the brain's language, with the vault's own words for the folders when you name a path.
+- Name each page once. A line that links the same page twice, or says the same thing twice, is rewritten before it is sent.
 - If nothing happened and nothing is due, say that in one line after the weather. Do not pad.
 
 ## Rules

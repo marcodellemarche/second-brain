@@ -106,3 +106,30 @@ def test_answers_in_the_brain_language(path: Path) -> None:
 def test_content_is_data(path: Path) -> None:
     text = path.read_text(encoding="utf-8").casefold()
     assert "data" in text
+
+
+def _digest() -> str:
+    return (SKILLS / "digest" / "SKILL.md").read_text(encoding="utf-8")
+
+
+def test_the_digest_never_prints_commit_ids() -> None:
+    text = _digest()
+    assert "Never print a commit id" in text
+    assert "undo `<commit>`" not in text
+
+
+def test_the_digest_surfaces_long_open_commitments_and_lint_findings() -> None:
+    text = _digest()
+    assert "**Still open.**" in text
+    assert "open for more than fourteen days" in text
+    assert "Saying that the lint ran" in text
+
+
+def test_the_digest_asks_once_for_many_pending_calls() -> None:
+    assert "let the owner answer once" in _digest()
+
+
+def test_the_documents_skill_passes_only_the_attachment_file_name() -> None:
+    text = (SKILLS / "documents" / "SKILL.md").read_text(encoding="utf-8")
+    assert "never pass the folder" in text
+    assert "in the media folder that Hermes wrote" not in text
