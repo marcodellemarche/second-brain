@@ -336,7 +336,6 @@ def test_soul_calls_other_content_data_and_forbids_python() -> None:
     assert "`/vault`" in soul
     assert "Never install software" in soul
     assert VALUES["example_note_path"] in soul
-    assert "`/new`" in soul
 
 
 def test_a_team_soul_keeps_identifiers_out_of_the_reply() -> None:
@@ -365,32 +364,19 @@ def test_soul_says_when_the_owner_denied_something() -> None:
     assert "did not check it" in soul
 
 
-def test_soul_suggests_new_inside_a_sentence() -> None:
-    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
-    assert "one short sentence" in soul
-    for line in soul.splitlines():
-        assert not line.rstrip().endswith("/new`"), f"bare /new at the end of a line: {line!r}"
-        assert not line.rstrip().endswith("`/new`"), f"bare /new at the end of a line: {line!r}"
-
-
-def test_a_slack_soul_never_suggests_a_restart() -> None:
-    # In Slack a thread is already the session, and a reminder after every forward is noise.
-    soul = render(TEMPLATES / "SOUL.md.j2", dict(VALUES, is_slack=True))
-    assert "new thread" not in soul
-    assert "start fresh" not in soul
-    assert "/new" not in soul
+def test_no_soul_suggests_a_restart() -> None:
+    # A reminder after every forward is noise: the approvals already say when the session is tainted.
+    for values in (VALUES, dict(VALUES, is_slack=True), dict(VALUES, is_team=True)):
+        soul = render(TEMPLATES / "SOUL.md.j2", values)
+        assert "new thread" not in soul
+        assert "start fresh" not in soul
+        assert "/new" not in soul
 
 
 def test_a_team_soul_looks_beyond_the_vault_before_asking() -> None:
     soul = render(TEMPLATES / "SOUL.md.j2", dict(VALUES, is_team=True))
     assert "not a dead end" in soul
     assert "report-archiver" in soul
-
-
-def test_a_telegram_soul_keeps_the_new_sentence() -> None:
-    soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
-    assert "`/new`" in soul
-    assert "new thread" not in soul
 
 
 def test_a_team_soul_reads_the_system_page_before_jira() -> None:
