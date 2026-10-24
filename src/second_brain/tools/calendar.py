@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -218,10 +218,10 @@ class GoogleCalendarBackend:
         }
         payload = self._request("GET", self._events_path(calendar_id), query=query)
         items = payload.get("items") or []
-        return [_event(item) for item in items if isinstance(item, dict)]
+        return [self._local(_event(item)) for item in items if isinstance(item, dict)]
 
     def get_event(self, calendar_id: str, event_id: str) -> CalendarEvent:
-        return _event(self._request("GET", self._event_path(calendar_id, event_id)))
+        return self._local(_event(self._request("GET", self._event_path(calendar_id, event_id))))
 
     def create_event(
         self, calendar_id: str, draft: EventDraft, *, send_updates: SendUpdates = "none"
@@ -232,7 +232,7 @@ class GoogleCalendarBackend:
             query={"sendUpdates": send_updates},
             body=self._body(draft),
         )
-        return _event(payload)
+        return self._local(_event(payload))
 
     def update_event(
         self,
@@ -248,7 +248,7 @@ class GoogleCalendarBackend:
             query={"sendUpdates": send_updates},
             body=self._body(draft),
         )
-        return _event(payload)
+        return self._local(_event(payload))
 
     def delete_event(self, calendar_id: str, event_id: str, *, send_updates: SendUpdates = "none") -> None:
         self._request(
@@ -271,7 +271,20 @@ class GoogleCalendarBackend:
             query={"sendUpdates": send_updates},
             body={"attendees": [{"email": address} for address in attendees]},
         )
-        return _event(payload)
+        return self._local(_event(payload))
+
+    def _local(self, event: CalendarEvent) -> CalendarEvent:
+        # Google answers in the calendar's own timezone, which can differ from the owner's: a
+        # +02:00 the owner never sees reads to the model like a wrong hour.
+        return replace(event, start=self._in_zone(event.start), end=self._in_zone(event.end))
+
+    def _in_zone(self, moment: str) -> str:
+        if "T" not in moment:
+            return moment
+        try:
+            return datetime.fromisoformat(moment).astimezone(self._zone).isoformat()
+        except ValueError:
+            return moment
 
     def _moment(self, day: date) -> str:
         return datetime.combine(day, datetime.min.time(), tzinfo=self._zone).isoformat()

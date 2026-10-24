@@ -553,6 +553,36 @@ def test_backend_builds_the_event_body_and_never_asks_for_updates(monkeypatch: p
     assert b"attendees" not in seen[0]["body"]
 
 
+def test_backend_answers_in_the_configured_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The calendar itself is set to another zone: the times come back in the owner's one.
+    payload = (
+        b'{"items": [{"id": "evt-1", "summary": "gym",'
+        b' "start": {"dateTime": "2026-10-21T19:30:00+02:00"},'
+        b' "end": {"dateTime": "2026-10-21T20:50:00+02:00"}},'
+        b' {"id": "evt-2", "summary": "holiday",'
+        b' "start": {"date": "2026-10-22"}, "end": {"date": "2026-10-23"}}]}'
+    )
+
+    def fake_urlopen(request: Any, timeout: float = 0) -> Any:
+        class Response:
+            def __enter__(self) -> Response:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return payload
+
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    backend = GoogleCalendarBackend(lambda: "token-1", "Europe/Lisbon")
+    events = backend.list_events(ASSISTANT, date(2026, 10, 21), date(2026, 10, 22))
+    assert (events[0].start, events[0].end) == ("2026-10-21T18:30:00+01:00", "2026-10-21T19:50:00+01:00")
+    assert (events[1].start, events[1].end) == ("2026-10-22", "2026-10-23")
+
+
 def test_backend_turns_a_404_into_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     import urllib.error
 
