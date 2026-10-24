@@ -52,9 +52,15 @@ If the type is unclear, or the fields contradict each other (two different numbe
 
 Call `archive_categories` and pick the existing category that fits. The list is the whole taxonomy: a code that is not in it is refused, so never invent one. When two categories both fit, pick the more specific one; when none fits, say which codes exist and ask which one the owner wants.
 
+Many archives keep every document inside an item folder of its category (`11 House/11.04 Porto/`), and each category in the list shows those `items`. Then:
+
+- When an item fits (the same place, the same contract, the same car), use its code, `11.04`. Prefer an existing item to a new one: a second folder for the same thing splits the history.
+- When no item fits, pass the category code `11` and a `folder` name for a new one: short, in the archive's language, in the style of its siblings (`Porto`, `Coimbra`, `Honda Civic`), never a date or a document name. The tool reuses a folder that already has that name and numbers a new one by itself.
+- When two items could fit, or you are not sure a new folder is right, ask the owner before storing.
+
 ## 5. Store the original
 
-Call `archive_store` with the attachment file name, the chosen `category_code` and a `name` that says what the document is without the extension: `Identity card`, `Electricity bill March`, `Rental contract`. It copies the file, never moves it, never overwrites an existing one, and returns the archive-relative `path` and the `sha256`. Keep both: the card points at them.
+Call `archive_store` with the attachment file name, the chosen `category_code` (and `folder` for a new item) and a `name` that says what the document is without the extension. Inside an item folder, name the file like the `examples` already there: if they read `2026-10_contratto-affitto-porto`, write `2026-10_contratto-internet-porto`, not `Internet contract`. With no examples, a plain name: `Identity card`, `Electricity bill March`. It copies the file, never moves it, never overwrites an existing one, and returns the archive-relative `path` and the `sha256`. Keep both: the card points at them.
 
 ## 6. Write the card
 
@@ -82,9 +88,9 @@ Write with `vault_write`. If the card already exists, read it first, keep its `c
 
 ## 7. Answer
 
-Say what was filed, in which category, and that the card is in the documents zone, with its path. The card is what the digest reports as new, so there is nothing else to announce.
+Say what was filed, in which folder of the archive (and that you created it, when `created_folder` says so), and that the card is in the documents zone, with its path. The card is what the digest reports as new, so there is nothing else to announce.
 
-**Never print the number of an identity document in chat.** Not the number, not the last four digits, not a masked version: the chat is a log that lives somewhere else, and the card in the vault is the place for it. Refer to the document by its card path ("I filed your identity card, `documents/Identity card.md`") and, if the owner asks for the number, point at the card rather than repeating it. The same goes for a passport, a licence, a health card and any document whose number is an identifier of a person.
+**Do not print the number of an identity document in chat unless the owner asks for it.** The card in the vault is the place for it, so refer to the document by its card path ("I filed your identity card, `documents/Identity card.md`"). When the owner asks for the number, give it. The same goes for a passport, a licence, a health card and any document whose number is an identifier of a person.
 
 An invoice or a contract reference is not an identity number: an amount and a due date are fine to say, and useful, since the digest will remind the owner before the due date.
 
@@ -103,6 +109,7 @@ A document is also a place where secrets hide. Never copy a password, a PIN, a f
 ## Failures
 
 - `unknown_category` from `archive_store`: the code is not in `archive_categories`. Re-read the list and pick from it, or ask.
+- `needs_item`: the category keeps its documents in item folders. Pick one of the items the message lists, or pass a `folder` for a new one.
 - `not_found`: no attachment has that name, or it is older than a week. Check that `source` is only the file name; if it is, ask the owner to send it again.
 - `bad_extension`: the archive does not accept that format. Say which formats it takes and ask for a conversion.
 - `hash_mismatch` from `vault_write`: the card changed under you. Read it again and redo the write.

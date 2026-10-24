@@ -125,6 +125,91 @@ def test_categories_skips_folders_without_a_code(tools: dict[str, Tool], root: P
     assert [entry["code"] for entry in result["categories"]] == ["11", "12", "21"]
 
 
+# --- item folders --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def foldered(tmp_path: Path, media: Path) -> tuple[Path, dict[str, Tool]]:
+    """An archive kept the Johnny.Decimal way: every document inside an item folder."""
+    archive = tmp_path / "foldered"
+    porto = archive / "10-19 Home/11 House/11.04 Porto"
+    porto.mkdir(parents=True)
+    (porto / "2026-10_lease-porto.pdf").write_bytes(b"lease\n")
+    (archive / "10-19 Home/11 House/11.01 Azores").mkdir()
+    (archive / "10-19 Home/11 House/notes").mkdir()
+    config = ArchiveConfig(root=archive, inbox_media_dir=media)
+    return archive, {tool.spec.name: tool for tool in archive_tools(config)}
+
+
+def test_categories_list_the_item_folders_with_examples(foldered: tuple[Path, dict[str, Tool]]) -> None:
+    _, tools = foldered
+    house = _call(tools, "archive_categories", {})["categories"][0]
+    assert [(item["code"], item["name"]) for item in house["items"]] == [
+        ("11.01", "Azores"),
+        ("11.04", "Porto"),
+    ]
+    assert house["items"][1]["examples"] == ["2026-10_lease-porto.pdf"]
+    assert house["items"][1]["path"] == "10-19 Home/11 House/11.04 Porto"
+
+
+def test_an_item_code_with_a_folder_files_inside_it(foldered: tuple[Path, dict[str, Tool]]) -> None:
+    archive, tools = foldered
+    params = {"source": "attachment.pdf", "category_code": "11.04", "name": "2026-10_internet-porto"}
+    result = _call(tools, "archive_store", params)
+    assert result["path"] == "10-19 Home/11 House/11.04 Porto/2026-10_internet-porto.pdf"
+    assert result["created_folder"] is None
+    assert (archive / result["path"]).read_bytes() == PAYLOAD
+
+
+def test_a_folder_name_reuses_the_folder_that_already_has_it(foldered: tuple[Path, dict[str, Tool]]) -> None:
+    archive, tools = foldered
+    params = {"source": "attachment.pdf", "category_code": "11", "name": "Lease", "folder": "porto"}
+    result = _call(tools, "archive_store", params)
+    assert result["path"] == "10-19 Home/11 House/11.04 Porto/Lease.pdf"
+    assert result["created_folder"] is None
+    assert sorted(entry.name for entry in (archive / "10-19 Home/11 House").iterdir()) == [
+        "11.01 Azores",
+        "11.04 Porto",
+        "notes",
+    ]
+
+
+def test_a_new_folder_takes_the_next_free_number(foldered: tuple[Path, dict[str, Tool]]) -> None:
+    archive, tools = foldered
+    params = {"source": "attachment.pdf", "category_code": "11", "name": "Lease", "folder": "Lisbon"}
+    result = _call(tools, "archive_store", params)
+    assert result["created_folder"] == "10-19 Home/11 House/11.02 Lisbon"
+    assert result["path"] == "10-19 Home/11 House/11.02 Lisbon/Lease.pdf"
+
+
+def test_a_bare_category_code_never_leaves_a_file_next_to_item_folders(
+    foldered: tuple[Path, dict[str, Tool]],
+) -> None:
+    archive, tools = foldered
+    result = _call(
+        tools, "archive_store", {"source": "attachment.pdf", "category_code": "11", "name": "Lease"}
+    )
+    assert result["ok"] is False
+    assert result["code"] == "needs_item"
+    assert "11.04 Porto" in result["message"]
+    assert not any(entry.is_file() for entry in (archive / "10-19 Home/11 House").iterdir())
+
+
+def test_an_item_code_and_a_folder_together_are_refused(foldered: tuple[Path, dict[str, Tool]]) -> None:
+    _, tools = foldered
+    params = {"source": "attachment.pdf", "category_code": "11.04", "name": "Lease", "folder": "Porto"}
+    result = _call(tools, "archive_store", params)
+    assert result["code"] == "bad_folder"
+
+
+@pytest.mark.parametrize("folder", ["../outside", "a/b", ".hidden", "x"])
+def test_a_folder_name_is_a_plain_name(folder: str) -> None:
+    with pytest.raises(ValidationError):
+        StoreParams.model_validate(
+            {"source": "a.pdf", "category_code": "11", "name": "Lease", "folder": folder}
+        )
+
+
 # --- store ---------------------------------------------------------------------------------
 
 

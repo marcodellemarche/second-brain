@@ -14,8 +14,13 @@ Item numbering: a two-digit `category_code` (`11`) gets the next free item numbe
 `11.03 <name>.<ext>`: dropping the code from the name would lose the only pointer the vault note
 has to the original. A name already taken in the same category gets ` (2)`, ` (3)` appended.
 
+An archive kept in item folders (`11 House/11.04 Porto/lease.pdf`) keeps that shape: an item code
+with a folder files into it under the given name, and a new item folder is created only from a
+`folder` name, after checking that the category has no folder by that name already. A category
+with item folders refuses a bare category code, so a file never lands loose next to them.
+
 Error codes: `outside_archive`, `unknown_category`, `not_found`, `bad_source`, `bad_extension`,
-`already_discarded` and `no_number_left`.
+`already_discarded`, `no_number_left`, `needs_item` and `bad_folder`.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import hashlib
 import os
 import re
 import shutil
+import unicodedata
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -46,6 +52,8 @@ _NAME = re.compile(r"^[\w .-]+$")
 _AREA_FOLDER = re.compile(r"^(\d{2})(?:-\d{2})?[\s._-]+(\S.*)$")
 _CATEGORY_FOLDER = re.compile(r"^(\d{2})(?:\.\d{2})?[\s._-]+(\S.*)$")
 _CODE = re.compile(r"^(\d{2})(?:\.(\d{2}))?$")
+_ITEM_FOLDER = re.compile(r"^(\d{2})\.(\d{2})[\s._-]+(\S.*)$")
+_EXAMPLES = 3
 _MAX_COPIES = 100
 
 
@@ -113,7 +121,15 @@ class StoreParams(BaseModel):
         min_length=2,
         max_length=80,
         description="What the document is, without the extension: letters, digits, spaces, "
-        "hyphen, underscore, dot.",
+        "hyphen, underscore, dot. Inside an item folder, follow the style of its examples.",
+    )
+    folder: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=60,
+        description="With a two-digit category_code: the item folder to file into. An existing "
+        "one with that name is reused, otherwise a new numbered one is created. Leave it out "
+        "with an item code like '11.04'.",
     )
 
     @field_validator("source")
@@ -130,9 +146,11 @@ class StoreParams(BaseModel):
             raise ValueError(f"category_code must be two digits or two digits and two digits: {value!r}")
         return value.strip()
 
-    @field_validator("name")
+    @field_validator("name", "folder")
     @classmethod
-    def _check_name(cls, value: str) -> str:
+    def _check_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         if not _NAME.match(value):
             raise ValueError("name may only contain letters, digits, spaces, '-', '_' and '.'")
         if value != value.strip():
@@ -150,12 +168,26 @@ class DiscardParams(BaseModel):
 
 
 @dataclass(frozen=True, slots=True)
+class Item:
+    """An item folder inside a category, `11.04 Porto`, with a few of the file names it holds."""
+
+    code: str
+    name: str
+    path: str
+    examples: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"code": self.code, "name": self.name, "path": self.path, "examples": list(self.examples)}
+
+
+@dataclass(frozen=True, slots=True)
 class Category:
     code: str
     name: str
     path: str
     area_code: str
     area_name: str
+    items: tuple[Item, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -164,6 +196,7 @@ class Category:
             "path": self.path,
             "area_code": self.area_code,
             "area_name": self.area_name,
+            "items": [item.as_dict() for item in self.items],
         }
 
 
@@ -171,9 +204,10 @@ class Category:
 class StoredItem:
     path: str
     sha256: str
+    created_folder: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {"path": self.path, "sha256": self.sha256}
+        return {"path": self.path, "sha256": self.sha256, "created_folder": self.created_folder}
 
 
 def _segments(path: str) -> list[str]:
@@ -234,18 +268,27 @@ class Archive:
                 category = _CATEGORY_FOLDER.match(category_path.name)
                 if category is None:
                     continue
+                code = category.group(1)
+                path = f"{area_path.name}/{category_path.name}"
                 found.append(
                     Category(
-                        code=category.group(1),
+                        code=code,
                         name=category.group(2).strip(),
-                        path=f"{area_path.name}/{category_path.name}",
+                        path=path,
                         area_code=area.group(1),
                         area_name=area.group(2).strip(),
+                        items=tuple(self._items(category_path, code, path)),
                     )
                 )
         return sorted(found, key=lambda entry: (entry.code, entry.path))
 
-    def store(self, source: str, category_code: str, name: str) -> StoredItem:
+    def store(self, source: str, category_code: str, name: str, folder: str | None = None) -> StoredItem:
+        """File the attachment into the item folder that fits, or as a numbered file.
+
+        An archive organized in item folders (`11 House/11.04 Porto/...`) keeps that shape: an item
+        code that has a folder files into it, a new folder is made only from a name the model gave
+        and only when no folder of that category already has the same name.
+        """
         code, item = _CODE.match(category_code).group(1, 2)  # type: ignore[union-attr]
         category = self._category(code)
         origin = self._source(source)
@@ -253,12 +296,28 @@ class Archive:
         if extension not in self._config.allowed_extensions:
             allowed = ", ".join(self._config.allowed_extensions)
             raise ArchiveError("bad_extension", f"{extension or 'no extension'} is not one of {allowed}")
-        folder = self._root / category.path
-        if not folder.is_dir():
+        category_dir = self._root / category.path
+        if not category_dir.is_dir():
             raise ArchiveError("unknown_category", f"{category.path} is no longer a folder")
-        prefix = f"{code}.{item}" if item else f"{code}.{self._next_item_number(folder, code):02d}"
-        target = self._place(origin, folder, prefix, _strip_extension(name, extension), extension)
-        return StoredItem(path=target.relative_to(self._root).as_posix(), sha256=_sha256(target))
+        stem = _strip_extension(name, extension)
+        if item is not None and folder is not None:
+            raise ArchiveError("bad_folder", "give either an item code or a folder name, not both")
+        if item is not None:
+            existing = next((entry for entry in category.items if entry.code == f"{code}.{item}"), None)
+            if existing is not None:
+                return self._stored(self._place(origin, self._root / existing.path, "", stem, extension))
+            return self._stored(self._place(origin, category_dir, f"{code}.{item}", stem, extension))
+        if folder is not None:
+            return self._store_in_folder(origin, category, category_dir, folder, stem, extension)
+        if category.items:
+            known = "; ".join(f"{entry.code} {entry.name}" for entry in category.items)
+            raise ArchiveError(
+                "needs_item",
+                f"category {code} keeps its documents in item folders ({known}): pass one of those "
+                "codes, or a `folder` name for a new one",
+            )
+        prefix = f"{code}.{self._next_item_number(category_dir, code):02d}"
+        return self._stored(self._place(origin, category_dir, prefix, stem, extension))
 
     def discard(self, path: str) -> str:
         rel, target = self._resolve(path)
@@ -275,6 +334,47 @@ class Archive:
             index += 1
         target.rename(destination)
         return destination.relative_to(self._root).as_posix()
+
+    def _store_in_folder(
+        self, origin: Path, category: Category, category_dir: Path, folder: str, stem: str, extension: str
+    ) -> StoredItem:
+        wanted = _comparable(folder)
+        for entry in category.items:
+            if _comparable(entry.name) == wanted:
+                return self._stored(self._place(origin, self._root / entry.path, "", stem, extension))
+        number = self._next_item_number(category_dir, category.code)
+        created = category_dir / f"{category.code}.{number:02d} {folder}"
+        created.mkdir()
+        target = self._place(origin, created, "", stem, extension)
+        return self._stored(target, created_folder=created.relative_to(self._root).as_posix())
+
+    def _stored(self, target: Path, created_folder: str | None = None) -> StoredItem:
+        return StoredItem(
+            path=target.relative_to(self._root).as_posix(),
+            sha256=_sha256(target),
+            created_folder=created_folder,
+        )
+
+    def _items(self, category_dir: Path, code: str, category_path: str) -> list[Item]:
+        items: list[Item] = []
+        for entry in self._folders(category_dir):
+            match = _ITEM_FOLDER.match(entry.name)
+            if match is None or match.group(1) != code:
+                continue
+            files = sorted(
+                (child for child in entry.iterdir() if child.is_file() and not child.name.startswith(".")),
+                key=lambda child: child.stat().st_mtime,
+                reverse=True,
+            )
+            items.append(
+                Item(
+                    code=f"{code}.{match.group(2)}",
+                    name=match.group(3).strip(),
+                    path=f"{category_path}/{entry.name}",
+                    examples=tuple(child.name for child in files[:_EXAMPLES]),
+                )
+            )
+        return items
 
     def _category(self, code: str) -> Category:
         available = self.categories()
@@ -298,9 +398,10 @@ class Archive:
         raise ArchiveError("not_found", f"{name} is not among the attachments")
 
     def _place(self, origin: Path, folder: Path, prefix: str, name: str, extension: str) -> Path:
+        lead = f"{prefix} " if prefix else ""
         for index in range(1, _MAX_COPIES):
             suffix = "" if index == 1 else f" ({index})"
-            target = folder / f"{prefix} {name}{suffix}.{extension}"
+            target = folder / f"{lead}{name}{suffix}.{extension}"
             try:
                 _copy_exclusive(origin, target, self._config.file_mode)
             except FileExistsError:
@@ -349,6 +450,12 @@ class Archive:
         return target.relative_to(self._root).as_posix(), target
 
 
+def _comparable(name: str) -> str:
+    """A folder name reduced to what a person means by it: no case, accents or separators."""
+    plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().casefold()
+    return " ".join(re.split(r"[\s._-]+", plain)).strip()
+
+
 def _strip_extension(name: str, extension: str) -> str:
     suffix = f".{extension}"
     if name.lower().endswith(suffix) and len(name) > len(suffix):
@@ -377,7 +484,9 @@ def archive_tools(config: ArchiveConfig) -> list[Tool]:
 
     def store(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
         assert isinstance(params, StoreParams)
-        return _guarded(lambda: archive.store(params.source, params.category_code, params.name).as_dict())
+        return _guarded(
+            lambda: archive.store(params.source, params.category_code, params.name, params.folder).as_dict()
+        )
 
     def discard(params: BaseModel, provenance: Provenance) -> dict[str, Any]:
         assert isinstance(params, DiscardParams)
@@ -388,9 +497,10 @@ def archive_tools(config: ArchiveConfig) -> list[Tool]:
             spec=ToolSpec(
                 name="archive_categories",
                 description=(
-                    "List the category folders of the document archive, two levels deep, with "
-                    "their numeric code and name. Use a code from this list for archive_store: a "
-                    "code that is not here is refused."
+                    "List the category folders of the document archive with their numeric code "
+                    "and name, and the item folders inside each one (`11.04 Porto`) with a few "
+                    "file names as examples. Use a code from this list for archive_store: a code "
+                    "that is not here is refused."
                 ),
                 params=CategoriesParams,
                 effect=Effect.READ,

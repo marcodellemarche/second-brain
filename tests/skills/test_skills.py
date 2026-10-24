@@ -146,3 +146,10 @@ def test_location_writes_the_columns_the_code_reads() -> None:
     assert "`Luogo | Dal | Valido fino a | Fuso orario | Nota`" in text
     assert "`Place | From | Valid until | Timezone | Note`" in text
     assert "Never edit `USER.md`" in text
+
+
+def test_documents_prefers_existing_item_folders_and_their_naming() -> None:
+    text = (SKILLS / "documents" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Prefer an existing item to a new one" in text
+    assert "name the file like the `examples` already there" in text
+    assert "`needs_item`" in text
