@@ -26,7 +26,7 @@ Hermes (container, pinned) ── plugin: brain_guard ──► policy decisions
 brain_tools (container) ── the ONLY writer of the vault, the ONLY holder of credentials
 sidecars ── vault watcher, call router, job runner, scheduler ─► Hermes webhooks (HMAC)
 model_gate ── holds the model API key, refuses requests when brain_guard is not loaded
-watchdog ── stops Hermes if the brain_guard heartbeat is missing or stale
+watchdog ── tells the gate whether the brain_guard heartbeat is fresh; holds no Docker socket
 ```
 
 Structure comes first. Hermes sees the vault read-only and holds no credentials. The only way to change anything is a call to `brain_tools`, a separate container with a typed tool for each action. The shell runs in its own container, the internet is reachable only through an egress proxy with an allowlist, and no port is published.

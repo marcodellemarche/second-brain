@@ -413,11 +413,6 @@ class Answers(BaseModel):
     vault_dir: Path
     media_dir: Path
     archive_dir: Path | None = None
-    docker_gid: int | None = Field(
-        default=None,
-        ge=0,
-        description="Group that owns the docker socket, when it is not the one on this machine.",
-    )
     model_endpoint: str = Field(description="Base URL of an OpenAI-compatible endpoint.")
     model_name: str = Field(min_length=1)
     model_context_length: int = Field(default=131072, ge=1024)

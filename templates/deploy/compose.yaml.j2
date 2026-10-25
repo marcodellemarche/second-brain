@@ -279,19 +279,13 @@ services:
     container_name: {{ instance_name }}-watchdog
     command: ["python", "-m", "second_brain.gate.watchdog"]
     networks: [internal]
-    # It runs as 23002 and the socket is root:docker 660, so it needs the host's docker group.
-    group_add: ["{{ docker_gid }}"]
     environment:
-      WATCHDOG_CONTAINER: {{ instance_name }}-hermes
       WATCHDOG_HEARTBEAT: /guard/heartbeat.json
-      WATCHDOG_DOCKER_SOCKET: /var/run/docker.sock
       WATCHDOG_LISTEN: 0.0.0.0:8081
     volumes:
       - guard:/guard:ro
-      # The only docker socket in the deployment, and the only thing this container can do with it is stop Hermes when the guard stops answering.
-      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
-      # Not `/ok`: that answers 503 when the guard is down, which is exactly when the watchdog must stay alive to stop Hermes.
+      # Not `/ok`: that answers 503 when the guard is down, and the gate must keep getting that answer.
       test: ["CMD", "python", "-c", "import socket;socket.create_connection(('127.0.0.1',8081),3)"]
       interval: 30s
       timeout: 5s

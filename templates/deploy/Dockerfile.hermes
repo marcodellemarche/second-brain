@@ -37,3 +37,7 @@ RUN mkdir -p /attachments && chown 23001:23001 /attachments
 
 # The terminal backend is not the docker one: Hermes never talks to a Docker socket here, it reaches
 # the terminal container over ssh (terminal.backend: ssh). No docker-cli usage in this image.
+
+COPY templates/deploy/hermes-entrypoint.sh /usr/local/bin/brain-hermes-entrypoint
+RUN chmod 755 /usr/local/bin/brain-hermes-entrypoint
+ENTRYPOINT ["/usr/local/bin/brain-hermes-entrypoint"]

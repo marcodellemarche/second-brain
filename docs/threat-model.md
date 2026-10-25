@@ -41,7 +41,9 @@ Per-route toolsets. Every webhook route declares its own toolsets in the read-on
 
 Capability removal. There is no tool that sends mail or messages to third parties, and the disabled toolsets take out code execution, model-created cron, connectors, browser and the rest. A capability that does not exist cannot be misused.
 
-The watchdog. Hermes loads plugins fail open, so a guard that failed to load would leave the model reachable. The watchdog stops Hermes when the heartbeat goes stale, and the gate refuses every model call while the watchdog is not answering.
+The watchdog. Hermes loads plugins fail open, so a guard that failed to load would leave the model reachable. The gate refuses every model call unless the watchdog says the heartbeat is fresh, and the Hermes entrypoint deletes the heartbeat before Hermes starts, so a run whose guard never loads has none. Hermes stays up without the model: it cannot decide anything, and the owner sees errors instead of silence. The watchdog does not stop Hermes and holds no Docker socket, because a socket is control of the host.
+
+That only holds while every tool call in Hermes starts from the model. In the pinned version the tools run only inside the agent loop: the gateway, the webhooks and the scheduler never call a tool directly, cron and quick commands are off and the only plugin is brain_guard. **Every Hermes upgrade has to check this again** before the pin moves: look for anything that runs a tool, a shell command or a script without a model turn (new slash commands, quick commands, cron or hooks enabled by default, new plugin entry points). If one appears, either turn it off in the hardened config or give the watchdog a way to stop Hermes again, through a socket proxy that allows only that container's `json` and `stop`.
 
 ### Deterministic rules
 
@@ -72,6 +74,7 @@ Adaptive injection. Resistance to adaptive injection is not measured. What is me
 - `test_rule_of_two_child_session.py`: a child session inherits its parent's flags and sender, so a subagent cannot be used to launder a session that has seen both a web page and a private note. Covers brain_guard session state and the rule of two.
 - `test_unknown_mcp_tool_blocked.py`: an MCP tool brain_tools never declared, or one from another server, is `external` and never allowed, and the stamp refuses it too. Covers the tool table and fail-closed behaviour.
 - `test_guard_object_overwritten.py`: the model fills `guard` itself and the value it sent is never the one brain_tools reads. Only a real approval on that exact call becomes `human:<sender>`. Covers the brain_tools side of approvals.
+- `test_a_stale_heartbeat_cannot_open_the_gate.py`: a fresh heartbeat left by the previous Hermes run is deleted before the next one starts, so a run without the guard finds the gate closed. Covers the watchdog without a Docker socket.
 - `test_chat_yes_is_not_an_approval.py`: a "yes" typed in the chat is not an approval, however the model describes it, and the next call is asked again. Covers the human gate.
 - `test_package_install_blocked.py`: the terminal rules refuse an install or a download piped into a shell, whatever the flags and the budget say. Covers the terminal rules, with the structure behind them.
 - `test_path_removed_from_reply.py`: a filesystem path or an attachment tag in a reply is removed before it leaves the chat, and the audit says what was removed. Covers the reply sanitizer.

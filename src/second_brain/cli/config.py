@@ -82,7 +82,6 @@ STAGING_IN_CONTAINER = Path("/staging")
 TEMPLATES = Path(__file__).resolve().parents[3] / "templates"
 HERMES_WEBHOOK_BASE_URL = "http://hermes:8644/webhooks"
 SCHEDULE_STATE_FILE = DATA_IN_CONTAINER / "scheduler.json"
-DOCKER_SOCKET = Path("/var/run/docker.sock")
 SEARXNG_IMAGE = "searxng/searxng:2026.10.19-81371861f"
 
 SCHEDULE_ROUTES: dict[str, str] = {
@@ -460,24 +459,6 @@ def egress_lan_rules(answers: Answers, hosts: Sequence[str]) -> list[str]:
     return rules
 
 
-def docker_gid(answers: Answers) -> int:
-    """The group that owns the docker socket: the answer, else this machine's.
-
-    The watchdog talks to the socket as the brain image's group, so compose has to give it a
-    group id the socket accepts. `sb init` runs on the host, where the socket can be looked at;
-    run in a container with no socket, there is nothing to look at and the answer has to say it.
-    """
-    if answers.docker_gid is not None:
-        return answers.docker_gid
-    try:
-        return DOCKER_SOCKET.stat().st_gid
-    except OSError as exc:
-        raise AnswersError(
-            "cannot find the docker socket here: set docker_gid in the answers (the group of "
-            "/var/run/docker.sock on the Docker host, `stat -c %g /var/run/docker.sock`)"
-        ) from exc
-
-
 def model_upstream(answers: Answers) -> str:
     """The endpoint as the gate needs it: no trailing `/v1`, because it forwards the path as is.
 
@@ -655,7 +636,6 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "model_context_length": answers.model_context_length,
         "model_reasoning_effort": answers.model_reasoning_effort,
         "timezone": answers.timezone,
-        "docker_gid": docker_gid(answers),
         "brain_tools_extra_volumes": brain_tools_extra_volumes(answers),
         "optional_secrets": optional_secrets(answers),
         "instance_secrets": instance_secrets(answers, registry, sidecars),

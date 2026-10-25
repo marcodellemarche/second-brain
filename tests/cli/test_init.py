@@ -552,17 +552,6 @@ def test_an_explicit_initiative_path_wins_over_the_schema(tmp_path: Path, answer
     assert tools.notify.initiative_path == "_brain/mia-iniziativa.md"
 
 
-def test_the_docker_group_from_the_answers_wins(tmp_path: Path, answers_file: Path) -> None:
-    from second_brain.cli.config import template_values
-
-    raw = yaml.safe_load(answers_file.read_text(encoding="utf-8"))
-    raw["docker_gid"] = 4242
-    path = tmp_path / "gid.yaml"
-    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
-    with_group = Answers.from_yaml(path)
-    assert template_values(with_group, _registry(with_group), _generated(with_group))["docker_gid"] == 4242
-
-
 def _registry(answers: Answers):
     from second_brain.cli.config import export_registry, tools_config
 

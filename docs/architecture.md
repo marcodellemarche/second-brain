@@ -18,7 +18,7 @@ brain_tools (container) ── the ONLY writer of the vault, the ONLY holder of 
 sidecars ── vault watcher, call router, job runner, scheduler ─► Hermes webhooks (HMAC)
 model_gate ── reverse proxy in front of the model endpoint: holds the API key, refuses
               requests when the watchdog says brain_guard is not loaded
-watchdog ── stops Hermes if the brain_guard heartbeat is missing or stale
+watchdog ── tells the gate whether the brain_guard heartbeat is fresh; holds no Docker socket
 ```
 
 The deployment has three Docker networks: `internal` for everything that must not reach the internet, `terminal-net` for the shell container, and `egress-net` for the three services allowed to see the internet. No port is published. The way out is an egress proxy.
@@ -67,7 +67,7 @@ The scheduler fires the tasks Hermes is not allowed to schedule itself: the morn
 
 The model key lives in the gate, never in Hermes. The gate is a reverse proxy in front of an OpenAI-compatible endpoint: it forwards only `/v1/...` paths, and before every request it asks the watchdog's `/ok`. If that is not a 200, the answer is 503 and the upstream is never contacted, so a Hermes running without brain_guard cannot reach the model at all. Responses are relayed chunk by chunk, because the model answers with SSE streams that must reach the client as they are produced.
 
-The watchdog is the last line of defence. Hermes loads plugins fail open, so the deployment needs something outside it to check. The watchdog reads the heartbeat the plugin writes, compares it against the Hermes container start time so a file left over from a previous run cannot keep a guard-less Hermes alive, and stops the Hermes container once when the heartbeat stays stale past the grace period. It holds the only docker socket in the deployment.
+The watchdog is the last line of defence. Hermes loads plugins fail open, so the deployment needs something outside it to check. The watchdog reads the heartbeat the plugin writes and answers the gate's `/ok`: a missing or stale heartbeat closes the gate, and without the model Hermes cannot decide to call a tool. A file left over from a previous run cannot vouch for a new one, because the Hermes image deletes it before Hermes starts. No container in the deployment holds the Docker socket.
 
 ### Egress proxy and SearXNG
 

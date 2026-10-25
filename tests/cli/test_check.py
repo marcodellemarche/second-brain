@@ -245,6 +245,22 @@ def test_a_docker_socket_in_hermes_fails(instance: Path) -> None:
     assert "hermes" in reason
 
 
+def test_a_docker_socket_in_the_watchdog_fails(instance: Path) -> None:
+    _edit_text(
+        instance / "compose.yaml",
+        "      - guard:/guard:ro\n",
+        "      - guard:/guard:ro\n      - /var/run/docker.sock:/var/run/docker.sock\n",
+    )
+    status, reason = _status(instance, "compose.docker-socket")
+    assert status == FAIL
+    assert "watchdog" in reason
+
+
+def test_no_docker_socket_passes(instance: Path) -> None:
+    status, reason = _status(instance, "compose.docker-socket")
+    assert status == PASS, reason
+
+
 def test_a_published_port_fails(instance: Path) -> None:
     _edit_text(
         instance / "compose.yaml",
@@ -682,9 +698,6 @@ def test_a_scheduled_route_outside_the_known_ones_fails(instance: Path) -> None:
     assert "background-research is not one of" in reason
 
 
-# --- the watchdog and the docker socket ------------------------------------------------------
-
-
 def test_the_placeholders_check_never_reads_the_secrets(instance: Path) -> None:
     # After owners.sh the secrets belong to container uids: the operator cannot read hermes.env,
     # and a template placeholder in there is not a thing that can happen anyway.
@@ -693,40 +706,6 @@ def test_the_placeholders_check_never_reads_the_secrets(instance: Path) -> None:
     env.chmod(0o000)
     status, reason = _status(instance, "placeholders")
     assert status == PASS, reason
-
-
-def _watchdog_docker_argv(calls: list[list[str]]) -> list[str] | None:
-    return next((call for call in calls if "WATCHDOG_CONTAINER" in " ".join(call)), None)
-
-
-def test_live_watchdog_docker_passes_when_the_socket_is_reachable(instance: Path) -> None:
-    calls: list[list[str]] = []
-    ps = _ps_for_every_service(instance)
-    codes = {"sb-check": 3, "docker.sock": 0, "heartbeat.json": 0, "WATCHDOG_CONTAINER": 0}
-    results = live_checks(instance, runner=_fake_runner(calls, ps, codes), docker="docker")
-    statuses = {result.name: result.status for result in results}
-    assert statuses["live.watchdog-docker"] == PASS
-    argv = _watchdog_docker_argv(calls)
-    assert argv is not None
-    assert argv[:7] == [
-        "docker",
-        "compose",
-        "-f",
-        str(instance.resolve() / "compose.yaml"),
-        "exec",
-        "-T",
-        "watchdog",
-    ]
-    assert "docker_started_at" in " ".join(argv)
-
-
-def test_live_watchdog_docker_fails_when_the_watchdog_cannot_reach_docker(instance: Path) -> None:
-    calls: list[list[str]] = []
-    ps = _ps_for_every_service(instance)
-    codes = {"sb-check": 3, "docker.sock": 0, "heartbeat.json": 0, "WATCHDOG_CONTAINER": 3}
-    results = live_checks(instance, runner=_fake_runner(calls, ps, codes), docker="docker")
-    watchdog = next(result for result in results if result.name == "live.watchdog-docker")
-    assert watchdog.status == FAIL
 
 
 def test_a_git_object_in_the_vault_is_not_a_template_placeholder(instance: Path) -> None:

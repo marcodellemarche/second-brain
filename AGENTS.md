@@ -20,7 +20,7 @@ brain_tools (container) ── the ONLY writer of the vault, the ONLY holder of 
 sidecars ── vault watcher, call router, job runner, scheduler ─► Hermes webhooks (HMAC)
 model_gate ── reverse proxy in front of the model endpoint: holds the API key, refuses
               requests when the watchdog says brain_guard is not loaded
-watchdog ── stops Hermes if the brain_guard heartbeat is missing or stale
+watchdog ── tells the gate whether the brain_guard heartbeat is fresh; holds no Docker socket
 ```
 
 Security model, short version: assume a prompt injection will eventually convince the model. Limit what it can do afterwards with structure (read-only mounts, no credentials in Hermes, egress filtering, terminal in a separate container), then with deterministic rules in code (brain_guard, brain_tools), never with prompts. Classifier-style "injection detection" is never a control.
@@ -78,6 +78,7 @@ tests/                unit tests per package; tests/security/ for attack scenari
 - Every behaviour change comes with tests. Security rules come with a test in `tests/security/` that tries to break them.
 - Do not add dependencies without a reason written in the task summary.
 - Fail closed: if a policy decision cannot be made (missing config, exception, unknown tool), block.
+- **Hermes upgrades are a security change.** The watchdog closes the model gate but does not stop Hermes, which is safe only while every tool call starts from a model turn. Before moving the pin, check the new version for anything that runs a tool, a shell command or a script without the model (see `docs/threat-model.md`, the watchdog).
 - Never write secrets, tokens or real personal data in code, tests, fixtures or docs. Fixtures use obviously fake data.
 - Stay inside this repo. Do not touch other directories, do not run `git commit` or `git push`, do not install system packages.
 - Never search the filesystem outside this repo (no `find /`, no `find ~`). When you need to check a Hermes API, read the Hermes Agent source at tag `v0.22.2`, never a newer one.

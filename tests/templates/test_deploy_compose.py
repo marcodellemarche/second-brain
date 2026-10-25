@@ -44,7 +44,6 @@ VALUES: dict[str, Any] = {
     "egress_ports": [],
     "searxng_upstream_hosts": "duckduckgo.com wikipedia.org",
     "searxng_secret_key": "sample-secret-key-not-a-real-one",
-    "docker_gid": 999,
     "brain_tools_extra_volumes": ["/srv/brain/archive:/srv/brain/archive"],
     "optional_secrets": ["calendar_token"],
     "instance_secrets": [],
@@ -139,13 +138,14 @@ def test_brain_tools_is_the_only_writer_and_reads_media_back(services: dict[str,
     assert f"{MEDIA}:{MEDIA}:ro" in _mounts(services["brain-tools"])
 
 
-def test_only_the_watchdog_gets_the_docker_socket(services: dict[str, Any]) -> None:
+def test_no_service_gets_the_docker_socket(services: dict[str, Any]) -> None:
+    # A socket is control of the host. The watchdog only reads the heartbeat, and the terminal
+    # uses the ssh backend because the docker one would need the socket.
     with_socket = [
         name for name, service in services.items() if any(DOCKER_SOCKET in m for m in _mounts(service))
     ]
-    assert with_socket == ["watchdog"]
-    # The docker terminal backend would need the socket, so the switch to ssh is what keeps this.
-    assert "terminal" not in with_socket
+    assert with_socket == []
+    assert "group_add" not in services["watchdog"]
 
 
 def test_hermes_reads_the_managed_config_read_only(services: dict[str, Any]) -> None:
@@ -252,11 +252,6 @@ def test_the_egress_healthcheck_does_not_ask_squid_about_its_pid_file(services: 
     test = services["egress"]["healthcheck"]["test"]
     assert "squid -k" not in " ".join(test)
     assert test == ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
-
-
-def test_the_watchdog_can_open_the_docker_socket(services: dict[str, Any]) -> None:
-    # The socket is root:docker 660 and the container runs as 23002.
-    assert services["watchdog"]["group_add"] == [str(VALUES["docker_gid"])]
 
 
 def test_brain_tools_runs_as_the_image_user(services: dict[str, Any]) -> None:

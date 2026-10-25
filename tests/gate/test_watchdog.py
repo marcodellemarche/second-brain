@@ -1,4 +1,4 @@
-"""Watchdog: freshness, the grace period, the single stop and the `/ok` endpoint."""
+"""Watchdog: heartbeat freshness and the `/ok` endpoint the model gate asks."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ import pytest
 from second_brain.gate.watchdog import Watchdog, make_health_server
 
 MAX_AGE = 45.0
-GRACE = 60.0
 
 
 def _beat(path: Path, ts: float) -> Path:
@@ -29,161 +28,46 @@ class FakeClock:
         return self.now
 
 
-class FakeStop:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def __call__(self) -> None:
-        self.calls += 1
-
-
-def _watchdog(path: Path, *, now: float, started_at: float, stop: FakeStop | None = None) -> Watchdog:
-    return Watchdog(
-        path,
-        max_age=MAX_AGE,
-        stop_action=stop or FakeStop(),
-        grace=GRACE,
-        clock=FakeClock(now),
-        started_at=started_at,
-    )
+def _watchdog(path: Path, *, now: float) -> Watchdog:
+    return Watchdog(path, max_age=MAX_AGE, clock=FakeClock(now))
 
 
 def test_check_fresh(tmp_path: Path) -> None:
     path = _beat(tmp_path / "heartbeat.json", 1000.0)
-    assert _watchdog(path, now=1010.0, started_at=900.0).check() is True
+    assert _watchdog(path, now=1010.0).check() is True
 
 
 def test_check_stale(tmp_path: Path) -> None:
     path = _beat(tmp_path / "heartbeat.json", 1000.0)
-    assert _watchdog(path, now=1000.0 + MAX_AGE + 1, started_at=900.0).check() is False
+    assert _watchdog(path, now=1000.0 + MAX_AGE + 1).check() is False
 
 
 def test_check_missing_file(tmp_path: Path) -> None:
-    assert _watchdog(tmp_path / "heartbeat.json", now=1010.0, started_at=900.0).check() is False
+    assert _watchdog(tmp_path / "heartbeat.json", now=1010.0).check() is False
 
 
 def test_check_corrupt_file(tmp_path: Path) -> None:
     path = tmp_path / "heartbeat.json"
     path.write_text("{not json", encoding="utf-8")
-    assert _watchdog(path, now=1010.0, started_at=900.0).check() is False
+    assert _watchdog(path, now=1010.0).check() is False
 
 
-def test_check_ignores_a_heartbeat_from_before_this_run(tmp_path: Path) -> None:
-    path = _beat(tmp_path / "heartbeat.json", 995.0)
-    assert _watchdog(path, now=1002.0, started_at=1000.0).check() is False
-
-
-def test_tick_waits_inside_the_grace_period(tmp_path: Path) -> None:
-    stop = FakeStop()
-    watchdog = _watchdog(tmp_path / "heartbeat.json", now=1030.0, started_at=1000.0, stop=stop)
-    assert watchdog.tick() is False
-    assert stop.calls == 0
-
-
-def test_tick_stops_once_after_the_grace_period(tmp_path: Path) -> None:
-    stop = FakeStop()
-    clock = FakeClock(1070.0)
-    watchdog = Watchdog(
-        tmp_path / "heartbeat.json",
-        max_age=MAX_AGE,
-        stop_action=stop,
-        grace=GRACE,
-        clock=clock,
-        started_at=1000.0,
-    )
-    assert watchdog.tick() is False
-    assert stop.calls == 1
-
-    clock.now = 1200.0
-    assert watchdog.tick() is False
-    assert stop.calls == 1
-    assert watchdog.stopped is True
-
-
-def test_tick_does_not_stop_while_fresh(tmp_path: Path) -> None:
-    stop = FakeStop()
-    path = _beat(tmp_path / "heartbeat.json", 1000.0)
-    watchdog = _watchdog(path, now=1001.0, started_at=900.0, stop=stop)
-    assert watchdog.tick() is True
-    assert stop.calls == 0
-
-
-def test_stale_heartbeat_after_a_fresh_one_still_stops(tmp_path: Path) -> None:
-    stop = FakeStop()
-    path = _beat(tmp_path / "heartbeat.json", 1000.0)
-    clock = FakeClock(1010.0)
-    watchdog = Watchdog(path, max_age=MAX_AGE, stop_action=stop, grace=GRACE, clock=clock, started_at=900.0)
-    assert watchdog.tick() is True
-
-    clock.now = 1000.0 + MAX_AGE + 1
-    assert watchdog.tick() is False
-    assert stop.calls == 1
-
-
-def test_stop_action_failure_is_not_retried(tmp_path: Path) -> None:
-    calls = []
-
-    def boom() -> None:
-        calls.append(1)
-        raise RuntimeError("docker is down")
-
-    clock = FakeClock(1070.0)
-    watchdog = Watchdog(
-        tmp_path / "heartbeat.json",
-        max_age=MAX_AGE,
-        stop_action=boom,
-        grace=GRACE,
-        clock=clock,
-        started_at=1000.0,
-    )
-    watchdog.tick()
-    clock.now = 1100.0
-    watchdog.tick()
-    assert calls == [1]
-
-
-def test_run_stops_once_and_keeps_watching(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    stop = FakeStop()
-    clock = FakeClock(1000.0)
-    watchdog = Watchdog(
-        tmp_path / "heartbeat.json",
-        max_age=MAX_AGE,
-        stop_action=stop,
-        grace=GRACE,
-        clock=clock,
-        started_at=1000.0,
-    )
-
-    class StopLoop(Exception):
-        pass
-
-    def fake_sleep(seconds: float) -> None:
-        clock.now += seconds
-        if clock.now - 1000.0 > GRACE + 30:
-            raise StopLoop
-
-    monkeypatch.setattr("second_brain.gate.watchdog.time.sleep", fake_sleep)
-    with pytest.raises(StopLoop):
-        watchdog.run(interval=5.0)
-    assert stop.calls == 1
+def test_check_heartbeat_without_a_timestamp(tmp_path: Path) -> None:
+    path = tmp_path / "heartbeat.json"
+    path.write_text(json.dumps({"pid": 1}), encoding="utf-8")
+    watchdog = _watchdog(path, now=1010.0)
+    assert watchdog.check() is False
+    assert "without a timestamp" in watchdog.reason()
 
 
 def test_reason_mentions_the_problem(tmp_path: Path) -> None:
     path = _beat(tmp_path / "heartbeat.json", 1000.0)
-    watchdog = _watchdog(path, now=1000.0 + MAX_AGE + 5, started_at=900.0)
-    assert "stale" in watchdog.reason()
-
-
-def test_reason_mentions_a_heartbeat_from_before_the_run(tmp_path: Path) -> None:
-    path = _beat(tmp_path / "heartbeat.json", 995.0)
-    watchdog = _watchdog(path, now=1002.0, started_at=1000.0)
-    assert "older than this run" in watchdog.reason()
+    assert "stale" in _watchdog(path, now=1000.0 + MAX_AGE + 5).reason()
 
 
 def test_reason_mentions_a_future_timestamp(tmp_path: Path) -> None:
     path = _beat(tmp_path / "heartbeat.json", 5000.0)
-    watchdog = _watchdog(path, now=1000.0, started_at=900.0)
-    assert "future" in watchdog.reason()
+    assert "future" in _watchdog(path, now=1000.0).reason()
 
 
 class HealthServer:
@@ -215,9 +99,7 @@ class HealthServer:
 def health(tmp_path: Path):
     path = _beat(tmp_path / "heartbeat.json", 1000.0)
     clock = FakeClock(1000.0)
-    watchdog = Watchdog(
-        path, max_age=MAX_AGE, stop_action=FakeStop(), grace=GRACE, clock=clock, started_at=900.0
-    )
+    watchdog = Watchdog(path, max_age=MAX_AGE, clock=clock)
     server = HealthServer.for_watchdog(watchdog)
     try:
         yield clock, path, server
@@ -266,127 +148,3 @@ def test_health_endpoint_404_for_other_paths(health) -> None:
     _, _, server = health
     status, _ = server.get("/check")
     assert status == 404
-
-
-# --- the Hermes start time is read again on every tick ----------------------------------------
-
-
-class StartSource:
-    """What `docker_started_at` answers, with a knob for the "not running" and "boom" cases."""
-
-    def __init__(self, started_at: float | None) -> None:
-        self.started_at = started_at
-        self.raises = False
-        self.calls = 0
-
-    def __call__(self) -> float | None:
-        self.calls += 1
-        if self.raises:
-            raise OSError("the docker socket went away")
-        return self.started_at
-
-
-def _watchdog_from_source(
-    path: Path, *, now: float, source: StartSource, stop: FakeStop | None = None
-) -> Watchdog:
-    return Watchdog(
-        path,
-        max_age=MAX_AGE,
-        stop_action=stop or FakeStop(),
-        grace=GRACE,
-        clock=FakeClock(now),
-        started_at_source=source,
-    )
-
-
-def test_the_grace_counts_from_the_hermes_start_not_the_watchdog_start(tmp_path: Path) -> None:
-    stop = FakeStop()
-    path = _beat(tmp_path / "heartbeat.json", 1010.0)
-    # Hermes started 10s ago while the watchdog has been up for 100s: nothing to stop yet.
-    source = StartSource(1090.0)
-    watchdog = _watchdog_from_source(path, now=1100.0, source=source, stop=stop)
-    assert watchdog.tick() is False
-    assert stop.calls == 0
-
-    source.started_at = 1000.0
-    assert watchdog.tick(now=1000.0 + GRACE + 1) is False
-    assert stop.calls == 1
-
-
-def test_nothing_is_stopped_while_hermes_is_not_running(tmp_path: Path) -> None:
-    stop = FakeStop()
-    source = StartSource(None)
-    watchdog = _watchdog_from_source(tmp_path / "heartbeat.json", now=1070.0, source=source, stop=stop)
-    assert watchdog.tick() is False
-    assert watchdog.tick() is False
-    assert stop.calls == 0
-    assert watchdog.stopped is False
-
-
-def test_a_new_hermes_start_re_arms_the_stop(tmp_path: Path) -> None:
-    stop = FakeStop()
-    path = _beat(tmp_path / "heartbeat.json", 1000.0)
-    source = StartSource(1000.0)
-    watchdog = _watchdog_from_source(path, now=1070.0, source=source, stop=stop)
-    assert watchdog.tick() is False
-    assert stop.calls == 1
-
-    # Someone restarted Hermes by hand: the stale heartbeat is past the new grace, stop it again.
-    source.started_at = 1100.0
-    watchdog.clock = FakeClock(1170.0)
-    assert watchdog.tick() is False
-    assert stop.calls == 2
-    assert watchdog.started_at == 1100.0
-
-
-def test_a_new_start_time_inside_the_grace_does_not_stop(tmp_path: Path) -> None:
-    stop = FakeStop()
-    source = StartSource(1000.0)
-    watchdog = _watchdog_from_source(tmp_path / "heartbeat.json", now=1070.0, source=source, stop=stop)
-    watchdog.tick()
-    assert stop.calls == 1
-
-    source.started_at = 1110.0
-    watchdog.clock = FakeClock(1120.0)
-    assert watchdog.tick() is False
-    assert stop.calls == 1
-    assert watchdog.stopped is False
-
-
-def test_a_failing_source_keeps_the_last_start_time(tmp_path: Path) -> None:
-    stop = FakeStop()
-    path = _beat(tmp_path / "heartbeat.json", 1000.0)
-    source = StartSource(1000.0)
-    watchdog = _watchdog_from_source(path, now=1010.0, source=source, stop=stop)
-    assert watchdog.tick() is True
-
-    source.raises = True
-    watchdog.clock = FakeClock(1070.0)
-    assert watchdog.tick() is False
-    assert watchdog.started_at == 1000.0
-    assert stop.calls == 1
-
-
-def test_a_failing_source_after_hermes_stopped_does_not_re_arm(tmp_path: Path) -> None:
-    stop = FakeStop()
-    source = StartSource(None)
-    watchdog = _watchdog_from_source(tmp_path / "heartbeat.json", now=1070.0, source=source, stop=stop)
-    watchdog.tick()
-    source.raises = True
-    watchdog.tick()
-    assert stop.calls == 0
-
-
-def test_stop_ends_run(tmp_path: Path) -> None:
-    watchdog = Watchdog(
-        tmp_path / "heartbeat.json",
-        max_age=MAX_AGE,
-        stop_action=FakeStop(),
-        grace=GRACE,
-        started_at_source=StartSource(None),
-    )
-    thread = threading.Thread(target=watchdog.run, kwargs={"interval": 0.01}, daemon=True)
-    thread.start()
-    watchdog.stop()
-    thread.join(timeout=5)
-    assert not thread.is_alive()

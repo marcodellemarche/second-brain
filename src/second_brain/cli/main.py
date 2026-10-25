@@ -74,7 +74,7 @@ def check_help() -> str:
         "Verify an instance and print one line per check.\n\n"
         "The static checks read the rendered files: every file `sb init` writes is there, no template\n"
         "placeholder survived, the secrets are owner-only and filled in, the vault is mounted\n"
-        "read-only everywhere but brain-tools, only the watchdog has the docker socket, no port is\n"
+        "read-only everywhere but brain-tools, no service has the docker socket, no port is\n"
         "published, approvals are manual, the owner is the only allowed user, the guard knows every\n"
         "enabled tool and squid denies the package registries. `--live` adds what only a running\n"
         "deployment can answer. The exit code is 1 when anything fails."

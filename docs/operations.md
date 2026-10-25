@@ -25,7 +25,7 @@ The order matters: the static checks pass before anything starts, and the live c
 | `placeholders` | A template marker was left in a rendered file. |
 | `secrets` | A secret file is missing, empty, or readable by anyone but its owner. |
 | `compose.vault-read-only` | Hermes mounts the vault read-write, or brain_tools does not. |
-| `compose.docker-socket` | Anything other than the watchdog has the Docker socket. |
+| `compose.docker-socket` | Any service mounts the Docker socket. |
 | `compose.no-published-ports` | A service publishes a port on the host. |
 | `compose.internal-network` | Hermes is reachable from a network other than the internal one. |
 | `compose.hermes-proxy` | Hermes can leave the machine without going through the egress proxy. |
@@ -51,7 +51,6 @@ The order matters: the static checks pass before anything starts, and the live c
 | `live.vault-read-only` | A write from Hermes into the vault succeeds. |
 | `live.no-docker-socket` | Hermes can see the Docker socket. |
 | `live.heartbeat` | The guard heartbeat is missing or stale. |
-| `live.watchdog-docker` | The watchdog cannot read the Docker socket, so it could not stop Hermes. |
 | `live.gate-stale-heartbeat` | Always skipped: stopping Hermes to prove the gate refuses is too invasive for a live check, and unit tests cover it. |
 
 The live checks are the ones that catch a config that looks right and behaves wrong, so run them after every change, not only on the first deploy.
@@ -98,7 +97,7 @@ Approve once, or deny. If a prompt keeps coming back, the fix is in the tool or 
 
 Start with `docker compose ps` in the instance directory, then `docker compose logs <service>` for anything not healthy.
 
-"The bot does not answer" usually means the guard plugin failed to load. The watchdog stops Hermes when the guard heartbeat is missing or older than its limit, and the model gate refuses requests while the watchdog says the guard is down. So the silence is deliberate: check the Hermes logs for the plugin error, fix it, and restart.
+"The bot answers only with errors" usually means the guard plugin failed to load. The model gate refuses requests while the guard heartbeat is missing or older than its limit, so Hermes is up but has no model. That is deliberate: check the Hermes logs for the plugin error, fix it, and restart.
 
 Guard decisions are in the hash-chained audit log in the `guard` volume. If you need to know why something was blocked or allowed, that is the place to look.
 
