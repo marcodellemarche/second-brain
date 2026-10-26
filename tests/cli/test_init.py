@@ -1648,3 +1648,18 @@ def test_the_staging_folder_belongs_to_the_brain_so_it_can_move_files(
     # Files extracted by root stay readable; done/ and failed/ need the folder to be the brain's.
     assert f"chown -R 23002:\"$(stat -c %g .)\" '{tmp_path / 'staging'}'" in owners
     assert f"chmod 2775 '{tmp_path / 'staging'}'" in owners
+
+
+def test_an_auto_effort_reaches_the_hermes_config_as_the_dict_form(
+    tmp_path: Path, answers_file: Path
+) -> None:
+    answers = _answers_with(tmp_path, answers_file, model_reasoning_effort="auto")
+    directory = tmp_path / "instance-auto"
+    init(answers, directory)
+    hermes = yaml.safe_load((directory / "config/hermes/config.yaml").read_text(encoding="utf-8"))
+    assert hermes["agent"]["reasoning_effort"] == {"enabled": True, "effort": "auto"}
+
+
+def test_an_unknown_effort_is_refused(tmp_path: Path, answers_file: Path) -> None:
+    with pytest.raises(AnswersError):
+        _answers_with(tmp_path, answers_file, model_reasoning_effort="always")

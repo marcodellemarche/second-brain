@@ -418,7 +418,10 @@ class Answers(BaseModel):
     model_context_length: int = Field(default=131072, ge=1024)
     # What Hermes asks the endpoint for. `none` sends thinking off, which every endpoint accepts;
     # a level the model does not know is refused by the endpoint on every turn.
-    model_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] = "none"
+    # `auto` leaves the choice to an endpoint that lets the model decide.
+    model_reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max", "auto"] = (
+        "none"
+    )
     instance_skills_dir: Path | None = Field(
         default=None,
         description="A folder of skills this instance adds, copied next to the product ones. "

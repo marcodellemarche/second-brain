@@ -23,7 +23,7 @@ A brain is one answers file and one instance directory. `sb init` reads the answ
 | `model_endpoint` | required | Base URL of an OpenAI-compatible endpoint. http(s), no query and no fragment. Its host is the first entry of the egress allowlist. |
 | `model_name` | required | Model name passed to the endpoint. |
 | `model_context_length` | `131072` | Context window the Hermes config is rendered with, at least 1024. |
-| `model_reasoning_effort` | `none` | How much the model thinks before answering: `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`. `none` turns thinking off and works with any endpoint; check which levels yours accepts before picking one (some refuse `medium`). |
+| `model_reasoning_effort` | `none` | How much the model thinks before answering: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `auto` to leave the choice to an endpoint that lets the model decide. `none` turns thinking off and works with any endpoint; check which levels yours accepts before picking one (some refuse `medium`). |
 | `tools` | all off | Which optional tool groups exist. See below. |
 | `job_kinds` | none | Background job kinds the model may queue. See below. |
 | `brain_tools_mounts` | `[]` | `host` and `container` of a folder an instance tool reads. Both absolute, no `..`, always mounted read-only, and not `/vault`, `/data`, `/run/secrets` or a path inside them. |

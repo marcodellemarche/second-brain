@@ -634,7 +634,13 @@ def template_values(answers: Answers, registry: Registry, generated: Mapping[str
         "model_gate_url": "http://gate:8080/v1",
         "model_name": answers.model_name,
         "model_context_length": answers.model_context_length,
-        "model_reasoning_effort": answers.model_reasoning_effort,
+        # Hermes drops a bare effort level it does not know, so `auto` rides the dict form,
+        # which reaches the wire verbatim for endpoints that let the model decide.
+        "model_reasoning_effort": (
+            {"enabled": True, "effort": "auto"}
+            if answers.model_reasoning_effort == "auto"
+            else answers.model_reasoning_effort
+        ),
         "timezone": answers.timezone,
         "brain_tools_extra_volumes": brain_tools_extra_volumes(answers),
         "optional_secrets": optional_secrets(answers),

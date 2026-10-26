@@ -474,6 +474,12 @@ def test_thinking_is_off_by_default_and_follows_the_answers() -> None:
     assert high["agent"]["reasoning_effort"] == "high"
 
 
+def test_auto_effort_reaches_the_wire_as_the_dict_form() -> None:
+    values = dict(VALUES, model_reasoning_effort={"enabled": True, "effort": "auto"})
+    config = yaml.safe_load(render(TEMPLATES / "config.yaml.j2", values))
+    assert config["agent"]["reasoning_effort"] == {"enabled": True, "effort": "auto"}
+
+
 def test_the_brain_answers_in_the_language_it_is_spoken_to() -> None:
     soul = render(TEMPLATES / "SOUL.md.j2", VALUES)
     assert "language the person writes to you in" in soul
