@@ -52,6 +52,7 @@ ARGS_PREVIEW_CHARS = 200
 # The two calendar tools that always ask, whatever the session looks like.
 CALENDAR_WRITE_TOOLS = frozenset({"calendar_main_write", "calendar_invite"})
 ARCHIVE_STORE_TOOL = f"{MCP_PREFIX}archive_store"
+VISION_TOOL = "vision_analyze"
 # The argument that says what a call is about, per tool. Anything else falls back to the preview.
 APPROVAL_ARGUMENTS: dict[str, tuple[str, ...]] = {
     "web_search": ("query",),
@@ -140,6 +141,10 @@ APPROVAL_REASONS: dict[str, dict[str, str]] = {
 }
 MAX_PENDING_VERDICTS = 256
 NO_VERDICT_MESSAGE = "brain_guard made no decision for this call, so it was not run. Try the call again."
+REMOTE_IMAGE_REASON = "remote image"
+REMOTE_IMAGE_MESSAGE = (
+    "Blocked: vision_analyze reads only local files, such as the path Hermes gave for an attachment."
+)
 MEMBER_REASON = "only the owner or an approver can run or approve this"
 MEMBER_MESSAGE = (
     "This call was not run: it needs the owner or an approver, and the person writing to you is "
@@ -442,6 +447,8 @@ class Guard:
             decision, message = Decision("block", budget.reason), budget.message_to_model
         elif denied is not None:
             decision, message = Decision("block", denied), TERMINAL_DENIED_MESSAGE.format(reason=denied)
+        elif _is_remote_image(tool_name, args):
+            decision, message = Decision("block", REMOTE_IMAGE_REASON), REMOTE_IMAGE_MESSAGE
         else:
             decision = decide(
                 tool_class.effect,
@@ -611,6 +618,14 @@ def _terminal_reason(tool_name: str, args: dict[str, Any]) -> str | None:
         return None
     command = args.get("command", "")
     return terminal_denied(command) if isinstance(command, str) else None
+
+
+def _is_remote_image(tool_name: str, args: dict[str, Any]) -> bool:
+    """vision_analyze also downloads http(s) URLs, a network path no URL policy sees."""
+    if tool_name != VISION_TOOL:
+        return False
+    image = args.get("image_url", "")
+    return not isinstance(image, str) or "://" in image
 
 
 def _policy_name(tool_name: str) -> str:

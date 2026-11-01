@@ -509,6 +509,22 @@ def test_terminal_block_is_audited_with_its_reason(guard: plugin.Guard) -> None:
     assert row["reason"] == "package install (npm install)"
 
 
+def test_vision_on_a_local_attachment_runs(guard: plugin.Guard) -> None:
+    args = {"image_url": "/opt/data/cache/images/img_ecc181d3e5ce.jpg", "question": "What does it say?"}
+    assert guard.pre_tool_call(tool_name="vision_analyze", args=args, session_id="s1") is None
+
+
+@pytest.mark.parametrize(
+    "image_url", ["https://example.com/a.jpg", "http://brain-tools:8765/a.png", "file:///etc/x", None]
+)
+def test_vision_never_downloads_an_image(guard: plugin.Guard, image_url: Any) -> None:
+    decision = guard.pre_tool_call(
+        tool_name="vision_analyze", args={"image_url": image_url}, session_id="s1", tool_call_id="c1"
+    )
+    assert decision == {"action": "block", "message": plugin.REMOTE_IMAGE_MESSAGE}
+    assert _last_decision(guard)["reason"] == "remote image"
+
+
 def test_approval_text_is_audited_verbatim(guard: plugin.Guard) -> None:
     guard.store.mark_untrusted("s1")
     guard.store.mark_private("s1")

@@ -40,6 +40,8 @@ BUILTIN: dict[str, ToolClass] = {
     "web_extract": ToolClass(Effect.EXTERNAL, Autonomy.AUTO, taints_untrusted=True),
     "browser_navigate": ToolClass(Effect.EXTERNAL, Autonomy.AUTO, taints_untrusted=True),
     "browser_snapshot": ToolClass(Effect.EXTERNAL, Autonomy.AUTO, taints_untrusted=True),
+    # The text read off a photo is someone else's words, like a web page.
+    "vision_analyze": ToolClass(Effect.READ, Autonomy.AUTO, taints_untrusted=True),
     # Reading a vault path taints only if the path says so: see path_taint.
     "read_file": ToolClass(Effect.READ, Autonomy.AUTO),
     "search_files": ToolClass(Effect.READ, Autonomy.AUTO),

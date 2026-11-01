@@ -29,6 +29,7 @@ Rendered by `sb init` and mounted read-only. Each hardening key is here because 
 - `security.allow_lazy_installs: false` refuses a backend that would install its own package from PyPI on first use.
 - `agent.reasoning_effort: none` keeps the model from spending its budget on hidden reasoning a chat does not need.
 - `kanban.dispatch_in_gateway: false` with `review_dispatch: false` keeps a task board the model never asked for out of the gateway.
+- `platform_toolsets` gives the chat `vision`, so an image that arrives in chat can be read. brain_guard taints the session with what it reads and blocks `vision_analyze` on a URL, so it never downloads anything.
 - `platform_toolsets` leaves out `delegation`: a background run is always a separate signed run with its own toolsets, never a child of the conversation, because a delegated child's result skips the guard's result hook.
 - `approvals.mcp_reload_confirm: true` keeps the confirmation on `/reload-mcp`, which rebuilds the tool surface and the prompt cache.
 - `gateway.strict: true` with `media_delivery_allow_dirs` on one directory limits file delivery to that directory, and `trust_recent_files: false` removes the recency hole.

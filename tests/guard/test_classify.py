@@ -18,6 +18,7 @@ EXPECTED: dict[str, tuple[Effect, Autonomy, bool, bool]] = {
     "web_extract": (Effect.EXTERNAL, Autonomy.AUTO, True, False),
     "browser_navigate": (Effect.EXTERNAL, Autonomy.AUTO, True, False),
     "browser_snapshot": (Effect.EXTERNAL, Autonomy.AUTO, True, False),
+    "vision_analyze": (Effect.READ, Autonomy.AUTO, True, False),
     "read_file": (Effect.READ, Autonomy.AUTO, False, False),
     "search_files": (Effect.READ, Autonomy.AUTO, False, False),
     "write_file": (Effect.INTERNAL, Autonomy.AUTO, False, False),

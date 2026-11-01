@@ -320,8 +320,8 @@ thread_sessions_per_user: true
 # webhook default has no `web`: a route reaches the internet only when its own `toolsets` say so.
 platform_toolsets:
 {% if is_slack %}
-  slack: [file, web, memory, skills, todo, brain]
+  slack: [file, web, vision, memory, skills, todo, brain]
 {% else %}
-  telegram: [file, web, memory, skills, todo, brain]
+  telegram: [file, web, vision, memory, skills, todo, brain]
 {% endif %}
   webhook: [file, skills, brain]

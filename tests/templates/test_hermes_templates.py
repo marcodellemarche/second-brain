@@ -283,7 +283,7 @@ def test_a_slack_brain_answers_on_slack_and_not_on_telegram() -> None:
     }
     # One session per person in a shared thread, and the webhook admin is the same owner.
     assert loaded["thread_sessions_per_user"] is True
-    assert loaded["platform_toolsets"]["slack"][:2] == ["file", "web"]
+    assert loaded["platform_toolsets"]["slack"][:3] == ["file", "web", "vision"]
     assert "telegram" not in loaded["platform_toolsets"]
     webhook = loaded["platforms"]["webhook"]["extra"]
     assert webhook["allow_admin_from"] == [VALUES["owner_id"]]
@@ -324,7 +324,7 @@ def test_an_approver_writes_in_a_direct_message_and_is_never_an_admin() -> None:
 def test_a_telegram_brain_has_no_thread_sessions_key(config: dict[str, Any]) -> None:
     # The key only means something on a platform with threads: on Telegram it would be noise.
     assert "thread_sessions_per_user" not in config
-    assert config["platform_toolsets"]["telegram"][:2] == ["file", "web"]
+    assert config["platform_toolsets"]["telegram"][:3] == ["file", "web", "vision"]
 
 
 def test_soul_calls_other_content_data_and_forbids_python() -> None:
